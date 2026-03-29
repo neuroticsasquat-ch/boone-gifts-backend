@@ -8,9 +8,7 @@ from app.models.user import User
 
 
 def find_user_by_email(db: Session, email: str) -> User | None:
-    return db.execute(
-        select(User).where(User.email == email)
-    ).scalar_one_or_none()
+    return db.execute(select(User).where(User.email == email)).scalar_one_or_none()
 
 
 def find_user_by_id(db: Session, user_id: int) -> User | None:
@@ -31,9 +29,7 @@ def create_user(db: Session, email: str, name: str, role: str, password: str) ->
 
 
 def find_invite_by_token(db: Session, token: str) -> Invite | None:
-    return db.execute(
-        select(Invite).where(Invite.token == token)
-    ).scalar_one_or_none()
+    return db.execute(select(Invite).where(Invite.token == token)).scalar_one_or_none()
 
 
 def mark_invite_used(db: Session, invite: Invite) -> None:

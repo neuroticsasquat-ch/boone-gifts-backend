@@ -17,12 +17,12 @@ def find_user_by_id(db: Session, user_id: int) -> User | None:
 
 
 def find_user_by_email(db: Session, email: str) -> User | None:
-    return db.execute(
-        select(User).where(User.email == email)
-    ).scalar_one_or_none()
+    return db.execute(select(User).where(User.email == email)).scalar_one_or_none()
 
 
-def find_connection_between(db: Session, user_a_id: int, user_b_id: int) -> Connection | None:
+def find_connection_between(
+    db: Session, user_a_id: int, user_b_id: int
+) -> Connection | None:
     return db.execute(
         select(Connection).where(
             or_(
@@ -35,7 +35,9 @@ def find_connection_between(db: Session, user_a_id: int, user_b_id: int) -> Conn
     ).scalar_one_or_none()
 
 
-def find_accepted_connection_between(db: Session, user_a_id: int, user_b_id: int) -> Connection | None:
+def find_accepted_connection_between(
+    db: Session, user_a_id: int, user_b_id: int
+) -> Connection | None:
     return db.execute(
         select(Connection).where(
             Connection.status == "accepted",
@@ -54,24 +56,32 @@ def find_connection_by_id(db: Session, connection_id: int) -> Connection | None:
 
 
 def get_accepted_connections(db: Session, user_id: int) -> list[Connection]:
-    return db.execute(
-        select(Connection).where(
-            Connection.status == "accepted",
-            or_(
-                Connection.requester_id == user_id,
-                Connection.addressee_id == user_id,
-            ),
+    return (
+        db.execute(
+            select(Connection).where(
+                Connection.status == "accepted",
+                or_(
+                    Connection.requester_id == user_id,
+                    Connection.addressee_id == user_id,
+                ),
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
 
 def get_pending_requests(db: Session, user_id: int) -> list[Connection]:
-    return db.execute(
-        select(Connection).where(
-            Connection.status == "pending",
-            Connection.addressee_id == user_id,
+    return (
+        db.execute(
+            select(Connection).where(
+                Connection.status == "pending",
+                Connection.addressee_id == user_id,
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
 
 def create_connection(db: Session, requester_id: int, addressee_id: int) -> Connection:
@@ -113,33 +123,45 @@ def delete_shares_between(db: Session, user_a_id: int, user_b_id: int) -> None:
     list_ids_a = select(GiftList.id).where(GiftList.owner_id == user_a_id)
     list_ids_b = select(GiftList.id).where(GiftList.owner_id == user_b_id)
 
-    shares = db.execute(
-        select(ListShare).where(
-            or_(
-                (ListShare.list_id.in_(list_ids_a)) & (ListShare.user_id == user_b_id),
-                (ListShare.list_id.in_(list_ids_b)) & (ListShare.user_id == user_a_id),
+    shares = (
+        db.execute(
+            select(ListShare).where(
+                or_(
+                    (ListShare.list_id.in_(list_ids_a))
+                    & (ListShare.user_id == user_b_id),
+                    (ListShare.list_id.in_(list_ids_b))
+                    & (ListShare.user_id == user_a_id),
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     for share in shares:
         db.delete(share)
 
 
-def delete_collection_items_between(db: Session, user_a_id: int, user_b_id: int) -> None:
+def delete_collection_items_between(
+    db: Session, user_a_id: int, user_b_id: int
+) -> None:
     list_ids_a = select(GiftList.id).where(GiftList.owner_id == user_a_id)
     list_ids_b = select(GiftList.id).where(GiftList.owner_id == user_b_id)
     collection_ids_a = select(Collection.id).where(Collection.owner_id == user_a_id)
     collection_ids_b = select(Collection.id).where(Collection.owner_id == user_b_id)
 
-    items = db.execute(
-        select(CollectionItem).where(
-            or_(
-                (CollectionItem.collection_id.in_(collection_ids_a))
-                & (CollectionItem.list_id.in_(list_ids_b)),
-                (CollectionItem.collection_id.in_(collection_ids_b))
-                & (CollectionItem.list_id.in_(list_ids_a)),
+    items = (
+        db.execute(
+            select(CollectionItem).where(
+                or_(
+                    (CollectionItem.collection_id.in_(collection_ids_a))
+                    & (CollectionItem.list_id.in_(list_ids_b)),
+                    (CollectionItem.collection_id.in_(collection_ids_b))
+                    & (CollectionItem.list_id.in_(list_ids_a)),
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     for item in items:
         db.delete(item)

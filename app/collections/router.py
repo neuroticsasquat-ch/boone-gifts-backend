@@ -15,9 +15,7 @@ router = APIRouter(prefix="/collections", tags=["collections"])
 
 
 @router.post("", response_model=CollectionRead, status_code=status.HTTP_201_CREATED)
-def create_collection(
-    request: CollectionCreate, user: CurrentUser, db: DbSession
-):
+def create_collection(request: CollectionCreate, user: CurrentUser, db: DbSession):
     return collection_service.create_collection(
         db, name=request.name, description=request.description, owner_id=user.id
     )
@@ -72,9 +70,7 @@ def add_item(
     "/{collection_id}/items/{list_id}",
     status_code=status.HTTP_204_NO_CONTENT,
 )
-def remove_item(
-    list_id: int, collection: OwnedCollection, db: DbSession
-):
+def remove_item(list_id: int, collection: OwnedCollection, db: DbSession):
     try:
         collection_service.remove_item(db, collection=collection, list_id=list_id)
     except NotFoundError:

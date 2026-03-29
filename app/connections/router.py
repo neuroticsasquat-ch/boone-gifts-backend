@@ -43,9 +43,7 @@ def list_requests(user: CurrentUser, db: DbSession) -> list[dict]:
 
 
 @router.post("/{connection_id}/accept", response_model=ConnectionRead)
-def accept_connection(
-    connection_id: int, user: CurrentUser, db: DbSession
-) -> dict:
+def accept_connection(connection_id: int, user: CurrentUser, db: DbSession) -> dict:
     try:
         return connection_service.accept_connection(db, connection_id, user.id)
     except NotFoundError:
@@ -57,9 +55,7 @@ def accept_connection(
 
 
 @router.delete("/{connection_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_connection(
-    connection_id: int, user: CurrentUser, db: DbSession
-) -> None:
+def delete_connection(connection_id: int, user: CurrentUser, db: DbSession) -> None:
     try:
         connection_service.delete_connection(db, connection_id, user.id)
     except NotFoundError:

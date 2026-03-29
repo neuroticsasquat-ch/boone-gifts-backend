@@ -3,7 +3,12 @@ from sqlalchemy.orm import Session
 from app.connections.repository import find_accepted_connection_between
 from app.models.list_share import ListShare
 from app.shares import repository as repo
-from app.services.exceptions import BadRequestError, ConflictError, ForbiddenError, NotFoundError
+from app.services.exceptions import (
+    BadRequestError,
+    ConflictError,
+    ForbiddenError,
+    NotFoundError,
+)
 
 
 def create_share(

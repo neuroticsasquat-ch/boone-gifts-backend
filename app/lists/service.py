@@ -11,9 +11,7 @@ def create_list(
     return repo.create_list(db, name=name, description=description, owner_id=owner_id)
 
 
-def get_lists(
-    db: Session, user_id: int, filter: str | None = None
-) -> list[GiftList]:
+def get_lists(db: Session, user_id: int, filter: str | None = None) -> list[GiftList]:
     if filter == "owned":
         return repo.get_lists_by_owner(db, user_id)
     elif filter == "shared":
@@ -30,9 +28,7 @@ def get_list(
     return GiftListDetailViewer.model_validate(gift_list)
 
 
-def update_list(
-    db: Session, gift_list: GiftList, updates: dict
-) -> GiftList:
+def update_list(db: Session, gift_list: GiftList, updates: dict) -> GiftList:
     return repo.update_list(db, gift_list, updates)
 
 

@@ -2,7 +2,12 @@ from fastapi import APIRouter, HTTPException, status
 
 from app.dependencies import CurrentUser, DbSession, OwnedList
 from app.schemas.list_share import ListShareCreate, ListShareRead
-from app.services.exceptions import BadRequestError, ConflictError, ForbiddenError, NotFoundError
+from app.services.exceptions import (
+    BadRequestError,
+    ConflictError,
+    ForbiddenError,
+    NotFoundError,
+)
 from app.shares import service as share_service
 
 router = APIRouter(prefix="/lists/{list_id}/shares", tags=["shares"])

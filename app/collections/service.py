@@ -38,9 +38,7 @@ def delete_collection(db: Session, collection: Collection) -> None:
     repo.delete_collection(db, collection)
 
 
-def add_item(
-    db: Session, collection: Collection, list_id: int, user_id: int
-) -> None:
+def add_item(db: Session, collection: Collection, list_id: int, user_id: int) -> None:
     gift_list = repo.get_gift_list_by_id(db, list_id)
     if gift_list is None:
         raise NotFoundError("List not found.")

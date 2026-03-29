@@ -25,9 +25,7 @@ def create_gift(
     return repo.create_gift(db, list_id, name, description, url, price)
 
 
-def update_gift(
-    db: Session, gift_id: int, list_id: int, updates: dict
-) -> Gift:
+def update_gift(db: Session, gift_id: int, list_id: int, updates: dict) -> Gift:
     gift = _get_gift_for_list(db, gift_id, list_id)
     return repo.update_gift(db, gift, updates)
 
@@ -53,9 +51,7 @@ def claim_gift(
     return gift
 
 
-def unclaim_gift(
-    db: Session, gift_id: int, list_id: int, user_id: int
-) -> Gift:
+def unclaim_gift(db: Session, gift_id: int, list_id: int, user_id: int) -> Gift:
     gift = _get_gift_for_list(db, gift_id, list_id)
     if gift.claimed_by_id != user_id:
         raise ForbiddenError("Only the claimer can unclaim.")

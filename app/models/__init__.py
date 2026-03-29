@@ -8,6 +8,12 @@ from app.models.collection import Collection
 from app.models.collection_item import CollectionItem
 
 __all__ = [
-    "User", "Invite", "GiftList", "Gift", "ListShare",
-    "Connection", "Collection", "CollectionItem",
+    "User",
+    "Invite",
+    "GiftList",
+    "Gift",
+    "ListShare",
+    "Connection",
+    "Collection",
+    "CollectionItem",
 ]

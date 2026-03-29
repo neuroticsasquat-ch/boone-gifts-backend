@@ -8,8 +8,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.connections.repository import find_accepted_connection_between
 from app.database import SessionLocal
+from app.models.collection import Collection
 from app.models.user import User
+from app.models.list_share import ListShare
+from app.models.gift_list import GiftList
 
 
 def get_db():
@@ -83,9 +87,6 @@ def require_admin(
 CurrentUser = Annotated[User, Depends(get_current_user)]
 AdminUser = Annotated[User, Depends(require_admin)]
 
-from app.models.gift_list import GiftList
-from app.models.list_share import ListShare
-
 
 def get_list_for_owner(
     list_id: int,
@@ -124,8 +125,6 @@ def get_list_for_viewer(
 OwnedList = Annotated[GiftList, Depends(get_list_for_owner)]
 ViewableList = Annotated[GiftList, Depends(get_list_for_viewer)]
 
-from app.connections.repository import find_accepted_connection_between
-
 
 def require_connection(
     target_user_id: int,
@@ -138,9 +137,6 @@ def require_connection(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You must be connected to share a list with this user.",
         )
-
-
-from app.models.collection import Collection
 
 
 def get_collection_for_owner(

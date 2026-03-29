@@ -15,9 +15,7 @@ class Gift(Base):
     name: Mapped[str] = mapped_column(String(255))
     description: Mapped[str | None] = mapped_column(String(500), default=None)
     url: Mapped[str | None] = mapped_column(String(2048), default=None)
-    price: Mapped[Decimal | None] = mapped_column(
-        Numeric(10, 2), default=None
-    )
+    price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), default=None)
     claimed_by_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id"), default=None
     )

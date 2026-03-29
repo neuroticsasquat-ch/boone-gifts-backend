@@ -5,7 +5,9 @@ from app.models.gift_list import GiftList
 from app.models.list_share import ListShare
 
 
-def create_list(db: Session, name: str, description: str | None, owner_id: int) -> GiftList:
+def create_list(
+    db: Session, name: str, description: str | None, owner_id: int
+) -> GiftList:
     gift_list = GiftList(name=name, description=description, owner_id=owner_id)
     db.add(gift_list)
     db.flush()

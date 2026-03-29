@@ -22,9 +22,7 @@ def create_gift(request: GiftCreate, gift_list: OwnedList, db: DbSession):
 
 
 @router.put("/{gift_id}", response_model=GiftOwnerRead)
-def update_gift(
-    gift_id: int, updates: GiftUpdate, gift_list: OwnedList, db: DbSession
-):
+def update_gift(gift_id: int, updates: GiftUpdate, gift_list: OwnedList, db: DbSession):
     try:
         return gift_service.update_gift(
             db, gift_id, gift_list.id, updates.model_dump(exclude_unset=True)
@@ -40,15 +38,11 @@ def delete_gift(gift_id: int, gift_list: OwnedList, db: DbSession):
     except NotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     except ConflictError as e:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail=str(e)
-        )
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
 
 
 @router.post("/{gift_id}/claim", response_model=GiftRead)
-def claim_gift(
-    gift_id: int, gift_list: ViewableList, user: CurrentUser, db: DbSession
-):
+def claim_gift(gift_id: int, gift_list: ViewableList, user: CurrentUser, db: DbSession):
     try:
         return gift_service.claim_gift(
             db, gift_id, gift_list.id, gift_list.owner_id, user.id

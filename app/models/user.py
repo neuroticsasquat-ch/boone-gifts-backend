@@ -1,10 +1,14 @@
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 import bcrypt
 from sqlalchemy import String, Boolean, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+
+if TYPE_CHECKING:
+    from app.models.gift_list import GiftList
 
 
 class User(Base):
@@ -26,11 +30,7 @@ class User(Base):
     )
 
     def set_password(self, password: str) -> None:
-        self.password_hash = bcrypt.hashpw(
-            password.encode(), bcrypt.gensalt()
-        ).decode()
+        self.password_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
     def check_password(self, password: str) -> bool:
-        return bcrypt.checkpw(
-            password.encode(), self.password_hash.encode()
-        )
+        return bcrypt.checkpw(password.encode(), self.password_hash.encode())
