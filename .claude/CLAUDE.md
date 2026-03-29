@@ -1,7 +1,7 @@
 # Boone Gifts Backend
 
 ## Overview
-FastAPI backend for the Boone Gifts project. Python 3.14, runs entirely in Docker (no host virtual environment).
+FastAPI backend for the Boone Gifts project. Python 3.14, SQLite database.
 
 ## Architecture
 - **Framework**: FastAPI with Uvicorn
@@ -54,7 +54,7 @@ app/
     __init__.py      # Exports User, Invite, GiftList, Gift, ListShare, Connection, Collection, CollectionItem
     user.py          # User model (email, name, password_hash, role, is_active)
     invite.py        # Invite model (token, email, role, expires_at, used_at)
-    gift_list.py     # GiftList model (name, description, owner_id)
+    gift_list.py     # GiftList model (name, description, owner_id, owner relationship)
     gift.py          # Gift model (name, description, url, price, claim tracking)
     list_share.py    # ListShare model (list_id, user_id, unique constraint)
     connection.py    # Connection model (requester_id, addressee_id, status, unique constraint)
@@ -63,7 +63,7 @@ app/
   schemas/
     __init__.py
     user.py          # UserRead, UserUpdate
-    auth.py          # LoginRequest, RegisterRequest, TokenResponse, RefreshRequest, AccessTokenResponse
+    auth.py          # LoginRequest, RegisterRequest, AccessTokenResponse
     invite.py        # InviteCreate, InviteRead
     gift_list.py     # GiftListCreate, GiftListUpdate, GiftListRead, GiftListDetail*, GiftOwnerRead, GiftRead
     gift.py          # GiftCreate, GiftUpdate
@@ -72,7 +72,7 @@ app/
     collection.py    # CollectionCreate, CollectionUpdate, CollectionRead, CollectionDetail, CollectionItemCreate
   routers/
     __init__.py
-    auth.py          # POST /auth/login, /auth/register, /auth/refresh
+    auth.py          # POST /auth/login, /auth/register, /auth/refresh, /auth/logout (HttpOnly cookie refresh tokens)
     users.py         # GET/PUT/DELETE /users (admin-only)
     invites.py       # POST/GET/DELETE /invites (admin-only)
     lists.py         # POST/GET/PUT/DELETE /lists
@@ -97,8 +97,10 @@ tests/
 Top-level `main.py` imports `app` from `app.main`. The app factory (`create_app()`) sets up CORS middleware, includes all routers, and adds a `/health` endpoint that queries the database with `SELECT 1` (returns 503 on failure). Uvicorn serves it as `main:app` on port 8000.
 
 ## Authentication & Authorization
-- **Access token**: JWT HS256, 30 min TTL, contains user id/email/role
-- **Refresh token**: JWT HS256, 7 day TTL, contains user id + type="refresh"
+- **Access token**: JWT HS256, 30 min TTL, contains user id/email/role, returned in JSON body
+- **Refresh token**: JWT HS256, 7 day TTL, contains user id + type="refresh", stored in HttpOnly cookie (`boone_refresh_token`, `Secure`, `SameSite=None`, `Path=/auth`)
+- **Token rotation**: Each call to `/auth/refresh` sets a new cookie
+- **Logout**: `POST /auth/logout` deletes the cookie
 - **JWT `sub` claim**: Must be a string (PyJWT RFC 7519 compliance) — `str(user.id)` when encoding, `int(payload["sub"])` when decoding
 - **Password hashing**: bcrypt
 - **Route protection**: `get_current_user` (401 if invalid), `require_admin` (403 if not admin)
@@ -112,16 +114,15 @@ Top-level `main.py` imports `app` from `app.main`. The app factory (`create_app(
 
 | Variable | Description |
 |---|---|
-| `APP_DATABASE_URL` | MySQL connection string |
-| `APP_TEST_DATABASE_URL` | MySQL connection string for tests |
+| `APP_DATABASE_URL` | SQLite connection string (e.g., `sqlite:///./data/boone_gifts.db`) |
+| `APP_TEST_DATABASE_URL` | SQLite connection string for tests |
 | `APP_JWT_SECRET` | Secret key for JWT signing |
 | `APP_CORS_ORIGINS` | Allowed CORS origins (JSON array) |
 
 ## Testing
-- 130 tests: 22 model + 11 auth + 10 users + 7 invites + 14 lists + 16 gifts + 12 list shares + 20 connections + 18 collections
+- 136 tests: 22 model + 14 auth + 10 users + 7 invites + 17 lists + 16 gifts + 12 list shares + 20 connections + 18 collections
 - Tests run against `boone_gifts_test` database
 - Each test wrapped in a transaction that rolls back (no persistent test data)
-- `cryptography` package required by PyMySQL for MySQL 8's `caching_sha2_password` authentication — do not remove
 
 ## Key Design Decisions
 - **Router endpoints use `db.flush()`, not `db.commit()`** — transaction management is delegated to the caller. In tests, the fixture rolls back; in production, FastAPI's dependency teardown commits. New endpoints should follow this pattern.
@@ -129,3 +130,5 @@ Top-level `main.py` imports `app` from `app.main`. The app factory (`create_app(
 - Uvicorn runs with `--reload` in the container so manual restarts are rarely needed
 - `task restart` restarts the container for edge cases where the file watcher doesn't pick up a change
 - After adding deps with `task add`, run `task up` to rebuild the image so deps persist across container recreations
+- SQLite foreign keys are enabled via a SQLAlchemy event listener on every connection (PRAGMA foreign_keys=ON) — this is required because SQLite disables FK enforcement by default
+- Alembic uses render_as_batch=True for SQLite compatibility — SQLite doesn't support most ALTER TABLE operations, so batch mode recreates tables

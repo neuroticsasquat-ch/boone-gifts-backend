@@ -1,5 +1,5 @@
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from fastapi.testclient import TestClient
 
@@ -7,9 +7,21 @@ from app.config import settings
 from app.database import Base
 from app.dependencies import get_db, create_access_token
 from app.main import app
-from app.models.user import User
+from app.models import User
 
-test_engine = create_engine(settings.test_database_url)
+test_engine = create_engine(
+    settings.test_database_url,
+    connect_args={"check_same_thread": False},
+)
+
+
+@event.listens_for(test_engine, "connect")
+def _set_sqlite_pragma(dbapi_connection, connection_record):
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.close()
+
+
 TestSession = sessionmaker(bind=test_engine)
 
 

@@ -2,8 +2,8 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    database_url: str = "mysql+pymysql://user:password@mysql_db:3306/boone_gifts"
-    test_database_url: str = "mysql+pymysql://user:password@mysql_db:3306/boone_gifts_test"
+    database_url: str = "sqlite:///./data/boone_gifts.db"
+    test_database_url: str = "sqlite:///./data/boone_gifts_test.db"
     jwt_secret: str = "change-me-in-production"
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 30

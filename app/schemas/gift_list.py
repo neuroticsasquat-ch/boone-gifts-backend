@@ -57,6 +57,7 @@ class GiftListDetailOwner(BaseModel):
     name: str
     description: str | None
     owner_id: int
+    owner_name: str
     gifts: list[GiftOwnerRead]
     created_at: datetime
     updated_at: datetime
@@ -69,6 +70,7 @@ class GiftListDetailViewer(BaseModel):
     name: str
     description: str | None
     owner_id: int
+    owner_name: str
     gifts: list[GiftRead]
     created_at: datetime
     updated_at: datetime

@@ -6,7 +6,7 @@ REST API for Boone Gifts, a gift list and wishlist platform. Users create gift l
 
 - **Python 3.14** / **FastAPI** / **Uvicorn**
 - **SQLAlchemy 2.0** (ORM) + **Alembic** (migrations)
-- **MySQL 8** (shared container)
+- **SQLite** (file-based database)
 - **Pydantic v2** (validation & serialization)
 - **PyJWT** + **bcrypt** (auth)
 - **Docker Compose** + **Traefik** (reverse proxy)
@@ -17,7 +17,6 @@ REST API for Boone Gifts, a gift list and wishlist platform. Users create gift l
 
 - Docker Desktop
 - [go-task](https://taskfile.dev/)
-- A running MySQL container on the external `proxy` Docker network
 - A running Traefik instance on the same `proxy` network
 
 ## Setup
@@ -28,7 +27,7 @@ REST API for Boone Gifts, a gift list and wishlist platform. Users create gift l
    cp .env.example .env
    ```
 
-2. Edit `.env` with your MySQL credentials and a JWT secret.
+2. Edit `.env` with a JWT secret. The default SQLite paths work for local development.
 
 3. Build and start the container:
 
@@ -127,8 +126,8 @@ task lock                  # Regenerate lock file
 
 | Variable | Description |
 |---|---|
-| `APP_DATABASE_URL` | MySQL connection string |
-| `APP_TEST_DATABASE_URL` | MySQL connection string for tests |
+| `APP_DATABASE_URL` | SQLite connection string (e.g., `sqlite:///./data/boone_gifts.db`) |
+| `APP_TEST_DATABASE_URL` | SQLite connection string for tests |
 | `APP_JWT_SECRET` | Secret key for JWT signing |
 | `APP_CORS_ORIGINS` | Allowed CORS origins (JSON array) |
 
