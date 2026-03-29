@@ -20,6 +20,9 @@ def build_connection_response(
         else connection.requester_id
     )
     other_user = repo.find_user_by_id(db, other_id)
+    if other_user is None:
+        raise NotFoundError("User not found.")
+
     return {
         "id": connection.id,
         "status": connection.status,
@@ -43,6 +46,8 @@ def create_connection(
     if target_user_id is not None:
         target = repo.find_user_by_id(db, target_user_id)
     else:
+        if target_email is None:
+            raise NotFoundError("Target user not found.")
         target = repo.find_user_by_email(db, target_email)
 
     if target is None:

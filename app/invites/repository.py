@@ -25,7 +25,7 @@ def create_invite(
 
 
 def get_all_invites(db: Session) -> list[Invite]:
-    return db.execute(select(Invite)).scalars().all()
+    return list(db.execute(select(Invite)).scalars().all())
 
 
 def find_invite_by_id(db: Session, invite_id: int) -> Invite | None:

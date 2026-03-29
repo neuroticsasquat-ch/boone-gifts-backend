@@ -56,7 +56,7 @@ def find_connection_by_id(db: Session, connection_id: int) -> Connection | None:
 
 
 def get_accepted_connections(db: Session, user_id: int) -> list[Connection]:
-    return (
+    return list(
         db.execute(
             select(Connection).where(
                 Connection.status == "accepted",
@@ -72,7 +72,7 @@ def get_accepted_connections(db: Session, user_id: int) -> list[Connection]:
 
 
 def get_pending_requests(db: Session, user_id: int) -> list[Connection]:
-    return (
+    return list(
         db.execute(
             select(Connection).where(
                 Connection.status == "pending",

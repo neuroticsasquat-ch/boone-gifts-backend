@@ -23,7 +23,7 @@ def create_share(db: Session, list_id: int, user_id: int) -> ListShare:
 
 
 def get_shares_for_list(db: Session, list_id: int) -> list[ListShare]:
-    return (
+    return list(
         db.execute(select(ListShare).where(ListShare.list_id == list_id))
         .scalars()
         .all()
@@ -39,7 +39,7 @@ def find_collection_items_for_unshare(
     db: Session, list_id: int, user_id: int
 ) -> list[CollectionItem]:
     collection_ids = select(Collection.id).where(Collection.owner_id == user_id)
-    return (
+    return list(
         db.execute(
             select(CollectionItem).where(
                 CollectionItem.collection_id.in_(collection_ids),

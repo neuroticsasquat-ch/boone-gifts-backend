@@ -5,7 +5,7 @@ from app.models.user import User
 
 
 def get_all_users(db: Session) -> list[User]:
-    return db.execute(select(User)).scalars().all()
+    return list(db.execute(select(User)).scalars().all())
 
 
 def find_user_by_id(db: Session, user_id: int) -> User | None:

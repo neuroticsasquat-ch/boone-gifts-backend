@@ -17,7 +17,7 @@ def create_collection(
 
 
 def get_collections_for_user(db: Session, owner_id: int) -> list[Collection]:
-    return (
+    return list(
         db.execute(select(Collection).where(Collection.owner_id == owner_id))
         .scalars()
         .all()
@@ -32,7 +32,9 @@ def get_lists_for_collection(db: Session, collection: Collection) -> list[GiftLi
     list_ids = [item.list_id for item in collection.items]
     if not list_ids:
         return []
-    return db.execute(select(GiftList).where(GiftList.id.in_(list_ids))).scalars().all()
+    return list(
+        db.execute(select(GiftList).where(GiftList.id.in_(list_ids))).scalars().all()
+    )
 
 
 def update_collection(
