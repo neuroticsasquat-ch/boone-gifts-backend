@@ -59,8 +59,8 @@ OG_PRICE_HTML = """
 
 
 def test_meta_with_og_tags(client, member_headers):
-    with patch("app.routers.meta._resolve_and_validate_url"):
-        with patch("app.routers.meta._fetch_url", return_value=_mock_html_response(OG_HTML)):
+    with patch("app.meta.service._resolve_and_validate_url"):
+        with patch("app.meta.service._fetch_url", return_value=_mock_html_response(OG_HTML)):
             response = client.get(
                 "/meta",
                 params={"url": "https://example.com/product"},
@@ -75,8 +75,8 @@ def test_meta_with_og_tags(client, member_headers):
 
 
 def test_meta_with_basic_html_tags(client, member_headers):
-    with patch("app.routers.meta._resolve_and_validate_url"):
-        with patch("app.routers.meta._fetch_url", return_value=_mock_html_response(BASIC_HTML)):
+    with patch("app.meta.service._resolve_and_validate_url"):
+        with patch("app.meta.service._fetch_url", return_value=_mock_html_response(BASIC_HTML)):
             response = client.get(
                 "/meta",
                 params={"url": "https://example.com/page"},
@@ -91,8 +91,8 @@ def test_meta_with_basic_html_tags(client, member_headers):
 
 
 def test_meta_with_no_relevant_tags(client, member_headers):
-    with patch("app.routers.meta._resolve_and_validate_url"):
-        with patch("app.routers.meta._fetch_url", return_value=_mock_html_response(EMPTY_HTML)):
+    with patch("app.meta.service._resolve_and_validate_url"):
+        with patch("app.meta.service._fetch_url", return_value=_mock_html_response(EMPTY_HTML)):
             response = client.get(
                 "/meta",
                 params={"url": "https://example.com/empty"},
@@ -107,8 +107,8 @@ def test_meta_with_no_relevant_tags(client, member_headers):
 
 
 def test_meta_og_price_fallback(client, member_headers):
-    with patch("app.routers.meta._resolve_and_validate_url"):
-        with patch("app.routers.meta._fetch_url", return_value=_mock_html_response(OG_PRICE_HTML)):
+    with patch("app.meta.service._resolve_and_validate_url"):
+        with patch("app.meta.service._fetch_url", return_value=_mock_html_response(OG_PRICE_HTML)):
             response = client.get(
                 "/meta",
                 params={"url": "https://example.com/widget"},
@@ -120,8 +120,8 @@ def test_meta_og_price_fallback(client, member_headers):
 
 
 def test_meta_non_html_content_type(client, member_headers):
-    with patch("app.routers.meta._resolve_and_validate_url"):
-        with patch("app.routers.meta._fetch_url", return_value=_mock_html_response('{"key": "value"}', "application/json")):
+    with patch("app.meta.service._resolve_and_validate_url"):
+        with patch("app.meta.service._fetch_url", return_value=_mock_html_response('{"key": "value"}', "application/json")):
             response = client.get(
                 "/meta",
                 params={"url": "https://example.com/api.json"},
@@ -159,8 +159,8 @@ def test_meta_unauthenticated(client):
 
 
 def test_meta_fetch_failure(client, member_headers):
-    with patch("app.routers.meta._resolve_and_validate_url"):
-        with patch("app.routers.meta._fetch_url", side_effect=Exception("Connection failed")):
+    with patch("app.meta.service._resolve_and_validate_url"):
+        with patch("app.meta.service._fetch_url", side_effect=Exception("Connection failed")):
             response = client.get(
                 "/meta",
                 params={"url": "https://example.com/down"},

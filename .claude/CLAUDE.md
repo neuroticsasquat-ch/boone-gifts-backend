@@ -47,10 +47,10 @@ Taskfile.yaml        # All dev commands under app: namespace
 alembic.ini          # Alembic config (DB URL set in env.py, not here)
 app/
   __init__.py
-  main.py            # FastAPI app factory with CORS, routers, /health endpoint
+  main.py            # FastAPI app factory with CORS, domain routers, /health endpoint
   config.py          # Settings via pydantic-settings (APP_ env prefix, .env file)
   database.py        # SQLAlchemy engine, sessionmaker, Base
-  dependencies.py    # get_db, JWT token creation, get_current_user, require_admin, list access deps, require_connection, get_collection_for_owner
+  dependencies.py    # get_db, JWT token creation, get_current_user, require_admin, list/collection access deps, require_connection
   models/
     __init__.py      # Exports User, Invite, GiftList, Gift, ListShare, Connection, Collection, CollectionItem
     user.py          # User model (email, name, password_hash, role, is_active)
@@ -72,17 +72,44 @@ app/
     connection.py    # ConnectionCreate, ConnectionUserRead, ConnectionRead
     collection.py    # CollectionCreate, CollectionUpdate, CollectionRead, CollectionDetail, CollectionItemCreate
     meta.py          # UrlMetaResponse
-  routers/
+  services/
     __init__.py
-    auth.py          # POST /auth/login, /auth/register, /auth/refresh, /auth/logout (HttpOnly cookie refresh tokens)
-    users.py         # GET/PUT/DELETE /users (admin-only)
-    invites.py       # POST/GET/DELETE /invites (admin-only)
-    lists.py         # POST/GET/PUT/DELETE /lists
-    gifts.py         # POST/PUT/DELETE /lists/{id}/gifts, POST/DELETE claim
-    list_shares.py   # POST/GET/DELETE /lists/{id}/shares
-    connections.py   # POST/GET/DELETE /connections, GET /connections/requests, POST accept
-    collections.py   # POST/GET/PUT/DELETE /collections, POST/DELETE /collections/{id}/items
-    meta.py          # GET /meta — fetch URL metadata (title, description, price, image) with SSRF protection
+    exceptions.py    # Shared domain exceptions (NotFoundError, ForbiddenError, ConflictError, BadRequestError)
+  auth/              # Each domain package has router.py, service.py, repository.py
+    router.py        # POST /auth/login, /auth/register, /auth/refresh, /auth/logout
+    service.py       # Login, registration, refresh token validation
+    repository.py    # User/invite lookups for auth
+  users/
+    router.py        # GET/PUT/DELETE /users (admin-only)
+    service.py       # User CRUD logic
+    repository.py    # User queries
+  invites/
+    router.py        # POST/GET/DELETE /invites (admin-only)
+    service.py       # Invite creation with expiration, deletion
+    repository.py    # Invite queries
+  lists/
+    router.py        # POST/GET/PUT/DELETE /lists
+    service.py       # List CRUD, filter logic, owner vs viewer response
+    repository.py    # List queries including shared list lookups
+  gifts/
+    router.py        # POST/PUT/DELETE /lists/{id}/gifts, POST/DELETE claim
+    service.py       # Gift CRUD, claim/unclaim logic
+    repository.py    # Gift queries
+  shares/
+    router.py        # POST/GET/DELETE /lists/{id}/shares
+    service.py       # Share creation with connection check, cascade on unshare
+    repository.py    # Share and collection item queries
+  connections/
+    router.py        # POST/GET/DELETE /connections, GET /requests, POST accept
+    service.py       # Connection lifecycle, cascade disconnect
+    repository.py    # Connection queries, cascade operations (unclaim, revoke shares, remove collection items)
+  collections/
+    router.py        # POST/GET/PUT/DELETE /collections, POST/DELETE items
+    service.py       # Collection CRUD, add/remove items with access checks
+    repository.py    # Collection and collection item queries
+  meta/
+    router.py        # GET /meta — fetch URL metadata
+    service.py       # URL validation, SSRF protection, HTML parsing, metadata extraction
   cli/
     __init__.py
     create_admin.py  # Interactive CLI to create first admin user
@@ -91,10 +118,14 @@ alembic/
   versions/          # Migration scripts
 tests/
   __init__.py
-  conftest.py        # Test fixtures: db, client, admin_user, member_user, tokens, headers, sample_list, shared_list, connection, collection, collection_item
-  models/            # Model unit tests (user, invite, gift_list, gift, list_share, connection, collection)
-  routers/           # Endpoint tests (auth, users, invites, lists, gifts, list_shares, connections, collections)
-  test_meta.py     # Endpoint tests for URL metadata fetching
+  unit/
+    services/        # Unit tests for each domain service (mocked repo, no database)
+      test_auth.py, test_users.py, test_invites.py, test_lists.py, test_gifts.py,
+      test_shares.py, test_connections.py, test_collections.py, test_meta.py
+  integration/
+    conftest.py      # Test fixtures: db, client, users, tokens, headers, sample data
+    models/          # Model integration tests (user, invite, gift_list, gift, list_share, connection, collection)
+    routers/         # Endpoint integration tests (auth, users, invites, lists, gifts, list_shares, connections, collections, meta)
 ```
 
 ## App Entrypoint
@@ -124,9 +155,10 @@ Top-level `main.py` imports `app` from `app.main`. The app factory (`create_app(
 | `APP_CORS_ORIGINS` | Allowed CORS origins (JSON array) |
 
 ## Testing
-- 145 tests: 22 model + 14 auth + 10 users + 7 invites + 17 lists + 16 gifts + 12 list shares + 20 connections + 18 collections + 9 meta
-- Tests run against `boone_gifts_test` database
-- Each test wrapped in a transaction that rolls back (no persistent test data)
+- 238 tests: 93 unit + 145 integration
+- Unit tests (`tests/unit/`) mock the repo layer and test service logic in isolation
+- Integration tests (`tests/integration/`) run against the SQLite test database
+- Each integration test wrapped in a transaction that rolls back (no persistent test data)
 
 ## Key Design Decisions
 - **Router endpoints use `db.flush()`, not `db.commit()`** — transaction management is delegated to the caller. In tests, the fixture rolls back; in production, FastAPI's dependency teardown commits. New endpoints should follow this pattern.
@@ -136,3 +168,4 @@ Top-level `main.py` imports `app` from `app.main`. The app factory (`create_app(
 - After adding deps with `task add`, run `task up` to rebuild the image so deps persist across container recreations
 - SQLite foreign keys are enabled via a SQLAlchemy event listener on every connection (PRAGMA foreign_keys=ON) — this is required because SQLite disables FK enforcement by default
 - Alembic uses render_as_batch=True for SQLite compatibility — SQLite doesn't support most ALTER TABLE operations, so batch mode recreates tables
+- **Domain package architecture** — each domain (auth, users, invites, lists, gifts, shares, connections, collections, meta) is a package with `router.py` (thin HTTP wrapper), `service.py` (business logic, raises domain exceptions), and `repository.py` (database queries). Shared exceptions live in `app/services/exceptions.py`.

@@ -1,0 +1,88 @@
+from fastapi import APIRouter, Cookie, HTTPException, Response, status
+
+from app.auth import service as auth_service
+from app.config import settings
+from app.dependencies import DbSession
+from app.schemas.auth import (
+    AccessTokenResponse,
+    LoginRequest,
+    RegisterRequest,
+)
+from app.services.exceptions import BadRequestError, UnauthorizedError
+
+router = APIRouter(prefix="/auth", tags=["auth"])
+
+REFRESH_COOKIE_NAME = "boone_refresh_token"
+REFRESH_COOKIE_MAX_AGE = settings.refresh_token_expire_days * 86400
+
+
+def set_refresh_cookie(response: Response, token: str) -> None:
+    response.set_cookie(
+        key=REFRESH_COOKIE_NAME,
+        value=token,
+        httponly=True,
+        secure=True,
+        samesite="none",
+        path="/auth",
+        max_age=REFRESH_COOKIE_MAX_AGE,
+    )
+
+
+def delete_refresh_cookie(response: Response) -> None:
+    response.delete_cookie(
+        key=REFRESH_COOKIE_NAME,
+        httponly=True,
+        secure=True,
+        samesite="none",
+        path="/auth",
+    )
+
+
+@router.post("/login", response_model=AccessTokenResponse)
+def login(request: LoginRequest, response: Response, db: DbSession):
+    try:
+        tokens = auth_service.login(db, request.email, request.password)
+    except UnauthorizedError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
+
+    set_refresh_cookie(response, tokens["refresh_token"])
+    return AccessTokenResponse(access_token=tokens["access_token"])
+
+
+@router.post("/register", response_model=AccessTokenResponse)
+def register(request: RegisterRequest, response: Response, db: DbSession):
+    try:
+        tokens = auth_service.register(
+            db, request.token, request.name, request.password
+        )
+    except BadRequestError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+
+    set_refresh_cookie(response, tokens["refresh_token"])
+    return AccessTokenResponse(access_token=tokens["access_token"])
+
+
+@router.post("/refresh", response_model=AccessTokenResponse)
+def refresh(
+    response: Response,
+    db: DbSession,
+    boone_refresh_token: str | None = Cookie(default=None),
+):
+    if boone_refresh_token is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
+
+    try:
+        tokens = auth_service.refresh(db, boone_refresh_token)
+    except UnauthorizedError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
+
+    set_refresh_cookie(response, tokens["refresh_token"])
+    return AccessTokenResponse(access_token=tokens["access_token"])
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+def logout(response: Response):
+    delete_refresh_cookie(response)

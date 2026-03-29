@@ -4,7 +4,7 @@ from typing import Annotated
 import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -124,7 +124,7 @@ def get_list_for_viewer(
 OwnedList = Annotated[GiftList, Depends(get_list_for_owner)]
 ViewableList = Annotated[GiftList, Depends(get_list_for_viewer)]
 
-from app.models.connection import Connection
+from app.connections.repository import find_accepted_connection_between
 
 
 def require_connection(
@@ -132,27 +132,7 @@ def require_connection(
     current_user: User,
     db: Session,
 ) -> None:
-    """Check for an accepted connection between two users.
-
-    Parameters:
-        target_user_id: The other user's ID.
-        current_user: The authenticated user.
-        db: Database session.
-
-    Raises:
-        HTTPException: 403 if no accepted connection exists.
-    """
-    connection = db.execute(
-        select(Connection).where(
-            Connection.status == "accepted",
-            or_(
-                (Connection.requester_id == current_user.id)
-                & (Connection.addressee_id == target_user_id),
-                (Connection.requester_id == target_user_id)
-                & (Connection.addressee_id == current_user.id),
-            ),
-        )
-    ).scalar_one_or_none()
+    connection = find_accepted_connection_between(db, current_user.id, target_user_id)
     if connection is None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

@@ -4,7 +4,15 @@ from sqlalchemy import text
 
 from app.config import settings
 from app.database import engine
-from app.routers import auth, users, invites, lists, gifts, list_shares, connections, collections, meta
+from app.auth import router as auth
+from app.users import router as users
+from app.invites import router as invites
+from app.lists import router as lists
+from app.gifts import router as gifts
+from app.shares import router as shares
+from app.connections import router as connections
+from app.collections import router as collections_
+from app.meta import router as meta
 
 
 def create_app() -> FastAPI:
@@ -23,9 +31,9 @@ def create_app() -> FastAPI:
     application.include_router(invites.router)
     application.include_router(lists.router)
     application.include_router(gifts.router)
-    application.include_router(list_shares.router)
+    application.include_router(shares.router)
     application.include_router(connections.router)
-    application.include_router(collections.router)
+    application.include_router(collections_.router)
     application.include_router(meta.router)
 
     @application.get("/health")

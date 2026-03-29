@@ -4,12 +4,9 @@ from html.parser import HTMLParser
 from urllib.parse import urlparse
 
 import httpx
-from fastapi import APIRouter, HTTPException, Query, status
 
-from app.dependencies import CurrentUser
 from app.schemas.meta import UrlMetaResponse
-
-router = APIRouter(prefix="/meta", tags=["meta"])
+from app.services.exceptions import BadRequestError
 
 _USER_AGENT = "Mozilla/5.0 (compatible; BooneGifts/1.0)"
 _TIMEOUT = 5.0
@@ -87,20 +84,17 @@ def _resolve_and_validate_url(url: str) -> None:
     parsed = urlparse(url)
     hostname = parsed.hostname
     if not hostname:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid URL.")
+        raise BadRequestError("Invalid URL.")
     try:
         addr_info = socket.getaddrinfo(hostname, None)
     except socket.gaierror:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Could not resolve hostname."
-        )
+        raise BadRequestError("Could not resolve hostname.")
     for _, _, _, _, sockaddr in addr_info:
         ip = ipaddress.ip_address(sockaddr[0])
         for network in _BLOCKED_NETWORKS:
             if ip in network:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="URLs pointing to private networks are not allowed.",
+                raise BadRequestError(
+                    "URLs pointing to private networks are not allowed."
                 )
 
 
@@ -124,13 +118,15 @@ def _parse_html(html: str) -> UrlMetaResponse:
     return parser.extract()
 
 
-@router.get("", response_model=UrlMetaResponse)
-def get_url_meta(user: CurrentUser, url: str = Query(...)) -> UrlMetaResponse:
+def get_url_meta(url: str) -> UrlMetaResponse:
+    """Validate, fetch, and parse a URL for metadata.
+
+    Raises BadRequestError for invalid URLs or private IPs.
+    Returns empty UrlMetaResponse for fetch failures or non-HTML content.
+    """
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="URL must use http or https."
-        )
+        raise BadRequestError("URL must use http or https.")
 
     _resolve_and_validate_url(url)
 
