@@ -3,7 +3,7 @@ version: "3"
 tasks:
   up:
     desc: Build and start containers in detached mode
-    cmd: docker compose up -d --build
+    cmd: docker compose up --build
 
   down:
     desc: Stop and remove containers
