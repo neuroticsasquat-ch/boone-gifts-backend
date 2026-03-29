@@ -9,6 +9,7 @@ FastAPI backend for the Boone Gifts project. Python 3.14, SQLite database.
 - **Validation**: Pydantic v2 (v2.12+) — uses `model_config`, `model_dump()`, `from_attributes` (not Pydantic v1 patterns like `class Config`, `.dict()`, `orm_mode`)
 - **Config**: pydantic-settings with `env_prefix` and `env_file`
 - **Auth**: JWT (PyJWT) with bcrypt password hashing
+- **HTTP Client**: httpx (fetching external URLs)
 - **Migrations**: Alembic (autogenerate from SQLAlchemy models)
 - **Package management**: uv in project mode (`pyproject.toml` + `uv.lock`)
 - **Testing**: pytest + FastAPI TestClient with transactional test fixtures
@@ -70,6 +71,7 @@ app/
     list_share.py    # ListShareCreate, ListShareRead
     connection.py    # ConnectionCreate, ConnectionUserRead, ConnectionRead
     collection.py    # CollectionCreate, CollectionUpdate, CollectionRead, CollectionDetail, CollectionItemCreate
+    meta.py          # UrlMetaResponse
   routers/
     __init__.py
     auth.py          # POST /auth/login, /auth/register, /auth/refresh, /auth/logout (HttpOnly cookie refresh tokens)
@@ -80,6 +82,7 @@ app/
     list_shares.py   # POST/GET/DELETE /lists/{id}/shares
     connections.py   # POST/GET/DELETE /connections, GET /connections/requests, POST accept
     collections.py   # POST/GET/PUT/DELETE /collections, POST/DELETE /collections/{id}/items
+    meta.py          # GET /meta — fetch URL metadata (title, description, price, image) with SSRF protection
   cli/
     __init__.py
     create_admin.py  # Interactive CLI to create first admin user
@@ -91,6 +94,7 @@ tests/
   conftest.py        # Test fixtures: db, client, admin_user, member_user, tokens, headers, sample_list, shared_list, connection, collection, collection_item
   models/            # Model unit tests (user, invite, gift_list, gift, list_share, connection, collection)
   routers/           # Endpoint tests (auth, users, invites, lists, gifts, list_shares, connections, collections)
+  test_meta.py     # Endpoint tests for URL metadata fetching
 ```
 
 ## App Entrypoint
@@ -120,7 +124,7 @@ Top-level `main.py` imports `app` from `app.main`. The app factory (`create_app(
 | `APP_CORS_ORIGINS` | Allowed CORS origins (JSON array) |
 
 ## Testing
-- 136 tests: 22 model + 14 auth + 10 users + 7 invites + 17 lists + 16 gifts + 12 list shares + 20 connections + 18 collections
+- 145 tests: 22 model + 14 auth + 10 users + 7 invites + 17 lists + 16 gifts + 12 list shares + 20 connections + 18 collections + 9 meta
 - Tests run against `boone_gifts_test` database
 - Each test wrapped in a transaction that rolls back (no persistent test data)
 

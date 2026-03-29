@@ -122,6 +122,9 @@ task lock                  # Regenerate lock file
 - `POST /collections/{id}/items` -- Add a list to a collection
 - `DELETE /collections/{id}/items/{list_id}` -- Remove a list from a collection
 
+### Meta (`/meta`)
+- `GET /meta` -- Fetch URL metadata (title, description, price, image)
+
 ## Environment Variables
 
 | Variable | Description |
@@ -137,4 +140,4 @@ task lock                  # Regenerate lock file
 task test
 ```
 
-130 tests run against a separate test database. Each test is wrapped in a transaction that rolls back, leaving no persistent data.
+145 tests run against a separate test database. Each test is wrapped in a transaction that rolls back, leaving no persistent data.

@@ -11,6 +11,7 @@ dependencies = [
     "pyjwt>=2.11.0",
     "bcrypt>=5.0.0",
     "alembic>=1.18.3",
+    "httpx>=0.28.1",
 ]
 
 [tool.pytest.ini_options]
@@ -21,5 +22,4 @@ filterwarnings = [
 [dependency-groups]
 dev = [
     "pytest>=9.0.2",
-    "httpx>=0.28.1",
 ]
