@@ -4,7 +4,7 @@ version = "0.1.0"
 requires-python = ">=3.14"
 dependencies = [
     "fastapi>=0.128.5",
-    "uvicorn>=0.40.0",
+    "uvicorn>=0.44.0",
     "sqlalchemy>=2.0.46",
     "pydantic>=2.12.5",
     "pydantic-settings>=2.12.0",
@@ -22,6 +22,6 @@ filterwarnings = [
 [dependency-groups]
 dev = [
     "pyright[nodejs]>=1.1.408",
-    "pytest>=9.0.2",
-    "ruff>=0.15.8",
+    "pytest>=9.0.3",
+    "ruff>=0.15.10",
 ]
