@@ -1,3 +1,4 @@
+import argparse
 import sys
 
 from sqlalchemy import select
@@ -7,11 +8,17 @@ from app.models.user import User
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Create an admin user")
+    parser.add_argument("--email", help="Admin email")
+    parser.add_argument("--name", help="Admin name")
+    parser.add_argument("--password", help="Admin password")
+    args = parser.parse_args()
+
     Base.metadata.create_all(bind=engine)
 
-    email = input("Email: ").strip()
-    name = input("Name: ").strip()
-    password = input("Password: ").strip()
+    email = (args.email or input("Email: ")).strip()
+    name = (args.name or input("Name: ")).strip()
+    password = (args.password or input("Password: ")).strip()
 
     if not all([email, name, password]):
         print("All fields are required.")
