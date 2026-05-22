@@ -78,6 +78,7 @@ def refresh(db: Session, refresh_token: str) -> dict:
             refresh_token,
             settings.jwt_secret,
             algorithms=[settings.jwt_algorithm],
+            options={"verify_iat": False},
         )
     except jwt.InvalidTokenError:
         raise UnauthorizedError()
@@ -122,6 +123,27 @@ def forgot_password(db: Session, email: str) -> None:
         send_email(to=user.email, subject=subject, html=html, text=text)
     except Exception:
         logger.exception("Failed to send password reset email to %s", user.email)
+
+
+def change_password(
+    db: Session, user, current_password: str, new_password: str
+) -> dict:
+    """Change a logged-in user's password and issue fresh tokens.
+
+    Raises:
+        BadRequestError: If current_password does not match.
+    """
+    if not user.check_password(current_password):
+        raise BadRequestError("Current password is incorrect.")
+
+    repo.update_user_password(db, user, new_password)
+
+    # iat=password_changed_at so the freshly-issued tokens pass the
+    # `password_changed_at > iat` invalidation check on subsequent requests.
+    return {
+        "access_token": create_access_token(user, iat=user.password_changed_at),
+        "refresh_token": create_refresh_token(user, iat=user.password_changed_at),
+    }
 
 
 def reset_password(db: Session, raw_token: str, new_password: str) -> None:

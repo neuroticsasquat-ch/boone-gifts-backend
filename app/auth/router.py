@@ -2,7 +2,7 @@ from fastapi import APIRouter, Cookie, HTTPException, Request, Response, status
 
 from app.auth import service as auth_service
 from app.config import settings
-from app.dependencies import DbSession
+from app.dependencies import CurrentUser, DbSession
 from app.rate_limit import (
     forgot_password_limit,
     limiter,
@@ -12,6 +12,7 @@ from app.rate_limit import (
 )
 from app.schemas.auth import (
     AccessTokenResponse,
+    ChangePasswordRequest,
     ForgotPasswordRequest,
     GenericMessageResponse,
     LoginRequest,
@@ -116,6 +117,27 @@ def reset_password(body: ResetPasswordRequest, db: DbSession):
             detail=str(e),
         )
     return GenericMessageResponse(message="Password updated.")
+
+
+@router.post("/change-password", response_model=AccessTokenResponse)
+def change_password(
+    body: ChangePasswordRequest,
+    response: Response,
+    user: CurrentUser,
+    db: DbSession,
+):
+    try:
+        tokens = auth_service.change_password(
+            db, user, body.current_password, body.new_password
+        )
+    except BadRequestError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+
+    set_refresh_cookie(response, tokens["refresh_token"])
+    return AccessTokenResponse(access_token=tokens["access_token"])
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
