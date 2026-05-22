@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     rate_limit_register: str = "5/minute"
     rate_limit_refresh: str = "30/minute"
 
+    frontend_url: str = "https://boone-gifts.localhost"
+
     email_provider: str = "log"
     email_from: str = "Boone Gifts <noreply@boone-gifts.localhost>"
     email_smtp_host: str = "localhost"
