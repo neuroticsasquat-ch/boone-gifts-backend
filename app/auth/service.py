@@ -1,10 +1,21 @@
+import hashlib
+import logging
+import secrets
+from datetime import datetime, timedelta, timezone
+
 import jwt
 from sqlalchemy.orm import Session
 
 from app.auth import repository as repo
 from app.config import settings
 from app.dependencies import create_access_token, create_refresh_token
+from app.email import send_email
+from app.email.password_reset import render_password_reset_email
 from app.services.exceptions import BadRequestError, UnauthorizedError
+
+logger = logging.getLogger(__name__)
+
+PASSWORD_RESET_TOKEN_TTL = timedelta(hours=1)
 
 
 def login(db: Session, email: str, password: str) -> dict:
@@ -59,7 +70,8 @@ def refresh(db: Session, refresh_token: str) -> dict:
 
     Raises:
         UnauthorizedError: If the token is missing, invalid, not a refresh
-            token, or the user is inactive/missing.
+            token, the user is inactive/missing, or the token was issued
+            before the user's last password change.
     """
     try:
         payload = jwt.decode(
@@ -77,7 +89,79 @@ def refresh(db: Session, refresh_token: str) -> dict:
     if user is None or not user.is_active:
         raise UnauthorizedError()
 
+    if _token_invalidated_by_password_change(payload, user.password_changed_at):
+        raise UnauthorizedError()
+
     return {
         "access_token": create_access_token(user),
         "refresh_token": create_refresh_token(user),
     }
+
+
+def forgot_password(db: Session, email: str) -> None:
+    """Issue and email a password reset token if the email matches a user.
+
+    Always succeeds silently to avoid user enumeration. Email failures are
+    logged but do not surface to the caller.
+    """
+    user = repo.find_user_by_email(db, email)
+    if user is None or not user.is_active:
+        return
+
+    raw_token = secrets.token_urlsafe(32)
+    token_hash = _hash_reset_token(raw_token)
+    expires_at = datetime.now(timezone.utc) + PASSWORD_RESET_TOKEN_TTL
+    repo.create_password_reset_token(db, user.id, token_hash, expires_at)
+
+    subject, html, text = render_password_reset_email(
+        token=raw_token,
+        expires_at=expires_at,
+        frontend_url=settings.frontend_url,
+    )
+    try:
+        send_email(to=user.email, subject=subject, html=html, text=text)
+    except Exception:
+        logger.exception("Failed to send password reset email to %s", user.email)
+
+
+def reset_password(db: Session, raw_token: str, new_password: str) -> None:
+    """Consume a password reset token and update the user's password.
+
+    Raises:
+        BadRequestError: If the token is missing, expired, or already used.
+    """
+    token_hash = _hash_reset_token(raw_token)
+    token = repo.find_password_reset_token(db, token_hash)
+
+    if token is None or token.used_at is not None:
+        raise BadRequestError("Invalid or expired reset token.")
+
+    expires_at = token.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at < datetime.now(timezone.utc):
+        raise BadRequestError("Invalid or expired reset token.")
+
+    user = repo.find_user_by_id(db, token.user_id)
+    if user is None or not user.is_active:
+        raise BadRequestError("Invalid or expired reset token.")
+
+    repo.update_user_password(db, user, new_password)
+    repo.mark_password_reset_token_used(db, token)
+
+
+def _hash_reset_token(raw: str) -> str:
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def _token_invalidated_by_password_change(
+    payload: dict, password_changed_at: datetime | None
+) -> bool:
+    if password_changed_at is None:
+        return False
+    iat = payload.get("iat")
+    if iat is None:
+        return True
+    if password_changed_at.tzinfo is None:
+        password_changed_at = password_changed_at.replace(tzinfo=timezone.utc)
+    return int(password_changed_at.timestamp()) > int(iat)

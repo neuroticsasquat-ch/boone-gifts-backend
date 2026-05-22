@@ -21,6 +21,10 @@ def refresh_limit() -> str:
     return settings.rate_limit_refresh
 
 
+def forgot_password_limit() -> str:
+    return settings.rate_limit_forgot_password
+
+
 def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
     try:
         item = exc.limit.limit
