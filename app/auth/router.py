@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Cookie, HTTPException, Response, status
+from fastapi import APIRouter, Cookie, HTTPException, Request, Response, status
 
 from app.auth import service as auth_service
 from app.config import settings
 from app.dependencies import DbSession
+from app.rate_limit import limiter, login_limit, refresh_limit, register_limit
 from app.schemas.auth import (
     AccessTokenResponse,
     LoginRequest,
@@ -39,9 +40,10 @@ def delete_refresh_cookie(response: Response) -> None:
 
 
 @router.post("/login", response_model=AccessTokenResponse)
-def login(request: LoginRequest, response: Response, db: DbSession):
+@limiter.limit(login_limit)
+def login(request: Request, body: LoginRequest, response: Response, db: DbSession):
     try:
-        tokens = auth_service.login(db, request.email, request.password)
+        tokens = auth_service.login(db, body.email, body.password)
     except UnauthorizedError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
 
@@ -50,10 +52,11 @@ def login(request: LoginRequest, response: Response, db: DbSession):
 
 
 @router.post("/register", response_model=AccessTokenResponse)
-def register(request: RegisterRequest, response: Response, db: DbSession):
+@limiter.limit(register_limit)
+def register(request: Request, body: RegisterRequest, response: Response, db: DbSession):
     try:
         tokens = auth_service.register(
-            db, request.token, request.name, request.password
+            db, body.token, body.name, body.password
         )
     except BadRequestError as e:
         raise HTTPException(
@@ -66,7 +69,9 @@ def register(request: RegisterRequest, response: Response, db: DbSession):
 
 
 @router.post("/refresh", response_model=AccessTokenResponse)
+@limiter.limit(refresh_limit)
 def refresh(
+    request: Request,
     response: Response,
     db: DbSession,
     boone_refresh_token: str | None = Cookie(default=None),
