@@ -33,25 +33,25 @@ DbSession = Annotated[Session, Depends(get_db)]
 security = HTTPBearer()
 
 
-def create_access_token(user: User) -> str:
-    now = datetime.now(timezone.utc)
+def create_access_token(user: User, *, iat: datetime | None = None) -> str:
+    issued_at = iat or datetime.now(timezone.utc)
     payload = {
         "sub": str(user.id),
         "email": user.email,
         "role": user.role,
-        "iat": now,
-        "exp": now + timedelta(minutes=settings.access_token_expire_minutes),
+        "iat": issued_at,
+        "exp": issued_at + timedelta(minutes=settings.access_token_expire_minutes),
     }
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
-def create_refresh_token(user: User) -> str:
-    now = datetime.now(timezone.utc)
+def create_refresh_token(user: User, *, iat: datetime | None = None) -> str:
+    issued_at = iat or datetime.now(timezone.utc)
     payload = {
         "sub": str(user.id),
         "type": "refresh",
-        "iat": now,
-        "exp": now + timedelta(days=settings.refresh_token_expire_days),
+        "iat": issued_at,
+        "exp": issued_at + timedelta(days=settings.refresh_token_expire_days),
     }
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
@@ -65,6 +65,7 @@ def get_current_user(
             credentials.credentials,
             settings.jwt_secret,
             algorithms=[settings.jwt_algorithm],
+            options={"verify_iat": False},
         )
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
