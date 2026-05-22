@@ -18,6 +18,10 @@ dependencies = [
 [tool.pytest.ini_options]
 filterwarnings = [
     "ignore::jwt.warnings.InsecureKeyLengthWarning",
+    # slowapi 0.1.9 calls asyncio.iscoroutinefunction which is deprecated in
+    # Python 3.14 (removed in 3.16). Upstream fix is pending — silence until
+    # slowapi releases a new version.
+    "ignore:'asyncio.iscoroutinefunction' is deprecated:DeprecationWarning:slowapi.extension",
 ]
 
 [dependency-groups]

@@ -120,7 +120,8 @@ def test_refresh_token(client, admin_user):
     })
     refresh_cookie = login.cookies[COOKIE_NAME]
 
-    response = client.post("/auth/refresh", cookies={COOKIE_NAME: refresh_cookie})
+    client.cookies.set(COOKIE_NAME, refresh_cookie)
+    response = client.post("/auth/refresh")
     assert response.status_code == 200
     data = response.json()
     assert "access_token" in data
@@ -130,12 +131,14 @@ def test_refresh_token(client, admin_user):
 
 
 def test_refresh_with_access_token_fails(client, admin_token):
-    response = client.post("/auth/refresh", cookies={COOKIE_NAME: admin_token})
+    client.cookies.set(COOKIE_NAME, admin_token)
+    response = client.post("/auth/refresh")
     assert response.status_code == 401
 
 
 def test_refresh_with_invalid_token(client):
-    response = client.post("/auth/refresh", cookies={COOKIE_NAME: "garbage"})
+    client.cookies.set(COOKIE_NAME, "garbage")
+    response = client.post("/auth/refresh")
     assert response.status_code == 401
 
 
