@@ -18,6 +18,11 @@ class Settings(BaseSettings):
     refresh_token_expire_days: int = 7
     cors_origins: list[str] = ["http://localhost:3000"]
 
+    rate_limit_enabled: bool = True
+    rate_limit_login: str = "10/minute"
+    rate_limit_register: str = "5/minute"
+    rate_limit_refresh: str = "30/minute"
+
     model_config = {"env_prefix": "APP_", "env_file": ".env"}
 
     @field_validator("jwt_secret")

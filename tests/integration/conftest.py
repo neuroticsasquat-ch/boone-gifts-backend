@@ -8,6 +8,14 @@ from app.database import Base
 from app.dependencies import get_db, create_access_token
 from app.main import app
 from app.models import User
+from app.rate_limit import limiter
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter():
+    limiter.reset()
+    yield
+    limiter.reset()
 
 test_engine = create_engine(
     settings.test_database_url,
