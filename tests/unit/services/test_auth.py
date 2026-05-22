@@ -24,6 +24,7 @@ def _make_user(
     user.name = name
     user.role = role
     user.is_active = is_active
+    user.password_changed_at = None
     return user
 
 

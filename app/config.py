@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     rate_limit_login: str = "10/minute"
     rate_limit_register: str = "5/minute"
     rate_limit_refresh: str = "30/minute"
+    rate_limit_forgot_password: str = "5/minute"
 
     frontend_url: str = "https://boone-gifts.localhost"
 

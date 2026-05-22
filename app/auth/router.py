@@ -3,11 +3,20 @@ from fastapi import APIRouter, Cookie, HTTPException, Request, Response, status
 from app.auth import service as auth_service
 from app.config import settings
 from app.dependencies import DbSession
-from app.rate_limit import limiter, login_limit, refresh_limit, register_limit
+from app.rate_limit import (
+    forgot_password_limit,
+    limiter,
+    login_limit,
+    refresh_limit,
+    register_limit,
+)
 from app.schemas.auth import (
     AccessTokenResponse,
+    ForgotPasswordRequest,
+    GenericMessageResponse,
     LoginRequest,
     RegisterRequest,
+    ResetPasswordRequest,
 )
 from app.services.exceptions import BadRequestError, UnauthorizedError
 
@@ -86,6 +95,27 @@ def refresh(
 
     set_refresh_cookie(response, tokens["refresh_token"])
     return AccessTokenResponse(access_token=tokens["access_token"])
+
+
+@router.post("/forgot-password", response_model=GenericMessageResponse)
+@limiter.limit(forgot_password_limit)
+def forgot_password(request: Request, body: ForgotPasswordRequest, db: DbSession):
+    auth_service.forgot_password(db, body.email)
+    return GenericMessageResponse(
+        message="If an account exists for that email, a password reset link has been sent."
+    )
+
+
+@router.post("/reset-password", response_model=GenericMessageResponse)
+def reset_password(body: ResetPasswordRequest, db: DbSession):
+    try:
+        auth_service.reset_password(db, body.token, body.new_password)
+    except BadRequestError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    return GenericMessageResponse(message="Password updated.")
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
