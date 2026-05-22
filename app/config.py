@@ -23,6 +23,14 @@ class Settings(BaseSettings):
     rate_limit_register: str = "5/minute"
     rate_limit_refresh: str = "30/minute"
 
+    email_provider: str = "log"
+    email_from: str = "Boone Gifts <noreply@boone-gifts.localhost>"
+    email_smtp_host: str = "localhost"
+    email_smtp_port: int = 1025
+    email_smtp_username: str = ""
+    email_smtp_password: str = ""
+    email_smtp_use_tls: bool = False
+
     model_config = {"env_prefix": "APP_", "env_file": ".env"}
 
     @field_validator("jwt_secret")
