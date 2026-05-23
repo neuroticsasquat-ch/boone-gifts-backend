@@ -6,6 +6,7 @@ from app.models.list_share import ListShare
 from app.models.connection import Connection
 from app.models.collection import Collection
 from app.models.collection_item import CollectionItem
+from app.models.password_reset_token import PasswordResetToken
 
 __all__ = [
     "User",
@@ -16,4 +17,5 @@ __all__ = [
     "Connection",
     "Collection",
     "CollectionItem",
+    "PasswordResetToken",
 ]
