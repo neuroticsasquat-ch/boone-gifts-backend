@@ -1,3 +1,4 @@
+import sentry_sdk
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi.errors import RateLimitExceeded
@@ -18,6 +19,14 @@ from app.meta import router as meta
 
 
 def create_app() -> FastAPI:
+    if settings.sentry_dsn:
+        sentry_sdk.init(
+            dsn=settings.sentry_dsn,
+            environment=settings.sentry_environment,
+            release=settings.sentry_release or None,
+            send_default_pii=False,
+        )
+
     application = FastAPI(title="Boone Gifts API")
 
     application.state.limiter = limiter
