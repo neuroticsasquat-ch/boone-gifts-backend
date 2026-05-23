@@ -4,43 +4,21 @@ Daily backups of the SQLite database to a Hetzner Storage Box. The backup script
 
 ## Prerequisites
 
-- Hetzner Storage Box (any size — the DB is tiny at family scale)
-- SSH access to the Hetzner VM where the backend runs
+- Hetzner Storage Box with SSH access already configured (an `~/.ssh/config` Host alias that handles hostname, user, port, and key)
 - `sqlite3`, `gzip`, `rsync` installed on the VM (standard on most distros)
 
-## 1. Storage Box setup
+## 1. Create remote directories
 
-1. Order a Storage Box from the [Hetzner Robot panel](https://robot.hetzner.com/storage)
-2. Note the hostname (e.g., `uXXXXXX.your-storagebox.de`) and username (e.g., `uXXXXXX`)
-3. Enable SSH support in the Storage Box settings (Robot → Storage Box → Settings)
+Using your SSH config alias (e.g., `neuroticsasquatch-backups`):
 
-## 2. SSH key setup
+    ssh neuroticsasquatch-backups "mkdir -p /backups/boone-gifts/daily /backups/boone-gifts/weekly"
 
-On the Hetzner VM:
-
-    ssh-keygen -t ed25519 -f ~/.ssh/storagebox -N "" -C "boone-gifts-backup"
-
-Install the public key on the Storage Box (Hetzner Storage Boxes use port 23 for SSH):
-
-    ssh-copy-id -p 23 -i ~/.ssh/storagebox.pub uXXXXXX@uXXXXXX.your-storagebox.de
-
-Test the connection:
-
-    ssh -p 23 -i ~/.ssh/storagebox uXXXXXX@uXXXXXX.your-storagebox.de ls
-
-## 3. Create remote directories
-
-    ssh -p 23 uXXXXXX@uXXXXXX.your-storagebox.de \
-      "mkdir -p /backups/boone-gifts/daily /backups/boone-gifts/weekly"
-
-## 4. Configure the backup
+## 2. Configure the backup
 
 Create `/etc/boone-gifts-backup.env` on the VM:
 
-    STORAGE_BOX_HOST=uXXXXXX.your-storagebox.de
-    STORAGE_BOX_USER=uXXXXXX
-    STORAGE_BOX_PATH=/backups/boone-gifts
-    STORAGE_BOX_PORT=23
+    SSH_HOST=neuroticsasquatch-backups
+    REMOTE_PATH=/backups/boone-gifts
 
 The script also accepts these optional overrides:
 
@@ -49,7 +27,7 @@ The script also accepts these optional overrides:
 | `VOLUME_NAME` | `boone-gifts-backend_sqlite-data` | Docker volume name |
 | `DB_FILENAME` | `boone_gifts.db` | SQLite filename within the volume |
 
-## 5. Install the crontab entry
+## 3. Install the crontab entry
 
     sudo crontab -e
 
@@ -59,7 +37,7 @@ Add:
 
 This runs the backup daily at 03:00 UTC.
 
-## 6. Verify
+## 4. Verify
 
 Run the script manually to confirm everything works:
 
@@ -67,7 +45,7 @@ Run the script manually to confirm everything works:
 
 Then check the Storage Box:
 
-    ssh -p 23 uXXXXXX@uXXXXXX.your-storagebox.de ls -la /backups/boone-gifts/daily/
+    ssh neuroticsasquatch-backups ls -la /backups/boone-gifts/daily/
 
 You should see today's backup file.
 
@@ -86,7 +64,7 @@ Weekly backups are created on Sundays by copying that day's daily backup.
 
 From the VM:
 
-    scp -P 23 uXXXXXX@uXXXXXX.your-storagebox.de:/backups/boone-gifts/daily/boone_gifts_YYYY-MM-DD.db.gz /tmp/
+    scp neuroticsasquatch-backups:/backups/boone-gifts/daily/boone_gifts_YYYY-MM-DD.db.gz /tmp/
 
 ### 2. Decompress
 
