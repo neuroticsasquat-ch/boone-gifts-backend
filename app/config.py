@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     email_smtp_password: str = ""
     email_smtp_use_tls: bool = False
 
+    sentry_dsn: str = ""
+    sentry_environment: str = "production"
+    sentry_release: str = ""
+
     model_config = {"env_prefix": "APP_", "env_file": ".env"}
 
     @field_validator("jwt_secret")
