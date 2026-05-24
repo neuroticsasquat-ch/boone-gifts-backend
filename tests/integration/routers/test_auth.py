@@ -214,4 +214,4 @@ def test_update_profile_persists_name_in_db(client, member_user, member_headers,
 
 def test_update_profile_requires_auth(client):
     response = client.put("/auth/profile", json={"name": "Anonymous"})
-    assert response.status_code == 403
+    assert response.status_code == 401
