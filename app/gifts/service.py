@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from sqlalchemy.orm import Session
 
 from app.gifts import repository as repo
@@ -61,4 +63,26 @@ def unclaim_gift(db: Session, gift_id: int, list_id: int, user_id: int) -> Gift:
     if rows == 0:
         raise ForbiddenError("Only the claimer can unclaim.")
     db.refresh(gift)
+    # Clear purchased state when gift is unclaimed
+    if gift.purchased_at is not None:
+        gift.purchased_at = None
+        db.flush()
+    return gift
+
+
+def purchase_gift(db: Session, gift_id: int, list_id: int, user_id: int) -> Gift:
+    gift = _get_gift_for_list(db, gift_id, list_id)
+    if gift.claimed_by_id != user_id:
+        raise ForbiddenError("Only the claimer can mark as purchased.")
+    gift.purchased_at = datetime.now(timezone.utc)
+    db.flush()
+    return gift
+
+
+def unpurchase_gift(db: Session, gift_id: int, list_id: int, user_id: int) -> Gift:
+    gift = _get_gift_for_list(db, gift_id, list_id)
+    if gift.claimed_by_id != user_id:
+        raise ForbiddenError("Only the claimer can unmark as purchased.")
+    gift.purchased_at = None
+    db.flush()
     return gift

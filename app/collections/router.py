@@ -8,6 +8,7 @@ from app.schemas.collection import (
     CollectionItemCreate,
     CollectionRead,
     CollectionUpdate,
+    ShoppingListItem,
 )
 from app.services.exceptions import ConflictError, ForbiddenError, NotFoundError
 
@@ -80,3 +81,8 @@ def remove_item(list_id: int, collection: OwnedCollection, db: DbSession):
         collection_service.remove_item(db, collection=collection, list_id=list_id)
     except NotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+
+
+@router.get("/{collection_id}/shopping-list", response_model=list[ShoppingListItem])
+def get_shopping_list(collection: OwnedCollection, user: CurrentUser, db: DbSession):
+    return collection_service.get_shopping_list(db, collection.id, user.id)

@@ -1,4 +1,5 @@
 from datetime import datetime
+from decimal import Decimal
 
 from pydantic import BaseModel
 
@@ -53,3 +54,17 @@ class CollectionItemCreate(BaseModel):
     """Schema for adding a gift list to a collection."""
 
     list_id: int
+
+
+class ShoppingListItem(BaseModel):
+    """Schema for a single item in a collection's shopping list."""
+
+    id: int
+    name: str
+    description: str | None
+    url: str | None
+    price: Decimal | None
+    list_name: str
+    purchased_at: datetime | None
+
+    model_config = {"from_attributes": True}

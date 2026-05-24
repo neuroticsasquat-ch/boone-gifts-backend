@@ -69,3 +69,27 @@ def unclaim_gift(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     except ForbiddenError:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+
+
+@router.post("/{gift_id}/purchase", response_model=GiftRead)
+def purchase_gift(
+    gift_id: int, gift_list: ViewableList, user: CurrentUser, db: DbSession
+):
+    try:
+        return gift_service.purchase_gift(db, gift_id, gift_list.id, user.id)
+    except NotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    except ForbiddenError:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+
+
+@router.delete("/{gift_id}/purchase", response_model=GiftRead)
+def unpurchase_gift(
+    gift_id: int, gift_list: ViewableList, user: CurrentUser, db: DbSession
+):
+    try:
+        return gift_service.unpurchase_gift(db, gift_id, gift_list.id, user.id)
+    except NotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    except ForbiddenError:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)

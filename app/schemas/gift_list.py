@@ -35,6 +35,7 @@ class GiftRead(BaseModel):
     price: Decimal | None
     claimed_by_id: int | None
     claimed_at: datetime | None
+    purchased_at: datetime | None
     created_at: datetime
     updated_at: datetime
 
