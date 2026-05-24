@@ -18,6 +18,7 @@ from app.schemas.auth import (
     LoginRequest,
     RegisterRequest,
     ResetPasswordRequest,
+    UpdateProfileRequest,
 )
 from app.services.exceptions import BadRequestError, UnauthorizedError
 
@@ -136,6 +137,18 @@ def change_password(
             detail=str(e),
         )
 
+    set_refresh_cookie(response, tokens["refresh_token"])
+    return AccessTokenResponse(access_token=tokens["access_token"])
+
+
+@router.put("/profile", response_model=AccessTokenResponse)
+def update_profile(
+    body: UpdateProfileRequest,
+    response: Response,
+    user: CurrentUser,
+    db: DbSession,
+):
+    tokens = auth_service.update_profile(db, user, body.name)
     set_refresh_cookie(response, tokens["refresh_token"])
     return AccessTokenResponse(access_token=tokens["access_token"])
 

@@ -146,6 +146,21 @@ def change_password(
     }
 
 
+def update_profile(db: Session, user, name: str) -> dict:
+    """Update a logged-in user's profile name and issue fresh tokens.
+
+    Returns new access + refresh tokens so the frontend can decode the
+    updated name claim without waiting for the next refresh cycle.
+    """
+    user.name = name
+    db.flush()
+
+    return {
+        "access_token": create_access_token(user),
+        "refresh_token": create_refresh_token(user),
+    }
+
+
 def reset_password(db: Session, raw_token: str, new_password: str) -> None:
     """Consume a password reset token and update the user's password.
 
