@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from app.models.user import User
-from app.services.exceptions import NotFoundError
+from app.services.exceptions import BadRequestError, NotFoundError
 from app.users import service
 
 
@@ -84,7 +84,7 @@ def test_update_user(mock_find, mock_update, db):
     mock_update.return_value = updated_user
 
     updates = {"name": "Alice Updated"}
-    result = service.update_user(db, user_id=1, updates=updates)
+    result = service.update_user(db, user_id=1, updates=updates, current_user_id=99)
 
     mock_find.assert_called_once_with(db, 1)
     mock_update.assert_called_once_with(db, user, updates)
@@ -94,9 +94,20 @@ def test_update_user(mock_find, mock_update, db):
 @patch(f"{REPO}.find_user_by_id", return_value=None)
 def test_update_user_not_found(mock_find, db):
     with pytest.raises(NotFoundError):
-        service.update_user(db, user_id=999, updates={"name": "New"})
+        service.update_user(db, user_id=999, updates={"name": "New"}, current_user_id=99)
 
     mock_find.assert_called_once_with(db, 999)
+
+
+@patch(f"{REPO}.find_user_by_id")
+def test_update_user_self_deactivation_blocked(mock_find, db):
+    user = _make_user(1, "Admin", "admin@test.com", role="admin")
+    mock_find.return_value = user
+
+    with pytest.raises(BadRequestError, match="Cannot deactivate your own account"):
+        service.update_user(db, user_id=1, updates={"is_active": False}, current_user_id=1)
+
+    mock_find.assert_not_called()
 
 
 # --- delete_user ---

@@ -67,3 +67,74 @@ def test_delete_user_as_member(client, admin_user, member_headers):
         f"/users/{admin_user.id}", headers=member_headers
     )
     assert response.status_code == 403
+
+
+COOKIE_NAME = "boone_refresh_token"
+
+
+def test_deactivate_user_blocks_login(client, admin_user, member_user, admin_headers):
+    response = client.put(
+        f"/users/{member_user.id}",
+        headers=admin_headers,
+        json={"is_active": False},
+    )
+    assert response.status_code == 200
+    assert response.json()["is_active"] is False
+
+    login = client.post("/auth/login", json={
+        "email": "member@test.com",
+        "password": "member123",
+    })
+    assert login.status_code == 401
+
+
+def test_deactivate_user_blocks_refresh(client, admin_user, member_user, admin_headers):
+    login = client.post("/auth/login", json={
+        "email": "member@test.com",
+        "password": "member123",
+    })
+    assert login.status_code == 200
+    refresh_cookie = login.cookies[COOKIE_NAME]
+
+    response = client.put(
+        f"/users/{member_user.id}",
+        headers=admin_headers,
+        json={"is_active": False},
+    )
+    assert response.status_code == 200
+
+    client.cookies.set(COOKIE_NAME, refresh_cookie)
+    refresh = client.post("/auth/refresh")
+    assert refresh.status_code == 401
+
+
+def test_reactivate_user_restores_login(client, admin_user, member_user, admin_headers):
+    r = client.put(
+        f"/users/{member_user.id}",
+        headers=admin_headers,
+        json={"is_active": False},
+    )
+    assert r.status_code == 200
+
+    r = client.put(
+        f"/users/{member_user.id}",
+        headers=admin_headers,
+        json={"is_active": True},
+    )
+    assert r.status_code == 200
+
+    login = client.post("/auth/login", json={
+        "email": "member@test.com",
+        "password": "member123",
+    })
+    assert login.status_code == 200
+
+
+def test_self_deactivation_blocked(client, admin_user, admin_headers):
+    response = client.put(
+        f"/users/{admin_user.id}",
+        headers=admin_headers,
+        json={"is_active": False},
+    )
+    assert response.status_code == 400
+    assert "Cannot deactivate your own account" in response.json()["detail"]

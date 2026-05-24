@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, status
 
 from app.dependencies import AdminUser, DbSession
 from app.schemas.user import UserRead, UserUpdate
-from app.services.exceptions import NotFoundError
+from app.services.exceptions import BadRequestError, NotFoundError
 from app.users import service as user_service
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -25,10 +25,15 @@ def get_user(user_id: int, admin: AdminUser, db: DbSession):
 def update_user(user_id: int, updates: UserUpdate, admin: AdminUser, db: DbSession):
     try:
         return user_service.update_user(
-            db, user_id, updates.model_dump(exclude_unset=True)
+            db, user_id, updates.model_dump(exclude_unset=True),
+            current_user_id=admin.id,
         )
     except NotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    except BadRequestError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)
+        )
 
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
