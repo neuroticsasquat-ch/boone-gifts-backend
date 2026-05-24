@@ -69,6 +69,24 @@ def get_unseen_share_count(db: Session, user_id: int) -> int:
     return result or 0
 
 
+def get_lists_shared_by_user(
+    db: Session, owner_id: int, shared_with_user_id: int
+) -> list[GiftList]:
+    shared_list_ids = select(ListShare.list_id).where(
+        ListShare.user_id == shared_with_user_id
+    )
+    query = (
+        select(GiftList)
+        .where(
+            GiftList.owner_id == owner_id,
+            GiftList.id.in_(shared_list_ids),
+            GiftList.is_archived == False,
+        )
+        .order_by(GiftList.updated_at.desc())
+    )
+    return list(db.execute(query).scalars().all())
+
+
 def mark_share_seen(db: Session, list_id: int, user_id: int) -> None:
     from datetime import datetime, timezone
     share = db.execute(
