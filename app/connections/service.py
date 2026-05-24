@@ -1,6 +1,9 @@
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.connections import repository as repo
+from app.email.connection_request import render_connection_request_email
+from app.email.sender import send_email
 from app.models.connection import Connection
 from app.models.user import User
 from app.services.exceptions import (
@@ -61,6 +64,15 @@ def create_connection(
         raise ConflictError("Connection already exists.")
 
     connection = repo.create_connection(db, requester_id, target.id)
+
+    requester = repo.find_user_by_id(db, requester_id)
+    if target.is_active and requester:
+        subject, html, text = render_connection_request_email(
+            sender_name=requester.name,
+            frontend_url=settings.frontend_url,
+        )
+        send_email(to=target.email, subject=subject, html=html, text=text)
+
     return build_connection_response(db, connection, requester_id)
 
 

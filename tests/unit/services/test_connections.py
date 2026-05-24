@@ -14,11 +14,17 @@ from app.services.exceptions import (
 )
 
 
-def _make_user(id: int, name: str = "Test", email: str = "test@test.com") -> MagicMock:
+def _make_user(
+    id: int,
+    name: str = "Test",
+    email: str = "test@test.com",
+    is_active: bool = True,
+) -> MagicMock:
     user = MagicMock(spec=User)
     user.id = id
     user.name = name
     user.email = email
+    user.is_active = is_active
     return user
 
 
@@ -40,18 +46,22 @@ def _make_connection(
 
 
 REPO = "app.connections.service.repo"
+SEND_EMAIL = "app.connections.service.send_email"
 
 
 # --- create_connection ---
 
 
+@patch(SEND_EMAIL)
 @patch(f"{REPO}.create_connection")
 @patch(f"{REPO}.find_connection_between", return_value=None)
 @patch(f"{REPO}.find_user_by_id")
-def test_create_connection_by_user_id(mock_find_user, mock_find_conn, mock_create):
+def test_create_connection_by_user_id(mock_find_user, mock_find_conn, mock_create, mock_send):
     db = MagicMock()
     target = _make_user(2, "Alice", "alice@test.com")
-    mock_find_user.side_effect = [target, target]  # once for resolve, once for build_response
+    requester = _make_user(1, "Requester", "req@test.com")
+    # calls: resolve target (id=2), email requester (id=1), build_response other (id=2)
+    mock_find_user.side_effect = [target, requester, target]
     connection = _make_connection(1, 1, 2)
     mock_create.return_value = connection
 
@@ -60,26 +70,48 @@ def test_create_connection_by_user_id(mock_find_user, mock_find_conn, mock_creat
     mock_find_user.assert_any_call(db, 2)
     mock_find_conn.assert_called_once_with(db, 1, 2)
     mock_create.assert_called_once_with(db, 1, 2)
+    mock_send.assert_called_once()
     assert result["id"] == 1
     assert result["user"]["name"] == "Alice"
 
 
+@patch(SEND_EMAIL)
 @patch(f"{REPO}.create_connection")
 @patch(f"{REPO}.find_connection_between", return_value=None)
 @patch(f"{REPO}.find_user_by_email")
 @patch(f"{REPO}.find_user_by_id")
-def test_create_connection_by_email(mock_find_id, mock_find_email, mock_find_conn, mock_create):
+def test_create_connection_by_email(mock_find_id, mock_find_email, mock_find_conn, mock_create, mock_send):
     db = MagicMock()
     target = _make_user(3, "Bob", "bob@test.com")
+    requester = _make_user(1, "Requester", "req@test.com")
     mock_find_email.return_value = target
-    mock_find_id.return_value = target  # for build_response
+    # calls: email requester (id=1), build_response other (id=3)
+    mock_find_id.side_effect = [requester, target]
     connection = _make_connection(2, 1, 3)
     mock_create.return_value = connection
 
     result = service.create_connection(db, requester_id=1, target_email="bob@test.com")
 
     mock_find_email.assert_called_once_with(db, "bob@test.com")
+    mock_send.assert_called_once()
     assert result["user"]["email"] == "bob@test.com"
+
+
+@patch(SEND_EMAIL)
+@patch(f"{REPO}.create_connection")
+@patch(f"{REPO}.find_connection_between", return_value=None)
+@patch(f"{REPO}.find_user_by_id")
+def test_create_connection_no_email_when_inactive(mock_find_user, mock_find_conn, mock_create, mock_send):
+    db = MagicMock()
+    target = _make_user(2, "Alice", "alice@test.com", is_active=False)
+    requester = _make_user(1, "Requester", "req@test.com")
+    mock_find_user.side_effect = [target, requester, target]
+    connection = _make_connection(1, 1, 2)
+    mock_create.return_value = connection
+
+    service.create_connection(db, requester_id=1, target_user_id=2)
+
+    mock_send.assert_not_called()
 
 
 @patch(f"{REPO}.find_user_by_id", return_value=None)

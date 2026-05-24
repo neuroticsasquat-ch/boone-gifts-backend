@@ -18,7 +18,7 @@ def get_lists_by_owner(db: Session, owner_id: int, archived: bool = False) -> li
     query = select(GiftList).where(
         GiftList.owner_id == owner_id,
         GiftList.is_archived == archived,
-    )
+    ).order_by(GiftList.updated_at.desc())
     return list(db.execute(query).scalars().all())
 
 
@@ -27,7 +27,7 @@ def get_shared_lists(db: Session, user_id: int, archived: bool = False) -> list[
     query = select(GiftList).where(
         GiftList.id.in_(shared_list_ids),
         GiftList.is_archived == archived,
-    )
+    ).order_by(GiftList.updated_at.desc())
     return list(db.execute(query).scalars().all())
 
 
@@ -39,7 +39,7 @@ def get_all_visible_lists(db: Session, user_id: int, archived: bool = False) -> 
             GiftList.id.in_(shared_list_ids),
         ),
         GiftList.is_archived == archived,
-    )
+    ).order_by(GiftList.updated_at.desc())
     return list(db.execute(query).scalars().all())
 
 
