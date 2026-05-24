@@ -54,7 +54,7 @@ def test_get_lists_owned(mock_get_owned):
 
     result = service.get_lists(db, user_id=1, filter="owned")
 
-    mock_get_owned.assert_called_once_with(db, 1)
+    mock_get_owned.assert_called_once_with(db, 1, archived=False)
     assert len(result) == 2
 
 
@@ -66,7 +66,7 @@ def test_get_lists_shared(mock_get_shared):
 
     result = service.get_lists(db, user_id=1, filter="shared")
 
-    mock_get_shared.assert_called_once_with(db, 1)
+    mock_get_shared.assert_called_once_with(db, 1, archived=False)
     assert len(result) == 1
 
 
@@ -78,7 +78,7 @@ def test_get_lists_all(mock_get_all):
 
     result = service.get_lists(db, user_id=1, filter=None)
 
-    mock_get_all.assert_called_once_with(db, 1)
+    mock_get_all.assert_called_once_with(db, 1, archived=False)
     assert len(result) == 2
 
 

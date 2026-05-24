@@ -17,6 +17,7 @@ class CollectionUpdate(BaseModel):
 
     name: str | None = None
     description: str | None = None
+    is_archived: bool | None = None
 
 
 class CollectionRead(BaseModel):
@@ -26,6 +27,7 @@ class CollectionRead(BaseModel):
     name: str
     description: str | None
     owner_id: int
+    is_archived: bool
     created_at: datetime
     updated_at: datetime
 
@@ -39,6 +41,7 @@ class CollectionDetail(BaseModel):
     name: str
     description: str | None
     owner_id: int
+    is_archived: bool
     lists: list[GiftListRead]
     created_at: datetime
     updated_at: datetime

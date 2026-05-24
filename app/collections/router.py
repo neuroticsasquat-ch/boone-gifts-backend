@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 
 from app.collections import service as collection_service
 from app.dependencies import CurrentUser, DbSession, OwnedCollection
@@ -22,8 +22,8 @@ def create_collection(request: CollectionCreate, user: CurrentUser, db: DbSessio
 
 
 @router.get("", response_model=list[CollectionRead])
-def list_collections(user: CurrentUser, db: DbSession):
-    return collection_service.list_collections(db, owner_id=user.id)
+def list_collections(user: CurrentUser, db: DbSession, archived: bool = Query(default=False)):
+    return collection_service.list_collections(db, owner_id=user.id, archived=archived)
 
 
 @router.get("/{collection_id}", response_model=CollectionDetail)

@@ -4,7 +4,7 @@ from app.dependencies import CurrentUser, DbSession, OwnedList, ViewableList
 from app.gifts import service as gift_service
 from app.schemas.gift import GiftCreate, GiftUpdate
 from app.schemas.gift_list import GiftOwnerRead, GiftRead
-from app.services.exceptions import ConflictError, ForbiddenError, NotFoundError
+from app.services.exceptions import BadRequestError, ConflictError, ForbiddenError, NotFoundError
 
 router = APIRouter(prefix="/lists/{list_id}/gifts", tags=["gifts"])
 
@@ -47,6 +47,8 @@ def claim_gift(gift_id: int, gift_list: ViewableList, user: CurrentUser, db: DbS
         return gift_service.claim_gift(
             db, gift_id, gift_list.id, gift_list.owner_id, user.id
         )
+    except BadRequestError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except ForbiddenError:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
     except NotFoundError:
@@ -61,6 +63,8 @@ def unclaim_gift(
 ):
     try:
         return gift_service.unclaim_gift(db, gift_id, gift_list.id, user.id)
+    except BadRequestError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except NotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     except ForbiddenError:

@@ -11,8 +11,8 @@ def create_collection(
     return repo.create_collection(db, name, description, owner_id)
 
 
-def list_collections(db: Session, owner_id: int) -> list[Collection]:
-    return repo.get_collections_for_user(db, owner_id)
+def list_collections(db: Session, owner_id: int, archived: bool = False) -> list[Collection]:
+    return repo.get_collections_for_user(db, owner_id, archived=archived)
 
 
 def get_collection_detail(db: Session, collection: Collection) -> dict:
@@ -22,6 +22,7 @@ def get_collection_detail(db: Session, collection: Collection) -> dict:
         "name": collection.name,
         "description": collection.description,
         "owner_id": collection.owner_id,
+        "is_archived": collection.is_archived,
         "lists": lists,
         "created_at": collection.created_at,
         "updated_at": collection.updated_at,

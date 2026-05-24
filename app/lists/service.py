@@ -11,13 +11,13 @@ def create_list(
     return repo.create_list(db, name=name, description=description, owner_id=owner_id)
 
 
-def get_lists(db: Session, user_id: int, filter: str | None = None) -> list[GiftList]:
+def get_lists(db: Session, user_id: int, filter: str | None = None, archived: bool = False) -> list[GiftList]:
     if filter == "owned":
-        return repo.get_lists_by_owner(db, user_id)
+        return repo.get_lists_by_owner(db, user_id, archived=archived)
     elif filter == "shared":
-        return repo.get_shared_lists(db, user_id)
+        return repo.get_shared_lists(db, user_id, archived=archived)
     else:
-        return repo.get_all_visible_lists(db, user_id)
+        return repo.get_all_visible_lists(db, user_id, archived=archived)
 
 
 def get_list(
