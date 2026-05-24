@@ -65,3 +65,7 @@ def remove_item(db: Session, collection: Collection, list_id: int) -> None:
 
 def get_collection_ids_for_list(db: Session, list_id: int, owner_id: int) -> list[int]:
     return repo.get_collection_ids_for_list(db, list_id, owner_id)
+
+
+def get_shopping_list(db: Session, collection_id: int, user_id: int) -> list[dict]:
+    return repo.get_shopping_list_items(db, collection_id, user_id)

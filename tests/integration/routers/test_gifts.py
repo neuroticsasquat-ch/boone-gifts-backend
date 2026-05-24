@@ -359,3 +359,99 @@ def test_unclaim_gift_on_archived_list(client, admin_user, admin_headers, shared
         headers=admin_headers,
     )
     assert response.status_code == 400
+
+
+# Purchase endpoint tests
+
+def test_purchase_gift(client, admin_user, admin_headers, shared_list, db):
+    gift = Gift(list_id=shared_list.id, name="Purchased Gift")
+    gift.claimed_by_id = admin_user.id
+    db.add(gift)
+    db.flush()
+
+    response = client.post(
+        f"/lists/{shared_list.id}/gifts/{gift.id}/purchase",
+        headers=admin_headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["purchased_at"] is not None
+    assert data["claimed_by_id"] == admin_user.id
+
+
+def test_unpurchase_gift(client, admin_user, admin_headers, shared_list, db):
+    from datetime import datetime, timezone
+
+    gift = Gift(list_id=shared_list.id, name="Was Purchased")
+    gift.claimed_by_id = admin_user.id
+    gift.purchased_at = datetime.now(timezone.utc)
+    db.add(gift)
+    db.flush()
+
+    response = client.delete(
+        f"/lists/{shared_list.id}/gifts/{gift.id}/purchase",
+        headers=admin_headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["purchased_at"] is None
+
+
+def test_purchase_gift_non_claimer_403(
+    client, admin_user, member_headers, shared_list, db
+):
+    gift = Gift(list_id=shared_list.id, name="Not Your Claim")
+    gift.claimed_by_id = admin_user.id
+    db.add(gift)
+    db.flush()
+
+    response = client.post(
+        f"/lists/{shared_list.id}/gifts/{gift.id}/purchase",
+        headers=member_headers,
+    )
+    assert response.status_code == 403
+
+
+def test_unpurchase_gift_non_claimer_403(
+    client, admin_user, member_headers, shared_list, db
+):
+    from datetime import datetime, timezone
+
+    gift = Gift(list_id=shared_list.id, name="Not Your Purchase")
+    gift.claimed_by_id = admin_user.id
+    gift.purchased_at = datetime.now(timezone.utc)
+    db.add(gift)
+    db.flush()
+
+    response = client.delete(
+        f"/lists/{shared_list.id}/gifts/{gift.id}/purchase",
+        headers=member_headers,
+    )
+    assert response.status_code == 403
+
+
+def test_unclaim_clears_purchased_at(client, admin_user, admin_headers, shared_list, db):
+    from datetime import datetime, timezone
+
+    gift = Gift(list_id=shared_list.id, name="Purchase Then Unclaim")
+    gift.claimed_by_id = admin_user.id
+    gift.purchased_at = datetime.now(timezone.utc)
+    db.add(gift)
+    db.flush()
+
+    response = client.delete(
+        f"/lists/{shared_list.id}/gifts/{gift.id}/claim",
+        headers=admin_headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["claimed_by_id"] is None
+    assert data["purchased_at"] is None
+
+
+def test_purchase_gift_not_found(client, admin_headers, shared_list):
+    response = client.post(
+        f"/lists/{shared_list.id}/gifts/99999/purchase",
+        headers=admin_headers,
+    )
+    assert response.status_code == 404

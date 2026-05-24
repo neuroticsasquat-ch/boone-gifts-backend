@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.models.collection import Collection
 from app.models.collection_item import CollectionItem
+from app.models.gift import Gift
 from app.models.gift_list import GiftList
 from app.models.list_share import ListShare
 
@@ -104,3 +105,31 @@ def get_collection_ids_for_list(db: Session, list_id: int, owner_id: int) -> lis
         )
     ).scalars().all()
     return list(result)
+
+
+def get_shopping_list_items(
+    db: Session, collection_id: int, user_id: int
+) -> list[dict]:
+    """Return all gifts claimed by user_id within the given collection."""
+    rows = db.execute(
+        select(Gift, GiftList.name.label("list_name"))
+        .join(GiftList, Gift.list_id == GiftList.id)
+        .join(CollectionItem, CollectionItem.list_id == GiftList.id)
+        .where(
+            CollectionItem.collection_id == collection_id,
+            Gift.claimed_by_id == user_id,
+        )
+        .order_by(GiftList.id, Gift.id)
+    ).all()
+    return [
+        {
+            "id": gift.id,
+            "name": gift.name,
+            "description": gift.description,
+            "url": gift.url,
+            "price": gift.price,
+            "list_name": list_name,
+            "purchased_at": gift.purchased_at,
+        }
+        for gift, list_name in rows
+    ]
