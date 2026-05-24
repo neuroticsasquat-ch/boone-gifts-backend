@@ -26,6 +26,11 @@ def list_collections(user: CurrentUser, db: DbSession, archived: bool = Query(de
     return collection_service.list_collections(db, owner_id=user.id, archived=archived)
 
 
+@router.get("/for-list/{list_id}", response_model=list[int])
+def collections_for_list(list_id: int, user: CurrentUser, db: DbSession):
+    return collection_service.get_collection_ids_for_list(db, list_id, user.id)
+
+
 @router.get("/{collection_id}", response_model=CollectionDetail)
 def get_collection(collection: OwnedCollection, db: DbSession):
     return collection_service.get_collection_detail(db, collection)

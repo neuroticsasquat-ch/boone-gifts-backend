@@ -61,3 +61,7 @@ def remove_item(db: Session, collection: Collection, list_id: int) -> None:
     if item is None:
         raise NotFoundError("Item not found in collection.")
     repo.delete_collection_item(db, item)
+
+
+def get_collection_ids_for_list(db: Session, list_id: int, owner_id: int) -> list[int]:
+    return repo.get_collection_ids_for_list(db, list_id, owner_id)
