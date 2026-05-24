@@ -2,6 +2,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.connections import repository as repo
+from app.lists import repository as list_repo
 from app.email.connection_request import render_connection_request_email
 from app.email.sender import send_email
 from app.models.connection import Connection
@@ -110,6 +111,25 @@ def delete_connection(db: Session, connection_id: int, user_id: int) -> None:
         cascade_disconnect(db, connection.requester_id, connection.addressee_id)
 
     repo.delete_connection(db, connection)
+
+
+def get_connection_lists(
+    db: Session, connection_id: int, user_id: int
+) -> list:
+    connection = repo.find_connection_by_id(db, connection_id)
+    if connection is None:
+        raise NotFoundError("Connection not found.")
+    if connection.requester_id != user_id and connection.addressee_id != user_id:
+        raise ForbiddenError("Not a party to this connection.")
+    if connection.status != "accepted":
+        raise ForbiddenError("Connection not accepted.")
+
+    other_id = (
+        connection.addressee_id
+        if connection.requester_id == user_id
+        else connection.requester_id
+    )
+    return list_repo.get_lists_shared_by_user(db, owner_id=other_id, shared_with_user_id=user_id)
 
 
 def cascade_disconnect(db: Session, user_a_id: int, user_b_id: int) -> None:

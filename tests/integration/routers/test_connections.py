@@ -205,6 +205,37 @@ def test_delete_connection_not_found(client, member_headers):
     assert response.status_code == 404
 
 
+def test_connection_lists(client, admin_user, member_user, admin_headers, connection, shared_list):
+    response = client.get(f"/connections/{connection.id}/lists", headers=admin_headers)
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["name"] == shared_list.name
+
+
+def test_connection_lists_not_party(client, admin_user, member_user, member_headers, connection, db):
+    from app.models.user import User
+    other = User(email="other@test.com", name="Other", role="member", password_hash="x")
+    other.set_password("pass")
+    db.add(other)
+    db.flush()
+    from app.dependencies import create_access_token
+    other_token = create_access_token(other)
+    other_headers = {"Authorization": f"Bearer {other_token}"}
+
+    response = client.get(f"/connections/{connection.id}/lists", headers=other_headers)
+    assert response.status_code == 403
+
+
+def test_connection_lists_excludes_archived(client, admin_user, member_user, admin_headers, connection, shared_list, db):
+    shared_list.is_archived = True
+    db.flush()
+
+    response = client.get(f"/connections/{connection.id}/lists", headers=admin_headers)
+    assert response.status_code == 200
+    assert len(response.json()) == 0
+
+
 def test_disconnect_revokes_shares(
     client, member_user, member_headers, admin_user, connection, db
 ):
