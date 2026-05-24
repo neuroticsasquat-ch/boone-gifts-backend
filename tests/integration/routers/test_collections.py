@@ -174,3 +174,31 @@ def test_remove_item_not_found(client, member_headers, collection):
         headers=member_headers,
     )
     assert response.status_code == 404
+
+
+def test_archive_collection(client, member_headers, collection):
+    response = client.put(
+        f"/collections/{collection.id}",
+        headers=member_headers,
+        json={"is_archived": True},
+    )
+    assert response.status_code == 200
+    assert response.json()["is_archived"] is True
+
+
+def test_collections_exclude_archived_by_default(client, member_headers, collection, db):
+    collection.is_archived = True
+    db.flush()
+
+    response = client.get("/collections", headers=member_headers)
+    assert response.status_code == 200
+    assert len(response.json()) == 0
+
+
+def test_collections_archived_filter(client, member_headers, collection, db):
+    collection.is_archived = True
+    db.flush()
+
+    response = client.get("/collections?archived=true", headers=member_headers)
+    assert response.status_code == 200
+    assert len(response.json()) == 1

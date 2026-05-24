@@ -328,3 +328,34 @@ def test_concurrent_claims_exactly_one_wins():
         _cleanup(post_conn)
 
     assert codes == [200, 409], f"Expected [200, 409] but got {codes}"
+
+
+def test_claim_gift_on_archived_list(client, admin_user, admin_headers, shared_list, db):
+    gift = Gift(list_id=shared_list.id, name="Archived Gift")
+    db.add(gift)
+    db.flush()
+
+    shared_list.is_archived = True
+    db.flush()
+
+    response = client.post(
+        f"/lists/{shared_list.id}/gifts/{gift.id}/claim",
+        headers=admin_headers,
+    )
+    assert response.status_code == 400
+
+
+def test_unclaim_gift_on_archived_list(client, admin_user, admin_headers, shared_list, db):
+    gift = Gift(list_id=shared_list.id, name="Claimed Archived Gift")
+    gift.claimed_by_id = admin_user.id
+    db.add(gift)
+    db.flush()
+
+    shared_list.is_archived = True
+    db.flush()
+
+    response = client.delete(
+        f"/lists/{shared_list.id}/gifts/{gift.id}/claim",
+        headers=admin_headers,
+    )
+    assert response.status_code == 400

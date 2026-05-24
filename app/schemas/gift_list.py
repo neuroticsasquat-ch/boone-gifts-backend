@@ -12,6 +12,7 @@ class GiftListCreate(BaseModel):
 class GiftListUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
+    is_archived: bool | None = None
 
 
 class GiftOwnerRead(BaseModel):
@@ -46,6 +47,7 @@ class GiftListRead(BaseModel):
     description: str | None
     owner_id: int
     owner_name: str
+    is_archived: bool
     created_at: datetime
     updated_at: datetime
 
@@ -58,6 +60,7 @@ class GiftListDetailOwner(BaseModel):
     description: str | None
     owner_id: int
     owner_name: str
+    is_archived: bool
     gifts: list[GiftOwnerRead]
     created_at: datetime
     updated_at: datetime
@@ -71,6 +74,7 @@ class GiftListDetailViewer(BaseModel):
     description: str | None
     owner_id: int
     owner_name: str
+    is_archived: bool
     gifts: list[GiftRead]
     created_at: datetime
     updated_at: datetime

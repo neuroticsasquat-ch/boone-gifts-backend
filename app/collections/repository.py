@@ -16,9 +16,14 @@ def create_collection(
     return collection
 
 
-def get_collections_for_user(db: Session, owner_id: int) -> list[Collection]:
+def get_collections_for_user(db: Session, owner_id: int, archived: bool = False) -> list[Collection]:
     return list(
-        db.execute(select(Collection).where(Collection.owner_id == owner_id))
+        db.execute(
+            select(Collection).where(
+                Collection.owner_id == owner_id,
+                Collection.is_archived == archived,
+            )
+        )
         .scalars()
         .all()
     )

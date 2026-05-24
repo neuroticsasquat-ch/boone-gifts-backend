@@ -82,7 +82,7 @@ def test_list_collections(mock_get):
 
     result = service.list_collections(db, owner_id=1)
 
-    mock_get.assert_called_once_with(db, 1)
+    mock_get.assert_called_once_with(db, 1, archived=False)
     assert len(result) == 1
     assert result[0].name == "My Collection"
 

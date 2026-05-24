@@ -19,8 +19,9 @@ def list_lists(
     user: CurrentUser,
     db: DbSession,
     filter: str | None = Query(default=None, pattern="^(owned|shared)$"),
+    archived: bool = Query(default=False),
 ):
-    return list_service.get_lists(db, user_id=user.id, filter=filter)
+    return list_service.get_lists(db, user_id=user.id, filter=filter, archived=archived)
 
 
 @router.get("/{list_id}")
