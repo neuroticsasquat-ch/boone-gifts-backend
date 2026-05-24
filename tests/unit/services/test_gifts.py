@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -109,74 +109,67 @@ def test_delete_gift_claimed(mock_get):
 # --- claim_gift ---
 
 
+@patch(f"{REPO}.claim_gift", return_value=1)
 @patch(f"{REPO}.get_gift_by_id")
-def test_claim_gift_success(mock_get):
+def test_claim_gift_success(mock_get, mock_claim):
     db = MagicMock()
     gift = _make_gift(id=1, list_id=10, claimed_by_id=None)
     mock_get.return_value = gift
 
-    result = service.claim_gift(db, gift_id=1, list_id=10, owner_id=5, user_id=99)
+    service.claim_gift(db, gift_id=1, list_id=10, owner_id=5, user_id=99)
 
-    assert result.claimed_by_id == 99
-    assert result.claimed_at is not None
+    mock_get.assert_called_once_with(db, 1)
+    mock_claim.assert_called_once_with(db, 1, 99)
+    db.refresh.assert_called_once_with(gift)
 
 
 @patch(f"{REPO}.get_gift_by_id")
 def test_claim_gift_by_owner(mock_get):
     db = MagicMock()
-    # Owner should not be able to claim their own gift
     with pytest.raises(ForbiddenError):
         service.claim_gift(db, gift_id=1, list_id=10, owner_id=5, user_id=5)
 
-    # repo should never be called
     mock_get.assert_not_called()
 
 
+@patch(f"{REPO}.claim_gift", return_value=0)
 @patch(f"{REPO}.get_gift_by_id")
-def test_claim_gift_already_claimed(mock_get):
+def test_claim_gift_already_claimed(mock_get, mock_claim):
     db = MagicMock()
-    gift = _make_gift(
-        id=1,
-        list_id=10,
-        claimed_by_id=50,
-        claimed_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
-    )
+    gift = _make_gift(id=1, list_id=10)
     mock_get.return_value = gift
 
     with pytest.raises(ConflictError):
         service.claim_gift(db, gift_id=1, list_id=10, owner_id=5, user_id=99)
 
+    mock_claim.assert_called_once_with(db, 1, 99)
+
 
 # --- unclaim_gift ---
 
 
+@patch(f"{REPO}.unclaim_gift", return_value=1)
 @patch(f"{REPO}.get_gift_by_id")
-def test_unclaim_gift_success(mock_get):
+def test_unclaim_gift_success(mock_get, mock_unclaim):
     db = MagicMock()
-    gift = _make_gift(
-        id=1,
-        list_id=10,
-        claimed_by_id=99,
-        claimed_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
-    )
+    gift = _make_gift(id=1, list_id=10, claimed_by_id=99)
     mock_get.return_value = gift
 
-    result = service.unclaim_gift(db, gift_id=1, list_id=10, user_id=99)
+    service.unclaim_gift(db, gift_id=1, list_id=10, user_id=99)
 
-    assert result.claimed_by_id is None
-    assert result.claimed_at is None
+    mock_get.assert_called_once_with(db, 1)
+    mock_unclaim.assert_called_once_with(db, 1, 99)
+    db.refresh.assert_called_once_with(gift)
 
 
+@patch(f"{REPO}.unclaim_gift", return_value=0)
 @patch(f"{REPO}.get_gift_by_id")
-def test_unclaim_gift_not_claimer(mock_get):
+def test_unclaim_gift_not_claimer(mock_get, mock_unclaim):
     db = MagicMock()
-    gift = _make_gift(
-        id=1,
-        list_id=10,
-        claimed_by_id=50,
-        claimed_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
-    )
+    gift = _make_gift(id=1, list_id=10, claimed_by_id=50)
     mock_get.return_value = gift
 
     with pytest.raises(ForbiddenError):
         service.unclaim_gift(db, gift_id=1, list_id=10, user_id=99)
+
+    mock_unclaim.assert_called_once_with(db, 1, 99)

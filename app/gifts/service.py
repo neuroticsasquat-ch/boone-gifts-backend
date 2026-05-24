@@ -1,5 +1,3 @@
-from datetime import datetime, timezone
-
 from sqlalchemy.orm import Session
 
 from app.gifts import repository as repo
@@ -43,19 +41,17 @@ def claim_gift(
     if owner_id == user_id:
         raise ForbiddenError("Cannot claim your own gift.")
     gift = _get_gift_for_list(db, gift_id, list_id)
-    if gift.claimed_by_id is not None:
+    rows = repo.claim_gift(db, gift_id, user_id)
+    if rows == 0:
         raise ConflictError("Gift already claimed.")
-    gift.claimed_by_id = user_id
-    gift.claimed_at = datetime.now(timezone.utc)
-    db.flush()
+    db.refresh(gift)
     return gift
 
 
 def unclaim_gift(db: Session, gift_id: int, list_id: int, user_id: int) -> Gift:
     gift = _get_gift_for_list(db, gift_id, list_id)
-    if gift.claimed_by_id != user_id:
+    rows = repo.unclaim_gift(db, gift_id, user_id)
+    if rows == 0:
         raise ForbiddenError("Only the claimer can unclaim.")
-    gift.claimed_by_id = None
-    gift.claimed_at = None
-    db.flush()
+    db.refresh(gift)
     return gift
