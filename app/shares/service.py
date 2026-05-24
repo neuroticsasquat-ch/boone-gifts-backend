@@ -52,6 +52,10 @@ def list_shares(db: Session, list_id: int) -> list[ListShare]:
     return repo.get_shares_for_list(db, list_id)
 
 
+def get_shared_users(db: Session, list_id: int) -> list:
+    return repo.get_shared_users(db, list_id)
+
+
 def delete_share(db: Session, list_id: int, user_id: int) -> None:
     share = repo.find_share(db, list_id, user_id)
     if share is None:

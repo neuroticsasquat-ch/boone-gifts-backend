@@ -138,6 +138,26 @@ def test_owner_view_does_not_affect_unseen_count(client, member_user, member_hea
     assert count_after == count_before
 
 
+def test_shared_users_as_owner(client, member_headers, shared_list, admin_user):
+    response = client.get(f"/lists/{shared_list.id}/shares/users", headers=member_headers)
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) >= 1
+    assert any(u["id"] == admin_user.id for u in data)
+
+
+def test_shared_users_as_viewer(client, admin_headers, shared_list, admin_user):
+    response = client.get(f"/lists/{shared_list.id}/shares/users", headers=admin_headers)
+    assert response.status_code == 200
+    data = response.json()
+    assert any(u["id"] == admin_user.id for u in data)
+
+
+def test_shared_users_not_shared(client, admin_user, admin_headers, sample_list):
+    response = client.get(f"/lists/{sample_list.id}/shares/users", headers=admin_headers)
+    assert response.status_code == 403
+
+
 def test_unshare_removes_collection_items(
     client, member_headers, shared_list, admin_user, db
 ):

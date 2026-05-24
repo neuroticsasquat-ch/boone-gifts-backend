@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from app.models.collection import Collection
 from app.models.collection_item import CollectionItem
 from app.models.list_share import ListShare
+from app.models.user import User
 
 
 def find_share(db: Session, list_id: int, user_id: int) -> ListShare | None:
@@ -25,6 +26,15 @@ def create_share(db: Session, list_id: int, user_id: int) -> ListShare:
 def get_shares_for_list(db: Session, list_id: int) -> list[ListShare]:
     return list(
         db.execute(select(ListShare).where(ListShare.list_id == list_id))
+        .scalars()
+        .all()
+    )
+
+
+def get_shared_users(db: Session, list_id: int) -> list[User]:
+    share_user_ids = select(ListShare.user_id).where(ListShare.list_id == list_id)
+    return list(
+        db.execute(select(User).where(User.id.in_(share_user_ids)))
         .scalars()
         .all()
     )
