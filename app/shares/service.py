@@ -1,7 +1,12 @@
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.connections.repository import find_accepted_connection_between
+from app.email.list_shared import render_list_shared_email
+from app.email.sender import send_email
+from app.models.gift_list import GiftList
 from app.models.list_share import ListShare
+from app.models.user import User
 from app.shares import repository as repo
 from app.services.exceptions import (
     BadRequestError,
@@ -25,7 +30,22 @@ def create_share(
     if existing is not None:
         raise ConflictError("Share already exists.")
 
-    return repo.create_share(db, list_id, user_id)
+    share = repo.create_share(db, list_id, user_id)
+
+    recipient = db.get(User, user_id)
+    sharer = db.get(User, current_user_id)
+    gift_list = db.get(GiftList, list_id)
+    if recipient and recipient.is_active and sharer and gift_list:
+        base = settings.frontend_url.rstrip("/")
+        list_url = f"{base}/lists/{list_id}"
+        subject, html, text = render_list_shared_email(
+            sharer_name=sharer.name,
+            list_name=gift_list.name,
+            list_url=list_url,
+        )
+        send_email(to=recipient.email, subject=subject, html=html, text=text)
+
+    return share
 
 
 def list_shares(db: Session, list_id: int) -> list[ListShare]:
