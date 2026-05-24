@@ -31,5 +31,9 @@ class ChangePasswordRequest(BaseModel):
     new_password: str
 
 
+class UpdateProfileRequest(BaseModel):
+    name: str
+
+
 class GenericMessageResponse(BaseModel):
     message: str

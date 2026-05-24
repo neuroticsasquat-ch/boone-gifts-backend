@@ -38,6 +38,7 @@ def create_access_token(user: User, *, iat: datetime | None = None) -> str:
     payload = {
         "sub": str(user.id),
         "email": user.email,
+        "name": user.name,
         "role": user.role,
         "iat": issued_at,
         "exp": issued_at + timedelta(minutes=settings.access_token_expire_minutes),
