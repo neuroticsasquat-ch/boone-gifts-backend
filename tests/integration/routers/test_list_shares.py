@@ -114,6 +114,30 @@ def test_share_list_connected(
     assert response.status_code == 201
 
 
+def test_unseen_share_count(client, admin_user, admin_headers, shared_list):
+    response = client.get("/lists/unseen-count", headers=admin_headers)
+    assert response.status_code == 200
+    assert response.json()["count"] >= 1
+
+
+def test_viewing_list_marks_share_seen(client, admin_user, admin_headers, shared_list):
+    count_before = client.get("/lists/unseen-count", headers=admin_headers).json()["count"]
+
+    client.get(f"/lists/{shared_list.id}", headers=admin_headers)
+
+    count_after = client.get("/lists/unseen-count", headers=admin_headers).json()["count"]
+    assert count_after == count_before - 1
+
+
+def test_owner_view_does_not_affect_unseen_count(client, member_user, member_headers, sample_list):
+    count_before = client.get("/lists/unseen-count", headers=member_headers).json()["count"]
+
+    client.get(f"/lists/{sample_list.id}", headers=member_headers)
+
+    count_after = client.get("/lists/unseen-count", headers=member_headers).json()["count"]
+    assert count_after == count_before
+
+
 def test_unshare_removes_collection_items(
     client, member_headers, shared_list, admin_user, db
 ):

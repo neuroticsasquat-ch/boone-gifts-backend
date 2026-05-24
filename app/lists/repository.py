@@ -57,3 +57,27 @@ def update_list(db: Session, gift_list: GiftList, updates: dict) -> GiftList:
 def delete_list(db: Session, gift_list: GiftList) -> None:
     db.delete(gift_list)
     db.flush()
+
+
+def get_unseen_share_count(db: Session, user_id: int) -> int:
+    from sqlalchemy import func as sa_func
+    result = db.execute(
+        select(sa_func.count())
+        .select_from(ListShare)
+        .where(ListShare.user_id == user_id, ListShare.seen_at.is_(None))
+    ).scalar()
+    return result or 0
+
+
+def mark_share_seen(db: Session, list_id: int, user_id: int) -> None:
+    from datetime import datetime, timezone
+    share = db.execute(
+        select(ListShare).where(
+            ListShare.list_id == list_id,
+            ListShare.user_id == user_id,
+            ListShare.seen_at.is_(None),
+        )
+    ).scalar_one_or_none()
+    if share:
+        share.seen_at = datetime.now(timezone.utc)
+        db.flush()
