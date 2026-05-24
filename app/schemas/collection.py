@@ -64,6 +64,7 @@ class ShoppingListItem(BaseModel):
     description: str | None
     url: str | None
     price: Decimal | None
+    list_id: int
     list_name: str
     purchased_at: datetime | None
 

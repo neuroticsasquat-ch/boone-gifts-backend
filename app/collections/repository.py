@@ -128,6 +128,7 @@ def get_shopping_list_items(
             "description": gift.description,
             "url": gift.url,
             "price": gift.price,
+            "list_id": gift.list_id,
             "list_name": list_name,
             "purchased_at": gift.purchased_at,
         }
