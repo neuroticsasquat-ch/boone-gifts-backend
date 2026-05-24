@@ -219,50 +219,39 @@ def test_get_list_shows_claims_to_shared_user(
 
 def test_concurrent_claims_exactly_one_wins():
     """
-    Verify that the atomic UPDATE WHERE claim prevents double-claiming under
-    concurrent load. Each thread gets its own DB session (no shared-session
-    override) so SQLite sees two truly independent writers.
+    Verify that the atomic UPDATE WHERE claim prevents double-claiming.
+    Standalone test (no fixtures) to avoid SQLite locking conflicts from
+    the transactional db fixture. Uses test_engine/TestSession directly.
     """
     from app.models.gift_list import GiftList
     from app.models.list_share import ListShare
     from app.models.connection import Connection
     from app.models.user import User
-    from app.database import SessionLocal, engine as _engine
-    from app.dependencies import create_access_token
+    from app.dependencies import create_access_token, get_db
     from app.main import app
     from fastapi.testclient import TestClient
     from sqlalchemy import text
+    from tests.integration.conftest import test_engine, TestSession
 
     def _cleanup(conn):
-        """Remove all committed race-test data using raw SQL (FK-safe order)."""
-        conn.execute(text(
-            "DELETE FROM gifts WHERE list_id IN "
-            "(SELECT id FROM lists WHERE owner_id IN "
-            "(SELECT id FROM users WHERE email LIKE 'race_%@test.com'))"
-        ))
-        conn.execute(text(
-            "DELETE FROM list_shares WHERE list_id IN "
-            "(SELECT id FROM lists WHERE owner_id IN "
-            "(SELECT id FROM users WHERE email LIKE 'race_%@test.com'))"
-        ))
-        conn.execute(text(
-            "DELETE FROM lists WHERE owner_id IN "
-            "(SELECT id FROM users WHERE email LIKE 'race_%@test.com')"
-        ))
-        conn.execute(text(
-            "DELETE FROM connections WHERE "
-            "requester_id IN (SELECT id FROM users WHERE email LIKE 'race_%@test.com') "
-            "OR addressee_id IN (SELECT id FROM users WHERE email LIKE 'race_%@test.com')"
-        ))
+        conn.execute(text("DELETE FROM gifts WHERE list_id IN "
+                          "(SELECT id FROM lists WHERE owner_id IN "
+                          "(SELECT id FROM users WHERE email LIKE 'race_%@test.com'))"))
+        conn.execute(text("DELETE FROM list_shares WHERE list_id IN "
+                          "(SELECT id FROM lists WHERE owner_id IN "
+                          "(SELECT id FROM users WHERE email LIKE 'race_%@test.com'))"))
+        conn.execute(text("DELETE FROM lists WHERE owner_id IN "
+                          "(SELECT id FROM users WHERE email LIKE 'race_%@test.com')"))
+        conn.execute(text("DELETE FROM connections WHERE "
+                          "requester_id IN (SELECT id FROM users WHERE email LIKE 'race_%@test.com') "
+                          "OR addressee_id IN (SELECT id FROM users WHERE email LIKE 'race_%@test.com')"))
         conn.execute(text("DELETE FROM users WHERE email LIKE 'race_%@test.com'"))
         conn.commit()
 
-    # Pre-clean any leftover data from a previous failed run
-    with _engine.connect() as pre_conn:
+    with test_engine.connect() as pre_conn:
         _cleanup(pre_conn)
 
-    # Set up data in a committed session so both request sessions can see it
-    setup_db = SessionLocal()
+    setup_db = TestSession()
     try:
         owner = User(email="race_owner@test.com", name="Race Owner", role="member", password_hash="x")
         owner.set_password("pass")
@@ -308,7 +297,18 @@ def test_concurrent_claims_exactly_one_wins():
     results = {}
 
     def claim_as(name, headers):
-        # Each thread gets its own TestClient (and thus its own DB session via get_db)
+        def override_get_db():
+            session = TestSession()
+            try:
+                yield session
+                session.commit()
+            except Exception:
+                session.rollback()
+                raise
+            finally:
+                session.close()
+
+        app.dependency_overrides[get_db] = override_get_db
         with TestClient(app) as c:
             resp = c.post(f"/lists/{list_id}/gifts/{gift_id}/claim", headers=headers)
             results[name] = resp.status_code
@@ -320,10 +320,11 @@ def test_concurrent_claims_exactly_one_wins():
     t1.join()
     t2.join()
 
+    app.dependency_overrides.clear()
+
     codes = sorted(results.values())
 
-    # Cleanup committed test data
-    with _engine.connect() as post_conn:
+    with test_engine.connect() as post_conn:
         _cleanup(post_conn)
 
     assert codes == [200, 409], f"Expected [200, 409] but got {codes}"
