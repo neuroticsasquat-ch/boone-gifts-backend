@@ -202,3 +202,15 @@ def test_collections_archived_filter(client, member_headers, collection, db):
     response = client.get("/collections?archived=true", headers=member_headers)
     assert response.status_code == 200
     assert len(response.json()) == 1
+
+
+def test_collections_for_list(client, member_headers, collection, collection_item, sample_list):
+    response = client.get(f"/collections/for-list/{sample_list.id}", headers=member_headers)
+    assert response.status_code == 200
+    assert collection.id in response.json()
+
+
+def test_collections_for_list_empty(client, member_headers, sample_list):
+    response = client.get(f"/collections/for-list/{sample_list.id}", headers=member_headers)
+    assert response.status_code == 200
+    assert response.json() == []

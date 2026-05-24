@@ -92,3 +92,15 @@ def create_collection_item(
 def delete_collection_item(db: Session, item: CollectionItem) -> None:
     db.delete(item)
     db.flush()
+
+
+def get_collection_ids_for_list(db: Session, list_id: int, owner_id: int) -> list[int]:
+    result = db.execute(
+        select(CollectionItem.collection_id)
+        .join(Collection, CollectionItem.collection_id == Collection.id)
+        .where(
+            CollectionItem.list_id == list_id,
+            Collection.owner_id == owner_id,
+        )
+    ).scalars().all()
+    return list(result)
