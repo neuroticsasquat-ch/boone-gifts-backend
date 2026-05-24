@@ -34,3 +34,11 @@ def update_list(db: Session, gift_list: GiftList, updates: dict) -> GiftList:
 
 def delete_list(db: Session, gift_list: GiftList) -> None:
     repo.delete_list(db, gift_list)
+
+
+def get_unseen_share_count(db: Session, user_id: int) -> int:
+    return repo.get_unseen_share_count(db, user_id)
+
+
+def mark_share_seen(db: Session, list_id: int, user_id: int) -> None:
+    repo.mark_share_seen(db, list_id, user_id)
