@@ -7,6 +7,8 @@ from app.meta import service
 from app.schemas.meta import UrlMetaResponse
 from app.services.exceptions import BadRequestError
 
+LINKPREVIEW = "app.meta.service._fetch_linkpreview"
+
 
 def _mock_html_response(html: str, content_type: str = "text/html; charset=utf-8") -> MagicMock:
     """Create a mock httpx.Response with the given HTML body."""
@@ -163,3 +165,94 @@ def test_get_url_meta_fetch_failure(mock_fetch, mock_resolve):
     assert result.description is None
     assert result.price is None
     assert result.image is None
+
+
+# --- LinkPreview fallback ---
+
+GENERIC_AMAZON_HTML = """
+<!DOCTYPE html>
+<html><head><title>Amazon.com</title></head><body></body></html>
+"""
+
+
+@patch("app.meta.service.settings")
+@patch(LINKPREVIEW, return_value=UrlMetaResponse(
+    title="Cool Product", description="A great product", image="https://img.com/x.jpg"
+))
+@patch(RESOLVE)
+@patch(FETCH, return_value=_mock_html_response(GENERIC_AMAZON_HTML))
+def test_fallback_triggered_when_direct_fetch_returns_generic_title(
+    mock_fetch, mock_resolve, mock_linkpreview, mock_settings
+):
+    mock_settings.linkpreview_api_key = "test-key"
+    result = service.get_url_meta("https://www.amazon.com/product/123")
+
+    mock_linkpreview.assert_called_once_with("https://www.amazon.com/product/123")
+    assert result.title == "Cool Product"
+    assert result.description == "A great product"
+    assert result.image == "https://img.com/x.jpg"
+
+
+@patch("app.meta.service.settings")
+@patch(LINKPREVIEW)
+@patch(RESOLVE)
+@patch(FETCH, return_value=_mock_html_response(OG_HTML))
+def test_fallback_not_triggered_when_direct_fetch_succeeds(
+    mock_fetch, mock_resolve, mock_linkpreview, mock_settings
+):
+    mock_settings.linkpreview_api_key = "test-key"
+    result = service.get_url_meta("https://example.com/product")
+
+    mock_linkpreview.assert_not_called()
+    assert result.title == "Cool Gadget"
+
+
+@patch("app.meta.service.settings")
+@patch(LINKPREVIEW)
+@patch(RESOLVE)
+@patch(FETCH, return_value=_mock_html_response(GENERIC_AMAZON_HTML))
+def test_fallback_not_triggered_when_no_api_key(
+    mock_fetch, mock_resolve, mock_linkpreview, mock_settings
+):
+    mock_settings.linkpreview_api_key = ""
+    result = service.get_url_meta("https://www.amazon.com/product/123")
+
+    mock_linkpreview.assert_not_called()
+    assert result.title == "Amazon.com"
+
+
+@patch("app.meta.service.settings")
+@patch(LINKPREVIEW, return_value=UrlMetaResponse(
+    title="Etsy Product", description="Handmade item", image="https://img.com/y.jpg"
+))
+@patch(RESOLVE)
+@patch(FETCH, side_effect=Exception("Connection failed"))
+def test_fallback_triggered_on_fetch_failure_with_api_key(
+    mock_fetch, mock_resolve, mock_linkpreview, mock_settings
+):
+    mock_settings.linkpreview_api_key = "test-key"
+    result = service.get_url_meta("https://www.etsy.com/listing/123")
+
+    mock_linkpreview.assert_called_once()
+    assert result.title == "Etsy Product"
+    assert result.description == "Handmade item"
+
+
+@patch("app.meta.service.settings")
+@patch(LINKPREVIEW, return_value=UrlMetaResponse(
+    title="Product Name", description="Desc from linkpreview", image="https://img.com/z.jpg"
+))
+@patch(RESOLVE)
+@patch(FETCH, return_value=_mock_html_response(
+    '<html><head><meta property="product:price:amount" content="19.99" />'
+    "<title>Amazon.com</title></head></html>"
+))
+def test_fallback_preserves_price_from_direct_fetch(
+    mock_fetch, mock_resolve, mock_linkpreview, mock_settings
+):
+    mock_settings.linkpreview_api_key = "test-key"
+    result = service.get_url_meta("https://www.amazon.com/product/456")
+
+    assert result.title == "Product Name"
+    assert result.price == "19.99"
+    assert result.image == "https://img.com/z.jpg"
