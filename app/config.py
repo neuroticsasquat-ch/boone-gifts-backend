@@ -34,6 +34,8 @@ class Settings(BaseSettings):
     email_smtp_password: str = ""
     email_smtp_use_tls: bool = True
 
+    linkpreview_api_key: str = ""
+
     sentry_dsn: str = ""
     sentry_environment: str = "production"
     sentry_release: str = ""
