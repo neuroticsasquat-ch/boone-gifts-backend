@@ -174,3 +174,132 @@ def test_remove_item_not_found(client, member_headers, collection):
         headers=member_headers,
     )
     assert response.status_code == 404
+
+
+def test_archive_collection(client, member_headers, collection):
+    response = client.put(
+        f"/collections/{collection.id}",
+        headers=member_headers,
+        json={"is_archived": True},
+    )
+    assert response.status_code == 200
+    assert response.json()["is_archived"] is True
+
+
+def test_collections_exclude_archived_by_default(client, member_headers, collection, db):
+    collection.is_archived = True
+    db.flush()
+
+    response = client.get("/collections", headers=member_headers)
+    assert response.status_code == 200
+    assert len(response.json()) == 0
+
+
+def test_collections_archived_filter(client, member_headers, collection, db):
+    collection.is_archived = True
+    db.flush()
+
+    response = client.get("/collections?archived=true", headers=member_headers)
+    assert response.status_code == 200
+    assert len(response.json()) == 1
+
+
+def test_collections_for_list(client, member_headers, collection, collection_item, sample_list):
+    response = client.get(f"/collections/for-list/{sample_list.id}", headers=member_headers)
+    assert response.status_code == 200
+    assert collection.id in response.json()
+
+
+def test_collections_for_list_empty(client, member_headers, sample_list):
+    response = client.get(f"/collections/for-list/{sample_list.id}", headers=member_headers)
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+# Shopping list endpoint tests
+
+def test_shopping_list_returns_claimed_gifts(
+    client, member_user, member_headers, admin_user, collection, collection_item, shared_list, db
+):
+    from app.models.gift import Gift
+
+    gift = Gift(list_id=shared_list.id, name="Claimed by Member")
+    gift.claimed_by_id = member_user.id
+    db.add(gift)
+    db.flush()
+
+    response = client.get(
+        f"/collections/{collection.id}/shopping-list",
+        headers=member_headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["name"] == "Claimed by Member"
+    assert data[0]["list_name"] == shared_list.name
+    assert data[0]["purchased_at"] is None
+
+
+def test_shopping_list_excludes_unclaimed(
+    client, member_headers, collection, collection_item, shared_list, db
+):
+    from app.models.gift import Gift
+
+    gift = Gift(list_id=shared_list.id, name="Unclaimed Gift")
+    db.add(gift)
+    db.flush()
+
+    response = client.get(
+        f"/collections/{collection.id}/shopping-list",
+        headers=member_headers,
+    )
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_shopping_list_excludes_other_claimer(
+    client, member_headers, admin_user, collection, collection_item, shared_list, db
+):
+    from app.models.gift import Gift
+
+    gift = Gift(list_id=shared_list.id, name="Admin's Claim")
+    gift.claimed_by_id = admin_user.id
+    db.add(gift)
+    db.flush()
+
+    response = client.get(
+        f"/collections/{collection.id}/shopping-list",
+        headers=member_headers,
+    )
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_shopping_list_shows_purchased_at(
+    client, member_user, member_headers, collection, collection_item, shared_list, db
+):
+    from datetime import datetime, timezone
+    from app.models.gift import Gift
+
+    gift = Gift(list_id=shared_list.id, name="Bought Gift")
+    gift.claimed_by_id = member_user.id
+    gift.purchased_at = datetime(2026, 5, 24, 12, 0, 0, tzinfo=timezone.utc)
+    db.add(gift)
+    db.flush()
+
+    response = client.get(
+        f"/collections/{collection.id}/shopping-list",
+        headers=member_headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["purchased_at"] is not None
+
+
+def test_shopping_list_not_owner_403(client, admin_headers, collection):
+    response = client.get(
+        f"/collections/{collection.id}/shopping-list",
+        headers=admin_headers,
+    )
+    assert response.status_code == 403

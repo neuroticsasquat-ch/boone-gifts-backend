@@ -1,3 +1,8 @@
+from datetime import datetime, timedelta, timezone
+
+from app.models.invite import Invite
+
+
 def test_create_invite_as_admin(client, admin_user, admin_headers):
     response = client.post(
         "/invites",
@@ -10,6 +15,7 @@ def test_create_invite_as_admin(client, admin_user, admin_headers):
     assert data["role"] == "member"
     assert data["token"] is not None
     assert data["used_at"] is None
+    assert data["status"] == "pending"
 
 
 def test_create_invite_as_member(client, member_user, member_headers):
@@ -69,3 +75,49 @@ def test_delete_invite_as_member(client, admin_user, member_user, admin_headers,
 
     response = client.delete(f"/invites/{invite_id}", headers=member_headers)
     assert response.status_code == 403
+
+
+def test_list_invites_shows_used_status(client, db, admin_user, admin_headers):
+    invite = Invite(
+        email="used@test.com",
+        expires_at=datetime.now(timezone.utc) + timedelta(days=7),
+        used_at=datetime.now(timezone.utc),
+        invited_by_id=admin_user.id,
+    )
+    db.add(invite)
+    db.flush()
+
+    response = client.get("/invites", headers=admin_headers)
+    assert response.status_code == 200
+    invites = {i["email"]: i for i in response.json()}
+    assert invites["used@test.com"]["status"] == "used"
+
+
+def test_list_invites_shows_expired_status(client, db, admin_user, admin_headers):
+    invite = Invite(
+        email="expired@test.com",
+        expires_at=datetime.now(timezone.utc) - timedelta(days=1),
+        invited_by_id=admin_user.id,
+    )
+    db.add(invite)
+    db.flush()
+
+    response = client.get("/invites", headers=admin_headers)
+    assert response.status_code == 200
+    invites = {i["email"]: i for i in response.json()}
+    assert invites["expired@test.com"]["status"] == "expired"
+
+
+def test_list_invites_shows_pending_status(client, db, admin_user, admin_headers):
+    invite = Invite(
+        email="pending@test.com",
+        expires_at=datetime.now(timezone.utc) + timedelta(days=7),
+        invited_by_id=admin_user.id,
+    )
+    db.add(invite)
+    db.flush()
+
+    response = client.get("/invites", headers=admin_headers)
+    assert response.status_code == 200
+    invites = {i["email"]: i for i in response.json()}
+    assert invites["pending@test.com"]["status"] == "pending"

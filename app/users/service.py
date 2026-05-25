@@ -1,7 +1,7 @@
 from sqlalchemy.orm import Session
 
 from app.models.user import User
-from app.services.exceptions import NotFoundError
+from app.services.exceptions import BadRequestError, NotFoundError
 from app.users import repository as repo
 
 
@@ -16,7 +16,11 @@ def get_user(db: Session, user_id: int) -> User:
     return user
 
 
-def update_user(db: Session, user_id: int, updates: dict) -> User:
+def update_user(
+    db: Session, user_id: int, updates: dict, *, current_user_id: int
+) -> User:
+    if updates.get("is_active") is False and user_id == current_user_id:
+        raise BadRequestError("Cannot deactivate your own account.")
     user = repo.find_user_by_id(db, user_id)
     if user is None:
         raise NotFoundError("User not found.")

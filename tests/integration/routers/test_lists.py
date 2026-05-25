@@ -123,3 +123,32 @@ def test_delete_list_as_owner(client, member_headers, sample_list):
 def test_delete_list_as_shared_user(client, admin_headers, shared_list):
     response = client.delete(f"/lists/{shared_list.id}", headers=admin_headers)
     assert response.status_code == 403
+
+
+def test_archive_list(client, member_headers, sample_list):
+    response = client.put(
+        f"/lists/{sample_list.id}",
+        headers=member_headers,
+        json={"is_archived": True},
+    )
+    assert response.status_code == 200
+    assert response.json()["is_archived"] is True
+
+
+def test_list_excludes_archived_by_default(client, member_headers, sample_list, db):
+    sample_list.is_archived = True
+    db.flush()
+
+    response = client.get("/lists?filter=owned", headers=member_headers)
+    assert response.status_code == 200
+    assert len(response.json()) == 0
+
+
+def test_list_archived_filter(client, member_headers, sample_list, db):
+    sample_list.is_archived = True
+    db.flush()
+
+    response = client.get("/lists?filter=owned&archived=true", headers=member_headers)
+    assert response.status_code == 200
+    assert len(response.json()) == 1
+    assert response.json()[0]["is_archived"] is True

@@ -3,8 +3,9 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 
 from app.gifts import repository as repo
+from app.lists import repository as list_repo
 from app.models.gift import Gift
-from app.services.exceptions import ConflictError, ForbiddenError, NotFoundError
+from app.services.exceptions import BadRequestError, ConflictError, ForbiddenError, NotFoundError
 
 
 def _get_gift_for_list(db: Session, gift_id: int, list_id: int) -> Gift:
@@ -43,19 +44,45 @@ def claim_gift(
     if owner_id == user_id:
         raise ForbiddenError("Cannot claim your own gift.")
     gift = _get_gift_for_list(db, gift_id, list_id)
-    if gift.claimed_by_id is not None:
+    gift_list = list_repo.get_list_by_id(db, list_id)
+    if gift_list and gift_list.is_archived:
+        raise BadRequestError("Cannot claim gifts on an archived list.")
+    rows = repo.claim_gift(db, gift_id, user_id)
+    if rows == 0:
         raise ConflictError("Gift already claimed.")
-    gift.claimed_by_id = user_id
-    gift.claimed_at = datetime.now(timezone.utc)
-    db.flush()
+    db.refresh(gift)
     return gift
 
 
 def unclaim_gift(db: Session, gift_id: int, list_id: int, user_id: int) -> Gift:
     gift = _get_gift_for_list(db, gift_id, list_id)
-    if gift.claimed_by_id != user_id:
+    gift_list = list_repo.get_list_by_id(db, list_id)
+    if gift_list and gift_list.is_archived:
+        raise BadRequestError("Cannot unclaim gifts on an archived list.")
+    rows = repo.unclaim_gift(db, gift_id, user_id)
+    if rows == 0:
         raise ForbiddenError("Only the claimer can unclaim.")
-    gift.claimed_by_id = None
-    gift.claimed_at = None
+    db.refresh(gift)
+    # Clear purchased state when gift is unclaimed
+    if gift.purchased_at is not None:
+        gift.purchased_at = None
+        db.flush()
+    return gift
+
+
+def purchase_gift(db: Session, gift_id: int, list_id: int, user_id: int) -> Gift:
+    gift = _get_gift_for_list(db, gift_id, list_id)
+    if gift.claimed_by_id != user_id:
+        raise ForbiddenError("Only the claimer can mark as purchased.")
+    gift.purchased_at = datetime.now(timezone.utc)
+    db.flush()
+    return gift
+
+
+def unpurchase_gift(db: Session, gift_id: int, list_id: int, user_id: int) -> Gift:
+    gift = _get_gift_for_list(db, gift_id, list_id)
+    if gift.claimed_by_id != user_id:
+        raise ForbiddenError("Only the claimer can unmark as purchased.")
+    gift.purchased_at = None
     db.flush()
     return gift

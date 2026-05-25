@@ -11,8 +11,8 @@ def create_collection(
     return repo.create_collection(db, name, description, owner_id)
 
 
-def list_collections(db: Session, owner_id: int) -> list[Collection]:
-    return repo.get_collections_for_user(db, owner_id)
+def list_collections(db: Session, owner_id: int, archived: bool = False) -> list[Collection]:
+    return repo.get_collections_for_user(db, owner_id, archived=archived)
 
 
 def get_collection_detail(db: Session, collection: Collection) -> dict:
@@ -22,6 +22,7 @@ def get_collection_detail(db: Session, collection: Collection) -> dict:
         "name": collection.name,
         "description": collection.description,
         "owner_id": collection.owner_id,
+        "is_archived": collection.is_archived,
         "lists": lists,
         "created_at": collection.created_at,
         "updated_at": collection.updated_at,
@@ -60,3 +61,11 @@ def remove_item(db: Session, collection: Collection, list_id: int) -> None:
     if item is None:
         raise NotFoundError("Item not found in collection.")
     repo.delete_collection_item(db, item)
+
+
+def get_collection_ids_for_list(db: Session, list_id: int, owner_id: int) -> list[int]:
+    return repo.get_collection_ids_for_list(db, list_id, owner_id)
+
+
+def get_shopping_list(db: Session, collection_id: int, user_id: int) -> list[dict]:
+    return repo.get_shopping_list_items(db, collection_id, user_id)
