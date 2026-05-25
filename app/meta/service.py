@@ -8,8 +8,11 @@ import httpx
 from app.schemas.meta import UrlMetaResponse
 from app.services.exceptions import BadRequestError
 
-_USER_AGENT = "Mozilla/5.0 (compatible; BooneGifts/1.0)"
-_TIMEOUT = 5.0
+_USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+)
+_TIMEOUT = 10.0
 
 # Private/reserved IP networks to block (SSRF protection)
 _BLOCKED_NETWORKS = [
@@ -70,7 +73,7 @@ class _MetaParser(HTMLParser):
             raise _StopParsing()
 
     def extract(self) -> UrlMetaResponse:
-        title = self.og.get("og:title") or self.title_text
+        title = self.og.get("og:title") or self.meta_name.get("title") or self.title_text
         description = self.og.get("og:description") or self.meta_name.get("description")
         price = self.og.get("product:price:amount") or self.og.get("og:price:amount")
         image = self.og.get("og:image")
@@ -103,7 +106,11 @@ def _fetch_url(url: str) -> httpx.Response:
     with httpx.Client(
         timeout=_TIMEOUT,
         follow_redirects=True,
-        headers={"User-Agent": _USER_AGENT},
+        headers={
+            "User-Agent": _USER_AGENT,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+        },
     ) as client:
         return client.get(url)
 
