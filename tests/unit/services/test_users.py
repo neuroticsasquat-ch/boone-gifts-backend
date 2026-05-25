@@ -119,7 +119,7 @@ def test_delete_user(mock_find, mock_delete, db):
     user = _make_user(1, "Alice")
     mock_find.return_value = user
 
-    service.delete_user(db, user_id=1)
+    service.delete_user(db, user_id=1, current_user_id=99)
 
     mock_find.assert_called_once_with(db, 1)
     mock_delete.assert_called_once_with(db, user)
@@ -128,6 +128,23 @@ def test_delete_user(mock_find, mock_delete, db):
 @patch(f"{REPO}.find_user_by_id", return_value=None)
 def test_delete_user_not_found(mock_find, db):
     with pytest.raises(NotFoundError):
-        service.delete_user(db, user_id=999)
+        service.delete_user(db, user_id=999, current_user_id=1)
 
     mock_find.assert_called_once_with(db, 999)
+
+
+def test_delete_user_cannot_delete_self(db):
+    with pytest.raises(BadRequestError):
+        service.delete_user(db, user_id=1, current_user_id=1)
+
+
+@patch(f"{REPO}.cascade_delete_user")
+@patch(f"{REPO}.find_user_by_id")
+def test_delete_user_purge(mock_find, mock_cascade, db):
+    user = _make_user(1, "Alice")
+    mock_find.return_value = user
+
+    service.delete_user(db, user_id=1, current_user_id=99, purge=True)
+
+    mock_find.assert_called_once_with(db, 1)
+    mock_cascade.assert_called_once_with(db, user)

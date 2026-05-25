@@ -38,7 +38,16 @@ def login(db: Session, email: str, password: str) -> dict:
     }
 
 
-def register(db: Session, token: str, name: str, password: str) -> dict:
+def get_invite_info(db: Session, token: str) -> dict:
+    invite = repo.find_invite_by_token(db, token)
+    if invite is None or not invite.is_valid:
+        raise BadRequestError("Invalid or expired invite.")
+    return {"email": invite.email}
+
+
+def register(
+    db: Session, token: str, name: str, password: str, email: str | None = None
+) -> dict:
     """Register a new user with an invite token.
 
     Raises:
@@ -51,7 +60,7 @@ def register(db: Session, token: str, name: str, password: str) -> dict:
 
     user = repo.create_user(
         db,
-        email=invite.email,
+        email=email or invite.email,
         name=name,
         role=invite.role,
         password=password,

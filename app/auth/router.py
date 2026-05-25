@@ -15,6 +15,7 @@ from app.schemas.auth import (
     ChangePasswordRequest,
     ForgotPasswordRequest,
     GenericMessageResponse,
+    InviteInfoResponse,
     LoginRequest,
     RegisterRequest,
     ResetPasswordRequest,
@@ -62,12 +63,23 @@ def login(request: Request, body: LoginRequest, response: Response, db: DbSessio
     return AccessTokenResponse(access_token=tokens["access_token"])
 
 
+@router.get("/invite-info", response_model=InviteInfoResponse)
+def invite_info(token: str, db: DbSession):
+    try:
+        return auth_service.get_invite_info(db, token)
+    except BadRequestError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+
+
 @router.post("/register", response_model=AccessTokenResponse)
 @limiter.limit(register_limit)
 def register(request: Request, body: RegisterRequest, response: Response, db: DbSession):
     try:
         tokens = auth_service.register(
-            db, body.token, body.name, body.password
+            db, body.token, body.name, body.password, body.email
         )
     except BadRequestError as e:
         raise HTTPException(
