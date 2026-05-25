@@ -1,3 +1,23 @@
+## [0.2.0] - 2026-05-25
+
+### 🚀 Features
+
+- Add computed status field to invite list response (NEU-232) (#46)
+- Add self-deactivation guard and deactivation round-trip tests (NEU-234) (#47)
+- Add archive lifecycle for lists and collections (NEU-243) (#49)
+- Add seen tracking and unseen count endpoint for shared lists (NEU-238) (#50)
+- Add email notifications, sort lists by recency, and claim count fields (NEU-239, NEU-240, NEU-242) (#51)
+- Add connection lists endpoint for profile page (NEU-245) (#52)
+- Add collections-for-list endpoint (NEU-247) (#53)
+- Add shared users endpoint for list detail (NEU-248) (#54)
+- Add profile name update endpoint (NEU-251) (#55)
+- Add purchase tracking and per-collection shopping list (NEU-253) (#56)
+
+### 🐛 Bug Fixes
+
+- Make gift claim atomic to prevent race condition (NEU-224) (#48)
+- Add list_id to ShoppingListItem schema (NEU-254) (#57)
+- Chain purchase migration after seen_at migration (#58)
 ## [0.1.0] - 2026-05-23
 
 ### 🚀 Features
