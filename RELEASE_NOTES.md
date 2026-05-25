@@ -1,3 +1,13 @@
+## [0.2.1] - 2026-05-25
+
+### 🚀 Features
+
+- Registration improvements, user search, and cascade delete
+
+### 🐛 Bug Fixes
+
+- Use production-safe SMTP defaults and add .env.example
+- Handle naive datetime comparison in invite validity check
 ## [0.2.0] - 2026-05-25
 
 ### 🚀 Features
