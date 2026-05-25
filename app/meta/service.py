@@ -130,8 +130,14 @@ def _parse_html(html: str) -> UrlMetaResponse:
     return parser.extract()
 
 
+_USELESS_TITLES = frozenset({
+    "Amazon.com",
+    "Robot or human?",
+})
+
+
 def _result_is_useful(result: UrlMetaResponse) -> bool:
-    return bool(result.title and result.title not in ("Amazon.com",))
+    return bool(result.title and result.title not in _USELESS_TITLES)
 
 
 def _fetch_linkpreview(url: str) -> UrlMetaResponse:
