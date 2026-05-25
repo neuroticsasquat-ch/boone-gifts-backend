@@ -28,11 +28,11 @@ class Settings(BaseSettings):
 
     email_provider: str = "log"
     email_from: str = "Boone Gifts <noreply@boone-gifts.localhost>"
-    email_smtp_host: str = "localhost"
-    email_smtp_port: int = 1025
+    email_smtp_host: str = ""
+    email_smtp_port: int = 587
     email_smtp_username: str = ""
     email_smtp_password: str = ""
-    email_smtp_use_tls: bool = False
+    email_smtp_use_tls: bool = True
 
     sentry_dsn: str = ""
     sentry_environment: str = "production"
