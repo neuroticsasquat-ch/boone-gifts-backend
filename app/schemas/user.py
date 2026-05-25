@@ -18,6 +18,14 @@ class UserRead(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class UserSearchResult(BaseModel):
+    id: int
+    email: str
+    name: str
+
+    model_config = {"from_attributes": True}
+
+
 class UserUpdate(BaseModel):
     email: str | None = None
     name: str | None = None

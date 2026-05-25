@@ -10,6 +10,11 @@ class RegisterRequest(BaseModel):
     token: str
     name: str
     password: str
+    email: str | None = None
+
+
+class InviteInfoResponse(BaseModel):
+    email: str
 
 
 class AccessTokenResponse(BaseModel):
