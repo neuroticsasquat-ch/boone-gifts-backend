@@ -129,10 +129,23 @@ def test_update_list(mock_update):
 
 
 @patch(f"{REPO}.delete_list")
-def test_delete_list(mock_delete):
+@patch(f"{REPO}.has_claimed_gifts", return_value=False)
+def test_delete_list(mock_has_claims, mock_delete):
     db = MagicMock()
     gift_list = _make_gift_list()
 
     service.delete_list(db, gift_list)
 
+    mock_has_claims.assert_called_once_with(db, gift_list.id)
     mock_delete.assert_called_once_with(db, gift_list)
+
+
+@patch(f"{REPO}.has_claimed_gifts", return_value=True)
+def test_delete_list_blocked_by_claims(mock_has_claims):
+    from app.services.exceptions import ConflictError
+
+    db = MagicMock()
+    gift_list = _make_gift_list()
+
+    with pytest.raises(ConflictError, match="claimed"):
+        service.delete_list(db, gift_list)

@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel
 
 from app.dependencies import CurrentUser, DbSession, OwnedList, ViewableList
 from app.lists import service as list_service
 from app.schemas.gift_list import GiftListCreate, GiftListRead, GiftListUpdate
+from app.services.exceptions import ConflictError
 
 router = APIRouter(prefix="/lists", tags=["lists"])
 
@@ -51,4 +52,9 @@ def update_list(updates: GiftListUpdate, gift_list: OwnedList, db: DbSession):
 
 @router.delete("/{list_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_list(gift_list: OwnedList, db: DbSession):
-    list_service.delete_list(db, gift_list)
+    try:
+        list_service.delete_list(db, gift_list)
+    except ConflictError as e:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(e)
+        )

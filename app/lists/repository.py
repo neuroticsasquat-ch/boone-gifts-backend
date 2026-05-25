@@ -56,6 +56,16 @@ def update_list(db: Session, gift_list: GiftList, updates: dict) -> GiftList:
     return gift_list
 
 
+def has_claimed_gifts(db: Session, list_id: int) -> bool:
+    count = db.execute(
+        select(Gift.id).where(
+            Gift.list_id == list_id,
+            Gift.claimed_by_id.isnot(None),
+        ).limit(1)
+    ).first()
+    return count is not None
+
+
 def delete_list(db: Session, gift_list: GiftList) -> None:
     list_id = gift_list.id
     db.execute(delete(CollectionItem).where(CollectionItem.list_id == list_id))

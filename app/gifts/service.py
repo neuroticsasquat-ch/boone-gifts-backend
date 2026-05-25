@@ -34,7 +34,9 @@ def update_gift(db: Session, gift_id: int, list_id: int, updates: dict) -> Gift:
 def delete_gift(db: Session, gift_id: int, list_id: int) -> None:
     gift = _get_gift_for_list(db, gift_id, list_id)
     if gift.claimed_by_id is not None:
-        raise ConflictError("This gift cannot be deleted right now.")
+        raise ConflictError(
+            "This gift has been claimed by someone and cannot be deleted."
+        )
     repo.delete_gift(db, gift)
 
 
