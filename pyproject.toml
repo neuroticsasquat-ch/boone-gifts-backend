@@ -3,9 +3,9 @@ name = "boone-gifts-backend"
 version = "0.1.0"
 requires-python = ">=3.14"
 dependencies = [
-    "fastapi>=0.136.0",
-    "uvicorn>=0.47.0",
-    "sqlalchemy>=2.0.46",
+    "fastapi>=0.136.3",
+    "uvicorn>=0.48.0",
+    "sqlalchemy>=2.0.50",
     "pydantic>=2.13.4",
     "pydantic-settings>=2.14.1",
     "pyjwt>=2.13.0",
@@ -29,5 +29,5 @@ filterwarnings = [
 dev = [
     "pyright[nodejs]>=1.1.409",
     "pytest>=9.0.3",
-    "ruff>=0.15.14",
+    "ruff>=0.15.15",
 ]

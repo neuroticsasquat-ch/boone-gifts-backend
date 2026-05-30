@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from app.lists import repository as repo
 from app.models.gift_list import GiftList
 from app.schemas.gift_list import GiftListDetailOwner, GiftListDetailViewer
+from app.services.exceptions import ConflictError
 
 
 def create_list(
@@ -33,6 +34,11 @@ def update_list(db: Session, gift_list: GiftList, updates: dict) -> GiftList:
 
 
 def delete_list(db: Session, gift_list: GiftList) -> None:
+    if repo.has_claimed_gifts(db, gift_list.id):
+        raise ConflictError(
+            "This list has gifts that have been claimed. "
+            "Remove claims first or archive the list instead."
+        )
     repo.delete_list(db, gift_list)
 
 
