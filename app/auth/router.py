@@ -1,12 +1,25 @@
-from fastapi import APIRouter, Cookie, HTTPException, Response, status
+from fastapi import APIRouter, Cookie, HTTPException, Request, Response, status
 
 from app.auth import service as auth_service
 from app.config import settings
-from app.dependencies import DbSession
+from app.dependencies import CurrentUser, DbSession
+from app.rate_limit import (
+    forgot_password_limit,
+    limiter,
+    login_limit,
+    refresh_limit,
+    register_limit,
+)
 from app.schemas.auth import (
     AccessTokenResponse,
+    ChangePasswordRequest,
+    ForgotPasswordRequest,
+    GenericMessageResponse,
+    InviteInfoResponse,
     LoginRequest,
     RegisterRequest,
+    ResetPasswordRequest,
+    UpdateProfileRequest,
 )
 from app.services.exceptions import BadRequestError, UnauthorizedError
 
@@ -39,9 +52,10 @@ def delete_refresh_cookie(response: Response) -> None:
 
 
 @router.post("/login", response_model=AccessTokenResponse)
-def login(request: LoginRequest, response: Response, db: DbSession):
+@limiter.limit(login_limit)
+def login(request: Request, body: LoginRequest, response: Response, db: DbSession):
     try:
-        tokens = auth_service.login(db, request.email, request.password)
+        tokens = auth_service.login(db, body.email, body.password)
     except UnauthorizedError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
 
@@ -49,11 +63,23 @@ def login(request: LoginRequest, response: Response, db: DbSession):
     return AccessTokenResponse(access_token=tokens["access_token"])
 
 
+@router.get("/invite-info", response_model=InviteInfoResponse)
+def invite_info(token: str, db: DbSession):
+    try:
+        return auth_service.get_invite_info(db, token)
+    except BadRequestError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+
+
 @router.post("/register", response_model=AccessTokenResponse)
-def register(request: RegisterRequest, response: Response, db: DbSession):
+@limiter.limit(register_limit)
+def register(request: Request, body: RegisterRequest, response: Response, db: DbSession):
     try:
         tokens = auth_service.register(
-            db, request.token, request.name, request.password
+            db, body.token, body.name, body.password, body.email
         )
     except BadRequestError as e:
         raise HTTPException(
@@ -66,7 +92,9 @@ def register(request: RegisterRequest, response: Response, db: DbSession):
 
 
 @router.post("/refresh", response_model=AccessTokenResponse)
+@limiter.limit(refresh_limit)
 def refresh(
+    request: Request,
     response: Response,
     db: DbSession,
     boone_refresh_token: str | None = Cookie(default=None),
@@ -79,6 +107,60 @@ def refresh(
     except UnauthorizedError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
 
+    set_refresh_cookie(response, tokens["refresh_token"])
+    return AccessTokenResponse(access_token=tokens["access_token"])
+
+
+@router.post("/forgot-password", response_model=GenericMessageResponse)
+@limiter.limit(forgot_password_limit)
+def forgot_password(request: Request, body: ForgotPasswordRequest, db: DbSession):
+    auth_service.forgot_password(db, body.email)
+    return GenericMessageResponse(
+        message="If an account exists for that email, a password reset link has been sent."
+    )
+
+
+@router.post("/reset-password", response_model=GenericMessageResponse)
+def reset_password(body: ResetPasswordRequest, db: DbSession):
+    try:
+        auth_service.reset_password(db, body.token, body.new_password)
+    except BadRequestError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    return GenericMessageResponse(message="Password updated.")
+
+
+@router.post("/change-password", response_model=AccessTokenResponse)
+def change_password(
+    body: ChangePasswordRequest,
+    response: Response,
+    user: CurrentUser,
+    db: DbSession,
+):
+    try:
+        tokens = auth_service.change_password(
+            db, user, body.current_password, body.new_password
+        )
+    except BadRequestError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+
+    set_refresh_cookie(response, tokens["refresh_token"])
+    return AccessTokenResponse(access_token=tokens["access_token"])
+
+
+@router.put("/profile", response_model=AccessTokenResponse)
+def update_profile(
+    body: UpdateProfileRequest,
+    response: Response,
+    user: CurrentUser,
+    db: DbSession,
+):
+    tokens = auth_service.update_profile(db, user, body.name)
     set_refresh_cookie(response, tokens["refresh_token"])
     return AccessTokenResponse(access_token=tokens["access_token"])
 

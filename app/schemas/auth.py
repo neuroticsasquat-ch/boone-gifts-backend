@@ -10,8 +10,35 @@ class RegisterRequest(BaseModel):
     token: str
     name: str
     password: str
+    email: str | None = None
+
+
+class InviteInfoResponse(BaseModel):
+    email: str
 
 
 class AccessTokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+class UpdateProfileRequest(BaseModel):
+    name: str
+
+
+class GenericMessageResponse(BaseModel):
+    message: str

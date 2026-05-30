@@ -27,7 +27,13 @@ REST API for Boone Gifts, a gift list and wishlist platform. Users create gift l
    cp .env.example .env
    ```
 
-2. Edit `.env` with a JWT secret. The default SQLite paths work for local development.
+2. Set `APP_JWT_SECRET` in `.env` to a real value. Generate one with:
+
+   ```
+   openssl rand -hex 32
+   ```
+
+   The app refuses to start with an empty or placeholder secret. The default SQLite paths work for local development.
 
 3. Build and start the container:
 

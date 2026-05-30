@@ -3,33 +3,99 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.models.collection_item import CollectionItem
+from app.models.gift_list import GiftList
 from app.models.list_share import ListShare
+from app.models.user import User
 from app.shares import service
 from app.services.exceptions import BadRequestError, ConflictError, ForbiddenError, NotFoundError
 
 
 REPO = "app.shares.service.repo"
 CONN_REPO = "app.shares.service.find_accepted_connection_between"
+SEND_EMAIL = "app.shares.service.send_email"
+
+
+def _make_user(id: int, name: str = "Test", email: str = "test@test.com", is_active: bool = True) -> MagicMock:
+    user = MagicMock(spec=User)
+    user.id = id
+    user.name = name
+    user.email = email
+    user.is_active = is_active
+    return user
+
+
+def _make_gift_list(id: int, name: str = "My List") -> MagicMock:
+    gl = MagicMock(spec=GiftList)
+    gl.id = id
+    gl.name = name
+    return gl
 
 
 # --- create_share ---
 
 
+@patch(SEND_EMAIL)
 @patch(f"{REPO}.create_share")
 @patch(f"{REPO}.find_share", return_value=None)
 @patch(CONN_REPO)
-def test_create_share_success(mock_conn, mock_find, mock_create):
+def test_create_share_success(mock_conn, mock_find, mock_create, mock_send):
     db = MagicMock()
     mock_conn.return_value = MagicMock()  # connection exists
     share = MagicMock(spec=ListShare)
     mock_create.return_value = share
+
+    recipient = _make_user(2, "Bob", "bob@test.com")
+    sharer = _make_user(10, "Alice", "alice@test.com")
+    gift_list = _make_gift_list(1, "Wishlist")
+
+    def db_get_side_effect(model, id_):
+        if model is User and id_ == 2:
+            return recipient
+        if model is User and id_ == 10:
+            return sharer
+        if model is GiftList and id_ == 1:
+            return gift_list
+        return None
+
+    db.get.side_effect = db_get_side_effect
 
     result = service.create_share(db, list_id=1, user_id=2, current_user_id=10)
 
     mock_conn.assert_called_once_with(db, 10, 2)
     mock_find.assert_called_once_with(db, 1, 2)
     mock_create.assert_called_once_with(db, 1, 2)
+    mock_send.assert_called_once()
     assert result is share
+
+
+@patch(SEND_EMAIL)
+@patch(f"{REPO}.create_share")
+@patch(f"{REPO}.find_share", return_value=None)
+@patch(CONN_REPO)
+def test_create_share_no_email_when_inactive(mock_conn, mock_find, mock_create, mock_send):
+    db = MagicMock()
+    mock_conn.return_value = MagicMock()
+    share = MagicMock(spec=ListShare)
+    mock_create.return_value = share
+
+    recipient = _make_user(2, "Bob", "bob@test.com", is_active=False)
+    sharer = _make_user(10, "Alice", "alice@test.com")
+    gift_list = _make_gift_list(1, "Wishlist")
+
+    def db_get_side_effect(model, id_):
+        if model is User and id_ == 2:
+            return recipient
+        if model is User and id_ == 10:
+            return sharer
+        if model is GiftList and id_ == 1:
+            return gift_list
+        return None
+
+    db.get.side_effect = db_get_side_effect
+
+    service.create_share(db, list_id=1, user_id=2, current_user_id=10)
+
+    mock_send.assert_not_called()
 
 
 def test_create_share_self():

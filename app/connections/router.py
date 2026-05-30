@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException, status
 from app.connections import service as connection_service
 from app.dependencies import CurrentUser, DbSession
 from app.schemas.connection import ConnectionCreate, ConnectionRead
+from app.schemas.gift_list import GiftListRead
 from app.services.exceptions import (
     BadRequestError,
     ConflictError,
@@ -58,6 +59,16 @@ def accept_connection(connection_id: int, user: CurrentUser, db: DbSession) -> d
 def delete_connection(connection_id: int, user: CurrentUser, db: DbSession) -> None:
     try:
         connection_service.delete_connection(db, connection_id, user.id)
+    except NotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    except ForbiddenError:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+
+
+@router.get("/{connection_id}/lists", response_model=list[GiftListRead])
+def connection_lists(connection_id: int, user: CurrentUser, db: DbSession):
+    try:
+        return connection_service.get_connection_lists(db, connection_id, user.id)
     except NotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     except ForbiddenError:

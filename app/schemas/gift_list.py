@@ -1,7 +1,7 @@
 from datetime import datetime
 from decimal import Decimal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 
 class GiftListCreate(BaseModel):
@@ -12,6 +12,7 @@ class GiftListCreate(BaseModel):
 class GiftListUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
+    is_archived: bool | None = None
 
 
 class GiftOwnerRead(BaseModel):
@@ -34,6 +35,7 @@ class GiftRead(BaseModel):
     price: Decimal | None
     claimed_by_id: int | None
     claimed_at: datetime | None
+    purchased_at: datetime | None
     created_at: datetime
     updated_at: datetime
 
@@ -46,10 +48,32 @@ class GiftListRead(BaseModel):
     description: str | None
     owner_id: int
     owner_name: str
+    is_archived: bool
+    gift_count: int = 0
+    claimed_count: int = 0
     created_at: datetime
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+    @model_validator(mode="before")
+    @classmethod
+    def compute_counts(cls, data: object) -> object:
+        if hasattr(data, "gifts"):
+            gifts = data.gifts
+            return {
+                "id": data.id,
+                "name": data.name,
+                "description": data.description,
+                "owner_id": data.owner_id,
+                "owner_name": data.owner_name,
+                "is_archived": data.is_archived,
+                "gift_count": len(gifts),
+                "claimed_count": sum(1 for g in gifts if g.claimed_by_id is not None),
+                "created_at": data.created_at,
+                "updated_at": data.updated_at,
+            }
+        return data
 
 
 class GiftListDetailOwner(BaseModel):
@@ -58,6 +82,7 @@ class GiftListDetailOwner(BaseModel):
     description: str | None
     owner_id: int
     owner_name: str
+    is_archived: bool
     gifts: list[GiftOwnerRead]
     created_at: datetime
     updated_at: datetime
@@ -71,6 +96,7 @@ class GiftListDetailViewer(BaseModel):
     description: str | None
     owner_id: int
     owner_name: str
+    is_archived: bool
     gifts: list[GiftRead]
     created_at: datetime
     updated_at: datetime

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, status
 
-from app.dependencies import CurrentUser, DbSession, OwnedList
-from app.schemas.list_share import ListShareCreate, ListShareRead
+from app.dependencies import CurrentUser, DbSession, OwnedList, ViewableList
+from app.schemas.list_share import ListShareCreate, ListShareRead, SharedUserRead
 from app.services.exceptions import (
     BadRequestError,
     ConflictError,
@@ -35,6 +35,11 @@ def create_share(
 @router.get("", response_model=list[ListShareRead])
 def list_shares(gift_list: OwnedList, db: DbSession):
     return share_service.list_shares(db, list_id=gift_list.id)
+
+
+@router.get("/users", response_model=list[SharedUserRead])
+def list_shared_users(gift_list: ViewableList, db: DbSession):
+    return share_service.get_shared_users(db, list_id=gift_list.id)
 
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)

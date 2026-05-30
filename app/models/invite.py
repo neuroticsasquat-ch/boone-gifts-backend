@@ -23,4 +23,8 @@ class Invite(Base):
 
     @property
     def is_valid(self) -> bool:
-        return self.used_at is None and self.expires_at > datetime.now(timezone.utc)
+        now = datetime.now(timezone.utc)
+        expires = self.expires_at
+        if expires.tzinfo is None:
+            now = now.replace(tzinfo=None)
+        return self.used_at is None and expires > now

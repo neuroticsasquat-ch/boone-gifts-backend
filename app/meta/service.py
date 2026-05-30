@@ -1,15 +1,23 @@
 import ipaddress
+import logging
 import socket
 from html.parser import HTMLParser
 from urllib.parse import urlparse
 
 import httpx
 
+from app.config import settings
 from app.schemas.meta import UrlMetaResponse
 from app.services.exceptions import BadRequestError
 
-_USER_AGENT = "Mozilla/5.0 (compatible; BooneGifts/1.0)"
-_TIMEOUT = 5.0
+logger = logging.getLogger(__name__)
+
+_USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+)
+_TIMEOUT = 10.0
+_LINKPREVIEW_URL = "https://api.linkpreview.net/"
 
 # Private/reserved IP networks to block (SSRF protection)
 _BLOCKED_NETWORKS = [
@@ -70,7 +78,7 @@ class _MetaParser(HTMLParser):
             raise _StopParsing()
 
     def extract(self) -> UrlMetaResponse:
-        title = self.og.get("og:title") or self.title_text
+        title = self.og.get("og:title") or self.meta_name.get("title") or self.title_text
         description = self.og.get("og:description") or self.meta_name.get("description")
         price = self.og.get("product:price:amount") or self.og.get("og:price:amount")
         image = self.og.get("og:image")
@@ -103,7 +111,11 @@ def _fetch_url(url: str) -> httpx.Response:
     with httpx.Client(
         timeout=_TIMEOUT,
         follow_redirects=True,
-        headers={"User-Agent": _USER_AGENT},
+        headers={
+            "User-Agent": _USER_AGENT,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+        },
     ) as client:
         return client.get(url)
 
@@ -118,8 +130,38 @@ def _parse_html(html: str) -> UrlMetaResponse:
     return parser.extract()
 
 
+_USELESS_TITLES = frozenset({
+    "Amazon.com",
+    "Robot or human?",
+})
+
+
+def _result_is_useful(result: UrlMetaResponse) -> bool:
+    return bool(result.title and result.title not in _USELESS_TITLES)
+
+
+def _fetch_linkpreview(url: str) -> UrlMetaResponse:
+    """Fetch metadata via LinkPreview.net API."""
+    with httpx.Client(timeout=_TIMEOUT) as client:
+        resp = client.get(
+            _LINKPREVIEW_URL,
+            params={"q": url},
+            headers={"X-Linkpreview-Api-Key": settings.linkpreview_api_key},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    return UrlMetaResponse(
+        title=data.get("title") or None,
+        description=data.get("description") or None,
+        image=data.get("image") or None,
+    )
+
+
 def get_url_meta(url: str) -> UrlMetaResponse:
     """Validate, fetch, and parse a URL for metadata.
+
+    Tries a direct fetch first, then falls back to LinkPreview.net
+    if the result is empty and an API key is configured.
 
     Raises BadRequestError for invalid URLs or private IPs.
     Returns empty UrlMetaResponse for fetch failures or non-HTML content.
@@ -130,14 +172,27 @@ def get_url_meta(url: str) -> UrlMetaResponse:
 
     _resolve_and_validate_url(url)
 
+    result = UrlMetaResponse()
+
     try:
         response = _fetch_url(url)
         response.raise_for_status()
+        content_type = response.headers.get("content-type", "")
+        if "text/html" in content_type:
+            result = _parse_html(response.text)
     except Exception:
-        return UrlMetaResponse()
+        pass
 
-    content_type = response.headers.get("content-type", "")
-    if "text/html" not in content_type:
-        return UrlMetaResponse()
+    if not _result_is_useful(result) and settings.linkpreview_api_key:
+        try:
+            fallback = _fetch_linkpreview(url)
+            result = UrlMetaResponse(
+                title=result.title if _result_is_useful(result) else fallback.title,
+                description=result.description or fallback.description,
+                price=result.price,
+                image=result.image or fallback.image,
+            )
+        except Exception:
+            logger.exception("LinkPreview fallback failed for %s", url)
 
-    return _parse_html(response.text)
+    return result

@@ -54,7 +54,7 @@ def test_get_lists_owned(mock_get_owned):
 
     result = service.get_lists(db, user_id=1, filter="owned")
 
-    mock_get_owned.assert_called_once_with(db, 1)
+    mock_get_owned.assert_called_once_with(db, 1, archived=False)
     assert len(result) == 2
 
 
@@ -66,7 +66,7 @@ def test_get_lists_shared(mock_get_shared):
 
     result = service.get_lists(db, user_id=1, filter="shared")
 
-    mock_get_shared.assert_called_once_with(db, 1)
+    mock_get_shared.assert_called_once_with(db, 1, archived=False)
     assert len(result) == 1
 
 
@@ -78,7 +78,7 @@ def test_get_lists_all(mock_get_all):
 
     result = service.get_lists(db, user_id=1, filter=None)
 
-    mock_get_all.assert_called_once_with(db, 1)
+    mock_get_all.assert_called_once_with(db, 1, archived=False)
     assert len(result) == 2
 
 
@@ -129,10 +129,23 @@ def test_update_list(mock_update):
 
 
 @patch(f"{REPO}.delete_list")
-def test_delete_list(mock_delete):
+@patch(f"{REPO}.has_claimed_gifts", return_value=False)
+def test_delete_list(mock_has_claims, mock_delete):
     db = MagicMock()
     gift_list = _make_gift_list()
 
     service.delete_list(db, gift_list)
 
+    mock_has_claims.assert_called_once_with(db, gift_list.id)
     mock_delete.assert_called_once_with(db, gift_list)
+
+
+@patch(f"{REPO}.has_claimed_gifts", return_value=True)
+def test_delete_list_blocked_by_claims(mock_has_claims):
+    from app.services.exceptions import ConflictError
+
+    db = MagicMock()
+    gift_list = _make_gift_list()
+
+    with pytest.raises(ConflictError, match="claimed"):
+        service.delete_list(db, gift_list)

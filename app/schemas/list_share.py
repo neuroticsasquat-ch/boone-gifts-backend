@@ -14,3 +14,11 @@ class ListShareRead(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class SharedUserRead(BaseModel):
+    id: int
+    name: str
+    email: str
+
+    model_config = {"from_attributes": True}
