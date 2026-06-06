@@ -27,7 +27,7 @@ filterwarnings = [
 
 [dependency-groups]
 dev = [
-    "pyright[nodejs]>=1.1.409",
+    "pyright[nodejs]>=1.1.410",
     "pytest>=9.0.3",
     "ruff>=0.15.16",
 ]
