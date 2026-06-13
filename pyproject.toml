@@ -12,7 +12,7 @@ dependencies = [
     "bcrypt>=5.0.0",
     "alembic>=1.18.3",
     "httpx>=0.28.1",
-    "slowapi>=0.1.9",
+    "slowapi>=0.1.10",
     "sentry-sdk[fastapi]>=2.61.1",
 ]
 
@@ -29,5 +29,5 @@ filterwarnings = [
 dev = [
     "pyright[nodejs]>=1.1.410",
     "pytest>=9.0.3",
-    "ruff>=0.15.16",
+    "ruff>=0.15.17",
 ]
