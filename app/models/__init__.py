@@ -7,6 +7,8 @@ from app.models.connection import Connection
 from app.models.collection import Collection
 from app.models.collection_item import CollectionItem
 from app.models.password_reset_token import PasswordResetToken
+from app.models.family import Family
+from app.models.family_member import FamilyMember
 
 __all__ = [
     "User",
@@ -18,4 +20,6 @@ __all__ = [
     "Collection",
     "CollectionItem",
     "PasswordResetToken",
+    "Family",
+    "FamilyMember",
 ]
