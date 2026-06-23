@@ -101,3 +101,9 @@ def update_member_role(db: Session, member: FamilyMember, role: str) -> FamilyMe
     db.flush()
     return member
 
+
+def family_ids_for_user(db: Session, user_id: int) -> set[int]:
+    rows = db.execute(
+        select(FamilyMember.family_id).where(FamilyMember.user_id == user_id)
+    ).scalars().all()
+    return set(rows)
