@@ -39,6 +39,20 @@ def _is_expired(expires_at: datetime) -> bool:
     return expires_at < now
 
 
+def _require_recipient(invite: FamilyInvite, actor: User) -> None:
+    if invite.email != actor.email.strip().lower():
+        raise ForbiddenError("This invite is addressed to a different account.")
+
+
+def _require_pending(invite: FamilyInvite) -> None:
+    if invite.accepted_at is not None:
+        raise ConflictError("This invite has already been accepted.")
+    if invite.declined_at is not None:
+        raise ConflictError("This invite has already been declined.")
+    if _is_expired(invite.expires_at):
+        raise ConflictError("This invite has expired.")
+
+
 def create_invite(
     db: Session,
     family_id: int,
@@ -112,4 +126,53 @@ def revoke_invite(db: Session, family_id: int, invite_id: int, actor: User) -> N
         raise NotFoundError("Invite not found.")
     if invite.accepted_at is not None:
         raise ConflictError("Cannot revoke an accepted invite.")
+    if invite.declined_at is not None:
+        raise ConflictError("Cannot revoke a declined invite.")
     repo.delete_invite(db, invite)
+
+
+def decline_invite(db: Session, token: str, actor: User) -> None:
+    invite = repo.get_invite_by_token(db, token)
+    if invite is None:
+        raise NotFoundError("Invite not found.")
+    _require_recipient(invite, actor)
+    _require_pending(invite)
+    invite.declined_at = datetime.now(timezone.utc)
+    db.flush()
+
+
+def list_incoming_invites(db: Session, actor: User) -> list[dict]:
+    email = actor.email.strip().lower()
+    rows = repo.list_incoming_invites(db, email)
+    return [
+        {
+            "id": invite.id,
+            "token": invite.token,
+            "role": invite.role,
+            "expires_at": invite.expires_at,
+            "created_at": invite.created_at,
+            "family": {"id": family.id, "name": family.name},
+            "invited_by": {"id": inviter.id, "name": inviter.name},
+        }
+        for invite, family, inviter in rows
+        if not _is_expired(invite.expires_at)
+    ]
+
+
+def accept_invite(db: Session, token: str, actor: User) -> dict:
+    invite = repo.get_invite_by_token(db, token)
+    if invite is None:
+        raise NotFoundError("Invite not found.")
+    _require_recipient(invite, actor)
+    _require_pending(invite)
+    if families_repo.get_family_member(
+        db, family_id=invite.family_id, user_id=actor.id
+    ) is not None:
+        raise ConflictError("Already a member of this family.")
+    families_repo.create_family_member(
+        db, family_id=invite.family_id, user_id=actor.id, role=invite.role
+    )
+    invite.accepted_at = datetime.now(timezone.utc)
+    db.flush()
+    family = families_repo.get_family(db, invite.family_id)
+    return {"family": {"id": family.id, "name": family.name}, "role": invite.role}

@@ -44,14 +44,18 @@ def _make_invite(
     email: str = "bob@test.com",
     token: str = "tok-123",
     accepted_at: datetime | None = None,
+    declined_at: datetime | None = None,
     expires_in_days: int = 7,
+    role: str = "member",
 ) -> MagicMock:
     invite = MagicMock(spec=FamilyInvite)
     invite.id = id
     invite.family_id = family_id
     invite.email = email
     invite.token = token
+    invite.role = role
     invite.accepted_at = accepted_at
+    invite.declined_at = declined_at
     invite.expires_at = datetime.now(timezone.utc) + timedelta(days=expires_in_days)
     return invite
 
@@ -331,3 +335,186 @@ def test_revoke_invite_wrong_family(mock_get_family, mock_get_member, mock_get_i
 
     with pytest.raises(NotFoundError):
         service.revoke_invite(db, family_id=1, invite_id=5, actor=actor)
+
+
+@patch(f"{REPO}.delete_invite")
+@patch(f"{REPO}.get_invite")
+@patch(f"{FAMILIES_REPO}.get_family_member")
+@patch(f"{FAMILIES_REPO}.get_family")
+def test_revoke_invite_declined(mock_get_family, mock_get_member, mock_get_invite, mock_delete, db):
+    mock_get_family.return_value = _make_family()
+    mock_get_member.return_value = _make_member(role="organizer", user_id=10)
+    mock_get_invite.return_value = _make_invite(
+        id=5, family_id=1, declined_at=datetime.now(timezone.utc)
+    )
+    actor = _make_user(id=10)
+
+    with pytest.raises(ConflictError):
+        service.revoke_invite(db, family_id=1, invite_id=5, actor=actor)
+
+    mock_delete.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# decline_invite
+# ---------------------------------------------------------------------------
+
+
+@patch(f"{REPO}.get_invite_by_token")
+def test_decline_invite_sets_declined_at(mock_get, db):
+    invite = _make_invite(token="tok", email="bob@test.com")
+    mock_get.return_value = invite
+    actor = _make_user(id=20, email="bob@test.com")
+
+    service.decline_invite(db, token="tok", actor=actor)
+
+    assert invite.declined_at is not None
+    db.flush.assert_called_once()
+
+
+@patch(f"{REPO}.get_invite_by_token", return_value=None)
+def test_decline_invite_not_found(mock_get, db):
+    actor = _make_user(id=20, email="bob@test.com")
+    with pytest.raises(NotFoundError):
+        service.decline_invite(db, token="missing", actor=actor)
+
+
+@patch(f"{REPO}.get_invite_by_token")
+def test_decline_invite_wrong_recipient(mock_get, db):
+    mock_get.return_value = _make_invite(email="someone-else@test.com")
+    actor = _make_user(id=20, email="bob@test.com")
+    with pytest.raises(ForbiddenError):
+        service.decline_invite(db, token="tok", actor=actor)
+
+
+@patch(f"{REPO}.get_invite_by_token")
+def test_decline_invite_already_accepted(mock_get, db):
+    mock_get.return_value = _make_invite(
+        email="bob@test.com", accepted_at=datetime.now(timezone.utc)
+    )
+    actor = _make_user(id=20, email="bob@test.com")
+    with pytest.raises(ConflictError):
+        service.decline_invite(db, token="tok", actor=actor)
+
+
+@patch(f"{REPO}.get_invite_by_token")
+def test_decline_invite_expired(mock_get, db):
+    mock_get.return_value = _make_invite(email="bob@test.com", expires_in_days=-1)
+    actor = _make_user(id=20, email="bob@test.com")
+    with pytest.raises(ConflictError):
+        service.decline_invite(db, token="tok", actor=actor)
+
+
+# ---------------------------------------------------------------------------
+# accept_invite
+# ---------------------------------------------------------------------------
+
+
+@patch(f"{FAMILIES_REPO}.get_family")
+@patch(f"{FAMILIES_REPO}.create_family_member")
+@patch(f"{FAMILIES_REPO}.get_family_member", return_value=None)
+@patch(f"{REPO}.get_invite_by_token")
+def test_accept_invite_creates_membership(
+    mock_get, mock_get_member, mock_create_member, mock_get_family, db
+):
+    invite = _make_invite(family_id=1, email="bob@test.com", role="organizer")
+    mock_get.return_value = invite
+    mock_get_family.return_value = _make_family(id=1, name="Smith Family")
+    actor = _make_user(id=20, email="bob@test.com")
+
+    result = service.accept_invite(db, token="tok", actor=actor)
+
+    mock_create_member.assert_called_once_with(
+        db, family_id=1, user_id=20, role="organizer"
+    )
+    assert invite.accepted_at is not None
+    assert result == {"family": {"id": 1, "name": "Smith Family"}, "role": "organizer"}
+
+
+@patch(f"{FAMILIES_REPO}.create_family_member")
+@patch(f"{FAMILIES_REPO}.get_family_member")
+@patch(f"{REPO}.get_invite_by_token")
+def test_accept_invite_already_member(mock_get, mock_get_member, mock_create_member, db):
+    mock_get.return_value = _make_invite(family_id=1, email="bob@test.com")
+    mock_get_member.return_value = _make_member(role="member", user_id=20)
+    actor = _make_user(id=20, email="bob@test.com")
+
+    with pytest.raises(ConflictError):
+        service.accept_invite(db, token="tok", actor=actor)
+
+    mock_create_member.assert_not_called()
+
+
+@patch(f"{REPO}.get_invite_by_token", return_value=None)
+def test_accept_invite_not_found(mock_get, db):
+    actor = _make_user(id=20, email="bob@test.com")
+    with pytest.raises(NotFoundError):
+        service.accept_invite(db, token="missing", actor=actor)
+
+
+@patch(f"{REPO}.get_invite_by_token")
+def test_accept_invite_wrong_recipient(mock_get, db):
+    mock_get.return_value = _make_invite(email="someone-else@test.com")
+    actor = _make_user(id=20, email="bob@test.com")
+    with pytest.raises(ForbiddenError):
+        service.accept_invite(db, token="tok", actor=actor)
+
+
+@patch(f"{REPO}.get_invite_by_token")
+def test_accept_invite_declined(mock_get, db):
+    mock_get.return_value = _make_invite(
+        email="bob@test.com", declined_at=datetime.now(timezone.utc)
+    )
+    actor = _make_user(id=20, email="bob@test.com")
+    with pytest.raises(ConflictError):
+        service.accept_invite(db, token="tok", actor=actor)
+
+
+@patch(f"{REPO}.get_invite_by_token")
+def test_accept_invite_expired(mock_get, db):
+    mock_get.return_value = _make_invite(email="bob@test.com", expires_in_days=-1)
+    actor = _make_user(id=20, email="bob@test.com")
+    with pytest.raises(ConflictError):
+        service.accept_invite(db, token="tok", actor=actor)
+
+
+# ---------------------------------------------------------------------------
+# list_incoming_invites
+# ---------------------------------------------------------------------------
+
+
+@patch(f"{REPO}.list_incoming_invites")
+def test_list_incoming_invites_maps_rows(mock_list, db):
+    invite = _make_invite(id=7, token="tok-7", email="bob@test.com", role="member")
+    family = _make_family(id=3, name="Boone Family")
+    inviter = _make_user(id=2, name="Alice")
+    mock_list.return_value = [(invite, family, inviter)]
+    actor = _make_user(id=20, email="bob@test.com")
+
+    result = service.list_incoming_invites(db, actor=actor)
+
+    mock_list.assert_called_once_with(db, "bob@test.com")
+    assert result == [
+        {
+            "id": 7,
+            "token": "tok-7",
+            "role": "member",
+            "expires_at": invite.expires_at,
+            "created_at": invite.created_at,
+            "family": {"id": 3, "name": "Boone Family"},
+            "invited_by": {"id": 2, "name": "Alice"},
+        }
+    ]
+
+
+@patch(f"{REPO}.list_incoming_invites")
+def test_list_incoming_invites_filters_expired(mock_list, db):
+    expired = _make_invite(id=8, token="old", email="bob@test.com", expires_in_days=-1)
+    family = _make_family(id=3, name="Boone Family")
+    inviter = _make_user(id=2, name="Alice")
+    mock_list.return_value = [(expired, family, inviter)]
+    actor = _make_user(id=20, email="bob@test.com")
+
+    result = service.list_incoming_invites(db, actor=actor)
+
+    assert result == []

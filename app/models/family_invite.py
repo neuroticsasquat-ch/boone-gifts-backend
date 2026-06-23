@@ -18,4 +18,5 @@ class FamilyInvite(Base):
     invited_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     expires_at: Mapped[datetime] = mapped_column()
     accepted_at: Mapped[datetime | None] = mapped_column()
+    declined_at: Mapped[datetime | None] = mapped_column()
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())

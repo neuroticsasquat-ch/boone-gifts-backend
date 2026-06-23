@@ -94,3 +94,30 @@ def test_family_invite_accepted_at_nullable(db):
     db.flush()
 
     assert invite.accepted_at is None
+
+
+def test_family_invite_declined_at_nullable(db):
+    user = User(email="finv_decline@test.com", name="User Four", password_hash="h")
+    db.add(user)
+    db.flush()
+
+    family = Family(name="Decline Test Family", created_by_id=user.id)
+    db.add(family)
+    db.flush()
+
+    invite = FamilyInvite(
+        family_id=family.id,
+        email="invitee@test.com",
+        role="member",
+        token="decline-tok-0000000000000000000000",
+        invited_by_id=user.id,
+        expires_at=datetime(2030, 1, 1),
+    )
+    db.add(invite)
+    db.flush()
+    assert invite.declined_at is None
+
+    invite.declined_at = datetime(2026, 6, 23, tzinfo=timezone.utc)
+    db.flush()
+    db.refresh(invite)
+    assert invite.declined_at is not None
