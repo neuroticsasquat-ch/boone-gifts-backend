@@ -7,6 +7,8 @@ import jwt
 from sqlalchemy.orm import Session
 
 from app.auth import repository as repo
+from app.families import repository as families_repo
+from app.family_invites import repository as family_invites_repo
 from app.config import settings
 from app.dependencies import create_access_token, create_refresh_token
 from app.email import send_email
@@ -38,40 +40,89 @@ def login(db: Session, email: str, password: str) -> dict:
     }
 
 
+def _issue_tokens(user) -> dict:
+    return {
+        "access_token": create_access_token(user),
+        "refresh_token": create_refresh_token(user),
+    }
+
+
+def _family_invite_registerable(invite) -> bool:
+    """True if a family invite can still be used to register (pending, un-expired)."""
+    if invite.accepted_at is not None or invite.declined_at is not None:
+        return False
+    now = datetime.now(timezone.utc)
+    expires = invite.expires_at
+    if expires.tzinfo is None:
+        now = now.replace(tzinfo=None)
+    return expires >= now
+
+
 def get_invite_info(db: Session, token: str) -> dict:
-    invite = repo.find_invite_by_token(db, token)
-    if invite is None or not invite.is_valid:
-        raise BadRequestError("Invalid or expired invite.")
-    return {"email": invite.email}
+    admin_invite = repo.find_invite_by_token(db, token)
+    if admin_invite is not None:
+        if not admin_invite.is_valid:
+            raise BadRequestError("Invalid or expired invite.")
+        return {"email": admin_invite.email, "family_name": None}
+
+    family_invite = family_invites_repo.get_invite_by_token(db, token)
+    if family_invite is not None and _family_invite_registerable(family_invite):
+        family = families_repo.get_family(db, family_invite.family_id)
+        return {"email": family_invite.email, "family_name": family.name}
+
+    raise BadRequestError("Invalid or expired invite.")
 
 
 def register(
     db: Session, token: str, name: str, password: str, email: str | None = None
 ) -> dict:
-    """Register a new user with an invite token.
+    """Register a new user from an admin invite or a family invite.
 
     Raises:
-        BadRequestError: If the invite token is invalid, expired, or used.
+        BadRequestError: If the token is invalid/expired/used, or (family path)
+            an account already exists for the invite's email.
     """
-    invite = repo.find_invite_by_token(db, token)
+    admin_invite = repo.find_invite_by_token(db, token)
+    if admin_invite is not None:
+        if not admin_invite.is_valid:
+            raise BadRequestError("Invalid or expired invite.")
+        user = repo.create_user(
+            db,
+            email=email or admin_invite.email,
+            name=name,
+            role=admin_invite.role,
+            password=password,
+        )
+        repo.mark_invite_used(db, admin_invite)
+        return _issue_tokens(user)
 
-    if invite is None or not invite.is_valid:
-        raise BadRequestError("Invalid or expired invite.")
+    family_invite = family_invites_repo.get_invite_by_token(db, token)
+    if family_invite is not None:
+        if not _family_invite_registerable(family_invite):
+            raise BadRequestError("Invalid or expired invite.")
+        if repo.find_user_by_email(db, family_invite.email) is not None:
+            raise BadRequestError(
+                "An account already exists for this email. Log in and accept "
+                "the invite from your account."
+            )
+        user = repo.create_user(
+            db,
+            email=family_invite.email,
+            name=name,
+            role="member",
+            password=password,
+        )
+        families_repo.create_family_member(
+            db,
+            family_id=family_invite.family_id,
+            user_id=user.id,
+            role=family_invite.role,
+        )
+        family_invite.accepted_at = datetime.now(timezone.utc)
+        db.flush()
+        return _issue_tokens(user)
 
-    user = repo.create_user(
-        db,
-        email=email or invite.email,
-        name=name,
-        role=invite.role,
-        password=password,
-    )
-
-    repo.mark_invite_used(db, invite)
-
-    return {
-        "access_token": create_access_token(user),
-        "refresh_token": create_refresh_token(user),
-    }
+    raise BadRequestError("Invalid or expired invite.")
 
 
 def refresh(db: Session, refresh_token: str) -> dict:

@@ -3,10 +3,46 @@ from datetime import datetime, timedelta, timezone
 import jwt
 
 from app.config import settings
+from app.models.family import Family
+from app.models.family_invite import FamilyInvite
+from app.models.family_member import FamilyMember
 from app.models.invite import Invite
+from app.models.user import User
 
 
 COOKIE_NAME = "boone_refresh_token"
+
+
+def _seed_family_invite(
+    db,
+    *,
+    inviter,
+    email,
+    token,
+    role="member",
+    accepted_at=None,
+    declined_at=None,
+    expires_in_days=7,
+    family_name="Boone Family",
+):
+    family = Family(name=family_name, created_by_id=inviter.id)
+    db.add(family)
+    db.flush()
+    db.add(FamilyMember(family_id=family.id, user_id=inviter.id, role="organizer"))
+    invite = FamilyInvite(
+        family_id=family.id,
+        email=email,
+        role=role,
+        simple_mode=False,
+        token=token,
+        invited_by_id=inviter.id,
+        expires_at=datetime.now(timezone.utc) + timedelta(days=expires_in_days),
+        accepted_at=accepted_at,
+        declined_at=declined_at,
+    )
+    db.add(invite)
+    db.flush()
+    return family, invite
 
 
 def test_login_success(client, admin_user):
@@ -215,3 +251,133 @@ def test_update_profile_persists_name_in_db(client, member_user, member_headers,
 def test_update_profile_requires_auth(client):
     response = client.put("/auth/profile", json={"name": "Anonymous"})
     assert response.status_code == 401
+
+
+# --- invite-info: family tokens ---
+
+
+def test_invite_info_family_token(client, member_user, db):
+    _seed_family_invite(db, inviter=member_user, email="newmember@test.com", token="fam-info-1")
+
+    response = client.get("/auth/invite-info", params={"token": "fam-info-1"})
+    assert response.status_code == 200
+    assert response.json() == {"email": "newmember@test.com", "family_name": "Boone Family"}
+
+
+def test_invite_info_admin_token_has_null_family_name(client, admin_user, db):
+    invite = Invite(
+        email="admin-invitee@test.com",
+        role="member",
+        expires_at=datetime.now(timezone.utc) + timedelta(days=7),
+        invited_by_id=admin_user.id,
+    )
+    db.add(invite)
+    db.flush()
+
+    response = client.get("/auth/invite-info", params={"token": invite.token})
+    assert response.status_code == 200
+    assert response.json() == {"email": "admin-invitee@test.com", "family_name": None}
+
+
+def test_invite_info_expired_family_token(client, member_user, db):
+    _seed_family_invite(
+        db, inviter=member_user, email="x@test.com", token="fam-info-exp", expires_in_days=-1
+    )
+    response = client.get("/auth/invite-info", params={"token": "fam-info-exp"})
+    assert response.status_code == 400
+
+
+def test_invite_info_accepted_family_token(client, member_user, db):
+    _seed_family_invite(
+        db,
+        inviter=member_user,
+        email="x@test.com",
+        token="fam-info-acc",
+        accepted_at=datetime.now(timezone.utc),
+    )
+    response = client.get("/auth/invite-info", params={"token": "fam-info-acc"})
+    assert response.status_code == 400
+
+
+# --- register via family invite ---
+
+
+def test_register_family_invite_creates_member(client, member_user, db):
+    family, invite = _seed_family_invite(
+        db, inviter=member_user, email="newmember@test.com", token="fam-reg-1", role="organizer"
+    )
+
+    response = client.post(
+        "/auth/register",
+        json={"token": "fam-reg-1", "name": "New Member", "password": "newpass123"},
+    )
+    assert response.status_code == 200
+    assert "access_token" in response.json()
+    assert COOKIE_NAME in response.cookies
+
+    new_user = db.query(User).filter_by(email="newmember@test.com").one()
+    assert new_user.role == "member"  # app role — NOT the family "organizer" role
+
+    membership = db.query(FamilyMember).filter_by(
+        family_id=family.id, user_id=new_user.id
+    ).one()
+    assert membership.role == "organizer"  # family role from the invite
+
+    db.refresh(invite)
+    assert invite.accepted_at is not None
+
+
+def test_register_family_invite_token_joins_family_end_to_end(client, member_user, db):
+    family, _ = _seed_family_invite(
+        db, inviter=member_user, email="newmember2@test.com", token="fam-reg-2", role="member"
+    )
+
+    token = client.post(
+        "/auth/register",
+        json={"token": "fam-reg-2", "name": "New Member", "password": "newpass123"},
+    ).json()["access_token"]
+
+    # The freshly-issued token authenticates and the user is in the family.
+    families = client.get("/families", headers={"Authorization": f"Bearer {token}"})
+    assert families.status_code == 200
+    joined = [f for f in families.json() if f["id"] == family.id]
+    assert len(joined) == 1
+    assert joined[0]["role"] == "member"
+
+
+def test_register_family_invite_existing_account_rejected(client, member_user, db):
+    # member_user already exists; invite is addressed to their email.
+    _seed_family_invite(
+        db, inviter=member_user, email=member_user.email, token="fam-reg-dup"
+    )
+    response = client.post(
+        "/auth/register",
+        json={"token": "fam-reg-dup", "name": "Dup", "password": "newpass123"},
+    )
+    assert response.status_code == 400
+
+
+def test_register_expired_family_invite(client, member_user, db):
+    _seed_family_invite(
+        db, inviter=member_user, email="late@test.com", token="fam-reg-exp", expires_in_days=-1
+    )
+    response = client.post(
+        "/auth/register",
+        json={"token": "fam-reg-exp", "name": "Late", "password": "newpass123"},
+    )
+    assert response.status_code == 400
+
+
+def test_register_accepted_family_invite(client, member_user, db):
+    _seed_family_invite(
+        db,
+        inviter=member_user,
+        email="done@test.com",
+        token="fam-reg-acc",
+        accepted_at=datetime.now(timezone.utc),
+    )
+    response = client.post(
+        "/auth/register",
+        json={"token": "fam-reg-acc", "name": "Done", "password": "newpass123"},
+    )
+    assert response.status_code == 400
