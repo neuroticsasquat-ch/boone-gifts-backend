@@ -2,6 +2,7 @@ from sqlalchemy.orm import Session
 
 from app.lists import repository as repo
 from app.models.gift_list import GiftList
+from app.schemas.family import FamilyRef
 from app.schemas.gift_list import GiftListDetailOwner, GiftListDetailViewer
 from app.services.exceptions import ConflictError
 
@@ -17,8 +18,26 @@ def get_lists(db: Session, user_id: int, filter: str | None = None, archived: bo
         return repo.get_lists_by_owner(db, user_id, archived=archived)
     elif filter == "shared":
         return repo.get_shared_lists(db, user_id, archived=archived)
+    elif filter == "family":
+        return get_family_lists(db, user_id, archived=archived)
     else:
         return repo.get_all_visible_lists(db, user_id, archived=archived)
+
+
+def get_family_lists(db: Session, user_id: int, archived: bool = False) -> list[GiftList]:
+    """Lists owned by the caller's family co-members, each annotated with the
+    family/families granting visibility. Co-members sharing multiple families
+    collapse to one list carrying all granting families (order preserved)."""
+    rows = repo.get_family_visible_lists_with_grants(db, user_id, archived=archived)
+    by_id: dict[int, GiftList] = {}
+    for gift_list, family_id, family_name in rows:
+        existing = by_id.get(gift_list.id)
+        if existing is None:
+            gift_list.families = []
+            by_id[gift_list.id] = gift_list
+            existing = gift_list
+        existing.families.append(FamilyRef(id=family_id, name=family_name))
+    return list(by_id.values())
 
 
 def get_list(

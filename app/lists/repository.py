@@ -1,7 +1,9 @@
 from sqlalchemy import delete, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from app.models.collection_item import CollectionItem
+from app.models.family import Family
+from app.models.family_member import FamilyMember
 from app.models.gift import Gift
 from app.models.gift_list import GiftList
 from app.models.list_share import ListShare
@@ -115,3 +117,27 @@ def mark_share_seen(db: Session, list_id: int, user_id: int) -> None:
     if share:
         share.seen_at = datetime.now(timezone.utc)
         db.flush()
+
+
+def get_family_visible_lists_with_grants(
+    db: Session, user_id: int, archived: bool = False
+) -> list[tuple[GiftList, int, str]]:
+    """Lists (matching the `archived` flag) owned by the caller's family co-members,
+    one row per (list, granting family). Excludes the caller's own lists. Each row
+    carries the family id + name that grants visibility; a list owned by a co-member
+    in two shared families yields two rows."""
+    fm_owner = aliased(FamilyMember)
+    fm_viewer = aliased(FamilyMember)
+    query = (
+        select(GiftList, Family.id, Family.name)
+        .join(fm_owner, fm_owner.user_id == GiftList.owner_id)
+        .join(Family, Family.id == fm_owner.family_id)
+        .join(fm_viewer, fm_viewer.family_id == fm_owner.family_id)
+        .where(
+            fm_viewer.user_id == user_id,
+            fm_owner.user_id != user_id,
+            GiftList.is_archived == archived,
+        )
+        .order_by(GiftList.updated_at.desc())
+    )
+    return [(row[0], row[1], row[2]) for row in db.execute(query).all()]
