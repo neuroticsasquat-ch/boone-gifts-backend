@@ -82,3 +82,22 @@ def delete_family(db: Session, family: Family) -> None:
     db.flush()
 
 
+def count_organizers(db: Session, family_id: int) -> int:
+    return db.execute(
+        select(func.count(FamilyMember.id)).where(
+            FamilyMember.family_id == family_id,
+            FamilyMember.role == "organizer",
+        )
+    ).scalar_one()
+
+
+def delete_family_member(db: Session, member: FamilyMember) -> None:
+    db.delete(member)
+    db.flush()
+
+
+def update_member_role(db: Session, member: FamilyMember, role: str) -> FamilyMember:
+    member.role = role
+    db.flush()
+    return member
+
