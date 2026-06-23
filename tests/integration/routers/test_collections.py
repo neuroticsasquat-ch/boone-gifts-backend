@@ -303,3 +303,38 @@ def test_shopping_list_not_owner_403(client, admin_headers, collection):
         headers=admin_headers,
     )
     assert response.status_code == 403
+
+
+def test_add_family_visible_list(
+    client, member_user, member_headers, admin_user, collection, db
+):
+    from app.models.family import Family
+    from app.models.family_member import FamilyMember
+    from app.models.gift_list import GiftList
+
+    # member_user (collection owner) and admin_user share a family.
+    # No connection, no direct ListShare — visibility comes only from the family.
+    family = Family(name="The Boones", created_by_id=admin_user.id)
+    db.add(family)
+    db.flush()
+    db.add_all(
+        [
+            FamilyMember(family_id=family.id, user_id=admin_user.id, role="organizer"),
+            FamilyMember(family_id=family.id, user_id=member_user.id, role="member"),
+        ]
+    )
+    db.flush()
+
+    admin_list = GiftList(name="Admin's Family List", owner_id=admin_user.id)
+    db.add(admin_list)
+    db.flush()
+
+    response = client.post(
+        f"/collections/{collection.id}/items",
+        headers=member_headers,
+        json={"list_id": admin_list.id},
+    )
+    assert response.status_code == 201
+
+    detail = client.get(f"/collections/{collection.id}", headers=member_headers)
+    assert admin_list.id in {item["id"] for item in detail.json()["lists"]}

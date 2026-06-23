@@ -1,7 +1,9 @@
 from sqlalchemy.orm import Session
 
+from app.access import can_view_list
 from app.collections import repository as repo
 from app.models.collection import Collection
+from app.models.user import User
 from app.services.exceptions import ConflictError, ForbiddenError, NotFoundError
 
 
@@ -39,15 +41,13 @@ def delete_collection(db: Session, collection: Collection) -> None:
     repo.delete_collection(db, collection)
 
 
-def add_item(db: Session, collection: Collection, list_id: int, user_id: int) -> None:
+def add_item(db: Session, collection: Collection, list_id: int, user: User) -> None:
     gift_list = repo.get_gift_list_by_id(db, list_id)
     if gift_list is None:
         raise NotFoundError("List not found.")
 
-    if gift_list.owner_id != user_id:
-        share = repo.find_share(db, list_id, user_id)
-        if share is None:
-            raise ForbiddenError("No access to this list.")
+    if not can_view_list(db, user, gift_list):
+        raise ForbiddenError("No access to this list.")
 
     existing = repo.find_collection_item(db, collection.id, list_id)
     if existing is not None:
