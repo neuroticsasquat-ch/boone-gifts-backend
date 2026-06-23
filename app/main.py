@@ -17,6 +17,7 @@ from app.connections import router as connections
 from app.collections import router as collections_
 from app.meta import router as meta
 from app.families import router as families
+from app.family_invites import router as family_invites
 
 
 def create_app() -> FastAPI:
@@ -51,6 +52,7 @@ def create_app() -> FastAPI:
     application.include_router(collections_.router)
     application.include_router(meta.router)
     application.include_router(families.router)
+    application.include_router(family_invites.router)
 
     @application.get("/health")
     def health():
