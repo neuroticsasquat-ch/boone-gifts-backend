@@ -51,8 +51,8 @@ def create_app() -> FastAPI:
     application.include_router(connections.router)
     application.include_router(collections_.router)
     application.include_router(meta.router)
-    application.include_router(families.router)
     application.include_router(family_invites.router)
+    application.include_router(families.router)
 
     @application.get("/health")
     def health():

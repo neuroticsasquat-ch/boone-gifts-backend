@@ -7,6 +7,7 @@ from pydantic import BaseModel, computed_field, field_validator
 class FamilyInviteStatus(StrEnum):
     pending = "pending"
     accepted = "accepted"
+    declined = "declined"
     expired = "expired"
 
 
@@ -38,6 +39,7 @@ class FamilyInviteRead(BaseModel):
     invited_by_id: int
     expires_at: datetime
     accepted_at: datetime | None
+    declined_at: datetime | None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -47,6 +49,8 @@ class FamilyInviteRead(BaseModel):
     def status(self) -> FamilyInviteStatus:
         if self.accepted_at is not None:
             return FamilyInviteStatus.accepted
+        if self.declined_at is not None:
+            return FamilyInviteStatus.declined
         # SQLite returns naive datetimes; compare without tzinfo to handle both cases.
         now = datetime.now(timezone.utc)
         expires = self.expires_at
@@ -55,3 +59,23 @@ class FamilyInviteRead(BaseModel):
         if expires < now:
             return FamilyInviteStatus.expired
         return FamilyInviteStatus.pending
+
+
+class FamilyRef(BaseModel):
+    id: int
+    name: str
+
+
+class InviterRef(BaseModel):
+    id: int
+    name: str
+
+
+class IncomingFamilyInviteRead(BaseModel):
+    id: int
+    token: str
+    role: str
+    family: FamilyRef
+    invited_by: InviterRef
+    expires_at: datetime
+    created_at: datetime
