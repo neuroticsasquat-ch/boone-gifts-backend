@@ -1,7 +1,21 @@
 from sqlalchemy.orm import Session
 
+from app.access import users_share_access
+from app.connections.repository import (
+    delete_collection_items_between,
+    unclaim_gifts_between,
+)
 from app.families import repository as repo
 from app.services.exceptions import ConflictError, ForbiddenError, NotFoundError
+
+
+def _cleanup_if_dropped(db: Session, a_id: int, b_id: int) -> None:
+    """If two users no longer share any access path, unclaim gifts both
+    directions and drop collection items referencing each other's lists.
+    Shares are intentionally left untouched (see design §2)."""
+    if not users_share_access(db, a_id, b_id):
+        unclaim_gifts_between(db, a_id, b_id)
+        delete_collection_items_between(db, a_id, b_id)
 
 
 def _build_family_detail(db: Session, family_id: int) -> dict:
@@ -75,7 +89,12 @@ def delete_family(db: Session, family_id: int, user_id: int) -> None:
         raise ForbiddenError("Not a member of this family.")
     if membership.role != "organizer":
         raise ForbiddenError("Only organizers can delete the family.")
+
+    member_ids = repo.get_member_user_ids(db, family_id)
     repo.delete_all_members(db, family_id)
+    for i in range(len(member_ids)):
+        for j in range(i + 1, len(member_ids)):
+            _cleanup_if_dropped(db, member_ids[i], member_ids[j])
     repo.delete_family(db, family)
 
 
@@ -93,7 +112,13 @@ def remove_member(db: Session, family_id: int, actor_id: int, target_user_id: in
         raise ForbiddenError("Only organizers can remove other members.")
     if target.role == "organizer" and repo.count_organizers(db, family_id) == 1:
         raise ConflictError("Cannot remove the last organizer.")
+
+    co_member_ids = [
+        uid for uid in repo.get_member_user_ids(db, family_id) if uid != target_user_id
+    ]
     repo.delete_family_member(db, target)
+    for other_id in co_member_ids:
+        _cleanup_if_dropped(db, target_user_id, other_id)
 
 
 def update_member_role(
@@ -114,9 +139,3 @@ def update_member_role(
         raise ConflictError("Cannot demote the last organizer.")
     repo.update_member_role(db, target, role)
     return _build_family_detail(db, family_id)
-
-
-def users_share_family(db: Session, a_id: int, b_id: int) -> bool:
-    return bool(
-        repo.family_ids_for_user(db, a_id) & repo.family_ids_for_user(db, b_id)
-    )

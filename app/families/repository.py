@@ -107,3 +107,15 @@ def family_ids_for_user(db: Session, user_id: int) -> set[int]:
         select(FamilyMember.family_id).where(FamilyMember.user_id == user_id)
     ).scalars().all()
     return set(rows)
+
+
+def users_share_family(db: Session, a_id: int, b_id: int) -> bool:
+    return bool(family_ids_for_user(db, a_id) & family_ids_for_user(db, b_id))
+
+
+def get_member_user_ids(db: Session, family_id: int) -> list[int]:
+    return list(
+        db.execute(
+            select(FamilyMember.user_id).where(FamilyMember.family_id == family_id)
+        ).scalars()
+    )

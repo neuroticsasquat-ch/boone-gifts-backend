@@ -2,13 +2,14 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.families import service
+from app.families import repository, service
 from app.models.family import Family
 from app.models.family_member import FamilyMember
 from app.models.user import User
 from app.services.exceptions import ConflictError, ForbiddenError, NotFoundError
 
 REPO = "app.families.service.repo"
+SVC = "app.families.service"
 
 
 # ---------------------------------------------------------------------------
@@ -254,12 +255,14 @@ def test_delete_family_not_organizer(mock_get_family, mock_get_member, db):
         service.delete_family(db, family_id=1, user_id=10)
 
 
+@patch(f"{SVC}._cleanup_if_dropped")
+@patch(f"{REPO}.get_member_user_ids", return_value=[10])
 @patch(f"{REPO}.delete_family")
 @patch(f"{REPO}.delete_all_members")
 @patch(f"{REPO}.get_family_member")
 @patch(f"{REPO}.get_family")
 def test_delete_family_happy_path(
-    mock_get_family, mock_get_member, mock_delete_members, mock_delete_family, db
+    mock_get_family, mock_get_member, mock_delete_members, mock_delete_family, mock_ids, mock_cleanup, db
 ):
     family = _make_family(id=1)
     member = _make_member(id=1, family_id=1, user_id=10, role="organizer")
@@ -271,6 +274,57 @@ def test_delete_family_happy_path(
 
     mock_delete_members.assert_called_once_with(db, 1)
     mock_delete_family.assert_called_once_with(db, family)
+    mock_cleanup.assert_not_called()
+
+
+@patch(f"{SVC}._cleanup_if_dropped")
+@patch(f"{REPO}.get_member_user_ids", return_value=[10, 20, 30])
+@patch(f"{REPO}.delete_family")
+@patch(f"{REPO}.delete_all_members")
+@patch(f"{REPO}.get_family_member")
+@patch(f"{REPO}.get_family")
+def test_delete_family_triggers_cleanup_for_each_pair(
+    mock_get_family, mock_get_member, mock_delete_members, mock_delete_family, mock_ids, mock_cleanup, db
+):
+    family = _make_family(id=1)
+    mock_get_family.return_value = family
+    mock_get_member.return_value = _make_member(user_id=10, role="organizer")
+
+    service.delete_family(db, family_id=1, user_id=10)
+
+    # Members deleted before cleanup; family deleted last.
+    mock_delete_members.assert_called_once_with(db, 1)
+    mock_delete_family.assert_called_once_with(db, family)
+    # Every unordered pair of {10, 20, 30}.
+    assert mock_cleanup.call_args_list == [
+        ((db, 10, 20),),
+        ((db, 10, 30),),
+        ((db, 20, 30),),
+    ]
+
+
+@patch(f"{SVC}._cleanup_if_dropped")
+@patch(f"{REPO}.get_member_user_ids", return_value=[10, 20])
+@patch(f"{REPO}.delete_family")
+@patch(f"{REPO}.delete_all_members")
+@patch(f"{REPO}.get_family_member")
+@patch(f"{REPO}.get_family")
+def test_delete_family_cleanup_runs_after_members_deleted(
+    mock_get_family, mock_get_member, mock_delete_members, mock_delete_family, mock_ids, mock_cleanup, db
+):
+    family = _make_family(id=1)
+    mock_get_family.return_value = family
+    mock_get_member.return_value = _make_member(user_id=10, role="organizer")
+
+    call_order = []
+    mock_delete_members.side_effect = lambda *a, **k: call_order.append("delete_members")
+    mock_cleanup.side_effect = lambda *a, **k: call_order.append("cleanup")
+
+    service.delete_family(db, family_id=1, user_id=10)
+
+    assert call_order[0] == "delete_members"
+    assert "cleanup" in call_order
+    assert call_order.index("delete_members") < call_order.index("cleanup")
 
 
 # ---------------------------------------------------------------------------
@@ -313,12 +367,14 @@ def test_remove_member_non_organizer_removing_other(mock_get_family, mock_get_me
         service.remove_member(db, family_id=1, actor_id=10, target_user_id=20)
 
 
+@patch(f"{SVC}._cleanup_if_dropped")
+@patch(f"{REPO}.get_member_user_ids", return_value=[10])
 @patch(f"{REPO}.delete_family_member")
 @patch(f"{REPO}.count_organizers")
 @patch(f"{REPO}.get_family_member")
 @patch(f"{REPO}.get_family")
 def test_remove_member_self_leave_as_member(
-    mock_get_family, mock_get_member, mock_count, mock_delete, db
+    mock_get_family, mock_get_member, mock_count, mock_delete, mock_ids, mock_cleanup, db
 ):
     mock_get_family.return_value = _make_family()
     member = _make_member(user_id=10, role="member")
@@ -326,14 +382,17 @@ def test_remove_member_self_leave_as_member(
     service.remove_member(db, family_id=1, actor_id=10, target_user_id=10)
     mock_delete.assert_called_once_with(db, member)
     mock_count.assert_not_called()  # member target → guard short-circuits
+    mock_cleanup.assert_not_called()  # leaver was the only member
 
 
+@patch(f"{SVC}._cleanup_if_dropped")
+@patch(f"{REPO}.get_member_user_ids", return_value=[10, 20])
 @patch(f"{REPO}.delete_family_member")
 @patch(f"{REPO}.count_organizers")
 @patch(f"{REPO}.get_family_member")
 @patch(f"{REPO}.get_family")
 def test_remove_member_organizer_removes_member(
-    mock_get_family, mock_get_member, mock_count, mock_delete, db
+    mock_get_family, mock_get_member, mock_count, mock_delete, mock_ids, mock_cleanup, db
 ):
     mock_get_family.return_value = _make_family()
     actor = _make_member(user_id=10, role="organizer")
@@ -341,14 +400,17 @@ def test_remove_member_organizer_removes_member(
     mock_get_member.side_effect = [actor, target]
     service.remove_member(db, family_id=1, actor_id=10, target_user_id=20)
     mock_delete.assert_called_once_with(db, target)
+    mock_cleanup.assert_called_once_with(db, 20, 10)
 
 
+@patch(f"{SVC}._cleanup_if_dropped")
+@patch(f"{REPO}.get_member_user_ids", return_value=[10, 20])
 @patch(f"{REPO}.delete_family_member")
 @patch(f"{REPO}.count_organizers", return_value=2)
 @patch(f"{REPO}.get_family_member")
 @patch(f"{REPO}.get_family")
 def test_remove_member_organizer_removes_co_organizer(
-    mock_get_family, mock_get_member, mock_count, mock_delete, db
+    mock_get_family, mock_get_member, mock_count, mock_delete, mock_ids, mock_cleanup, db
 ):
     mock_get_family.return_value = _make_family()
     actor = _make_member(user_id=10, role="organizer")
@@ -356,14 +418,17 @@ def test_remove_member_organizer_removes_co_organizer(
     mock_get_member.side_effect = [actor, target]
     service.remove_member(db, family_id=1, actor_id=10, target_user_id=20)
     mock_delete.assert_called_once_with(db, target)
+    mock_cleanup.assert_called_once_with(db, 20, 10)
 
 
+@patch(f"{SVC}._cleanup_if_dropped")
+@patch(f"{REPO}.get_member_user_ids", return_value=[10, 20])
 @patch(f"{REPO}.delete_family_member")
 @patch(f"{REPO}.count_organizers", return_value=2)
 @patch(f"{REPO}.get_family_member")
 @patch(f"{REPO}.get_family")
 def test_remove_member_organizer_self_leave_with_co_organizer(
-    mock_get_family, mock_get_member, mock_count, mock_delete, db
+    mock_get_family, mock_get_member, mock_count, mock_delete, mock_ids, mock_cleanup, db
 ):
     mock_get_family.return_value = _make_family()
     organizer = _make_member(user_id=10, role="organizer")
@@ -371,6 +436,57 @@ def test_remove_member_organizer_self_leave_with_co_organizer(
     service.remove_member(db, family_id=1, actor_id=10, target_user_id=10)
     mock_delete.assert_called_once_with(db, organizer)
     mock_count.assert_called_once_with(db, 1)
+    mock_cleanup.assert_called_once_with(db, 10, 20)
+
+
+@patch(f"{SVC}._cleanup_if_dropped")
+@patch(f"{REPO}.get_member_user_ids")
+@patch(f"{REPO}.delete_family_member")
+@patch(f"{REPO}.count_organizers")
+@patch(f"{REPO}.get_family_member")
+@patch(f"{REPO}.get_family")
+def test_remove_member_triggers_cleanup_for_each_co_member(
+    mock_get_family, mock_get_member, mock_count, mock_delete, mock_ids, mock_cleanup, db
+):
+    mock_get_family.return_value = _make_family()
+    actor = _make_member(user_id=10, role="organizer")
+    target = _make_member(user_id=20, role="member")
+    mock_get_member.side_effect = [actor, target]
+    # family had members 10, 20, 30 -> co-members of leaver 20 are {10, 30}
+    mock_ids.return_value = [10, 20, 30]
+
+    service.remove_member(db, family_id=1, actor_id=10, target_user_id=20)
+
+    mock_delete.assert_called_once_with(db, target)
+    assert mock_cleanup.call_args_list == [
+        ((db, 20, 10),),
+        ((db, 20, 30),),
+    ]
+
+
+@patch(f"{SVC}._cleanup_if_dropped")
+@patch(f"{REPO}.get_member_user_ids")
+@patch(f"{REPO}.delete_family_member")
+@patch(f"{REPO}.count_organizers")
+@patch(f"{REPO}.get_family_member")
+@patch(f"{REPO}.get_family")
+def test_remove_member_cleanup_runs_after_delete(
+    mock_get_family, mock_get_member, mock_count, mock_delete, mock_ids, mock_cleanup, db
+):
+    # Guard the ordering: the membership row must be gone before the access check.
+    mock_get_family.return_value = _make_family()
+    actor = _make_member(user_id=10, role="organizer")
+    target = _make_member(user_id=20, role="member")
+    mock_get_member.side_effect = [actor, target]
+    mock_ids.return_value = [10, 20]
+
+    call_order = []
+    mock_delete.side_effect = lambda *a, **k: call_order.append("delete")
+    mock_cleanup.side_effect = lambda *a, **k: call_order.append("cleanup")
+
+    service.remove_member(db, family_id=1, actor_id=10, target_user_id=20)
+
+    assert call_order == ["delete", "cleanup"]
 
 
 @patch(f"{REPO}.delete_family_member")
@@ -536,17 +652,46 @@ def test_update_role_demote_last_organizer_raises_conflict(
 def test_users_share_family_overlap_returns_true():
     db = MagicMock()
     # a_id's families = {1, 2}; b_id's families = {2, 3} -> overlap on family 2
-    with patch(f"{REPO}.family_ids_for_user", side_effect=[{1, 2}, {2, 3}]):
-        assert service.users_share_family(db, 10, 20) is True
+    with patch("app.families.repository.family_ids_for_user", side_effect=[{1, 2}, {2, 3}]):
+        assert repository.users_share_family(db, 10, 20) is True
 
 
 def test_users_share_family_disjoint_returns_false():
     db = MagicMock()
-    with patch(f"{REPO}.family_ids_for_user", side_effect=[{1, 2}, {3, 4}]):
-        assert service.users_share_family(db, 10, 20) is False
+    with patch("app.families.repository.family_ids_for_user", side_effect=[{1, 2}, {3, 4}]):
+        assert repository.users_share_family(db, 10, 20) is False
 
 
 def test_users_share_family_no_memberships_returns_false():
     db = MagicMock()
-    with patch(f"{REPO}.family_ids_for_user", side_effect=[set(), set()]):
-        assert service.users_share_family(db, 10, 20) is False
+    with patch("app.families.repository.family_ids_for_user", side_effect=[set(), set()]):
+        assert repository.users_share_family(db, 10, 20) is False
+
+
+# ---------------------------------------------------------------------------
+# _cleanup_if_dropped
+# ---------------------------------------------------------------------------
+
+
+@patch(f"{SVC}.delete_collection_items_between")
+@patch(f"{SVC}.unclaim_gifts_between")
+@patch(f"{SVC}.users_share_access", return_value=False)
+def test_cleanup_if_dropped_runs_when_no_shared_access(
+    mock_access, mock_unclaim, mock_items, db
+):
+    service._cleanup_if_dropped(db, 10, 20)
+    mock_access.assert_called_once_with(db, 10, 20)
+    mock_unclaim.assert_called_once_with(db, 10, 20)
+    mock_items.assert_called_once_with(db, 10, 20)
+
+
+@patch(f"{SVC}.delete_collection_items_between")
+@patch(f"{SVC}.unclaim_gifts_between")
+@patch(f"{SVC}.users_share_access", return_value=True)
+def test_cleanup_if_dropped_skips_when_access_remains(
+    mock_access, mock_unclaim, mock_items, db
+):
+    service._cleanup_if_dropped(db, 10, 20)
+    mock_access.assert_called_once_with(db, 10, 20)
+    mock_unclaim.assert_not_called()
+    mock_items.assert_not_called()
