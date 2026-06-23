@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -7,7 +8,6 @@ from app.collections import service
 from app.models.collection import Collection
 from app.models.collection_item import CollectionItem
 from app.models.gift_list import GiftList
-from app.models.list_share import ListShare
 from app.services.exceptions import ConflictError, ForbiddenError, NotFoundError
 
 
@@ -43,13 +43,6 @@ def _make_collection_item(
     item.collection_id = collection_id
     item.list_id = list_id
     return item
-
-
-def _make_share(list_id: int = 10, user_id: int = 1) -> MagicMock:
-    share = MagicMock(spec=ListShare)
-    share.list_id = list_id
-    share.user_id = user_id
-    return share
 
 
 REPO = "app.collections.service.repo"
@@ -140,78 +133,72 @@ def test_delete_collection(mock_delete):
 
 # --- add_item ---
 
+CAN_VIEW = "app.collections.service.can_view_list"
+
 
 @patch(f"{REPO}.create_collection_item")
 @patch(f"{REPO}.find_collection_item", return_value=None)
+@patch(CAN_VIEW, return_value=True)
 @patch(f"{REPO}.get_gift_list_by_id")
-def test_add_item_owned_list(mock_get_list, mock_find_item, mock_create_item):
+def test_add_item_viewable(mock_get_list, mock_can_view, mock_find_item, mock_create_item):
+    # Owner / direct-share / shared-family all resolve to can_view_list -> True;
+    # discriminating between them is can_view_list's job (tested in app/access),
+    # so the service unit test only cares that a viewable list is added.
     db = MagicMock()
+    user = SimpleNamespace(id=5)
     col = _make_collection(id=1, owner_id=5)
-    gift_list = _make_gift_list(id=10, owner_id=5)
+    gift_list = _make_gift_list(id=10, owner_id=99)
     mock_get_list.return_value = gift_list
-    item = _make_collection_item()
-    mock_create_item.return_value = item
 
-    service.add_item(db, collection=col, list_id=10, user_id=5)
+    service.add_item(db, collection=col, list_id=10, user=user)
 
     mock_get_list.assert_called_once_with(db, 10)
+    mock_can_view.assert_called_once_with(db, user, gift_list)
     mock_find_item.assert_called_once_with(db, 1, 10)
     mock_create_item.assert_called_once_with(db, 1, 10)
 
 
 @patch(f"{REPO}.create_collection_item")
-@patch(f"{REPO}.find_collection_item", return_value=None)
-@patch(f"{REPO}.find_share")
+@patch(CAN_VIEW, return_value=False)
 @patch(f"{REPO}.get_gift_list_by_id")
-def test_add_item_shared_list(mock_get_list, mock_find_share, mock_find_item, mock_create_item):
+def test_add_item_not_viewable(mock_get_list, mock_can_view, mock_create_item):
     db = MagicMock()
-    col = _make_collection(id=1, owner_id=5)
-    gift_list = _make_gift_list(id=10, owner_id=99)  # owned by someone else
-    mock_get_list.return_value = gift_list
-    mock_find_share.return_value = _make_share(list_id=10, user_id=5)
-    item = _make_collection_item()
-    mock_create_item.return_value = item
-
-    service.add_item(db, collection=col, list_id=10, user_id=5)
-
-    mock_get_list.assert_called_once_with(db, 10)
-    mock_find_share.assert_called_once_with(db, 10, 5)
-    mock_find_item.assert_called_once_with(db, 1, 10)
-    mock_create_item.assert_called_once_with(db, 1, 10)
-
-
-@patch(f"{REPO}.find_share", return_value=None)
-@patch(f"{REPO}.get_gift_list_by_id")
-def test_add_item_no_access(mock_get_list, mock_find_share):
-    db = MagicMock()
+    user = SimpleNamespace(id=5)
     col = _make_collection(id=1, owner_id=5)
     gift_list = _make_gift_list(id=10, owner_id=99)
     mock_get_list.return_value = gift_list
 
     with pytest.raises(ForbiddenError):
-        service.add_item(db, collection=col, list_id=10, user_id=5)
+        service.add_item(db, collection=col, list_id=10, user=user)
+
+    mock_can_view.assert_called_once_with(db, user, gift_list)
+    mock_create_item.assert_not_called()
 
 
+@patch(CAN_VIEW, return_value=True)
 @patch(f"{REPO}.find_collection_item")
 @patch(f"{REPO}.get_gift_list_by_id")
-def test_add_item_duplicate(mock_get_list, mock_find_item):
+def test_add_item_duplicate(mock_get_list, mock_find_item, mock_can_view):
     db = MagicMock()
+    user = SimpleNamespace(id=5)
     col = _make_collection(id=1, owner_id=5)
     gift_list = _make_gift_list(id=10, owner_id=5)
     mock_get_list.return_value = gift_list
     mock_find_item.return_value = _make_collection_item()
 
     with pytest.raises(ConflictError):
-        service.add_item(db, collection=col, list_id=10, user_id=5)
+        service.add_item(db, collection=col, list_id=10, user=user)
 
 
 @patch(f"{REPO}.get_gift_list_by_id", return_value=None)
 def test_add_item_list_not_found(mock_get_list):
+    # List existence is checked before access, so can_view_list is never reached.
     db = MagicMock()
+    user = SimpleNamespace(id=5)
     col = _make_collection(id=1, owner_id=5)
 
     with pytest.raises(NotFoundError):
-        service.add_item(db, collection=col, list_id=999, user_id=5)
+        service.add_item(db, collection=col, list_id=999, user=user)
 
 
 # --- remove_item ---
