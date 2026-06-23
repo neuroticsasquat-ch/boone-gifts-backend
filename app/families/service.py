@@ -114,3 +114,9 @@ def update_member_role(
         raise ConflictError("Cannot demote the last organizer.")
     repo.update_member_role(db, target, role)
     return _build_family_detail(db, family_id)
+
+
+def users_share_family(db: Session, a_id: int, b_id: int) -> bool:
+    return bool(
+        repo.family_ids_for_user(db, a_id) & repo.family_ids_for_user(db, b_id)
+    )

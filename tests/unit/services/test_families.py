@@ -526,3 +526,27 @@ def test_update_role_demote_last_organizer_raises_conflict(
             db, family_id=1, actor_id=10, target_user_id=10, role="member"
         )
     mock_update.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# users_share_family
+# ---------------------------------------------------------------------------
+
+
+def test_users_share_family_overlap_returns_true():
+    db = MagicMock()
+    # a_id's families = {1, 2}; b_id's families = {2, 3} -> overlap on family 2
+    with patch(f"{REPO}.family_ids_for_user", side_effect=[{1, 2}, {2, 3}]):
+        assert service.users_share_family(db, 10, 20) is True
+
+
+def test_users_share_family_disjoint_returns_false():
+    db = MagicMock()
+    with patch(f"{REPO}.family_ids_for_user", side_effect=[{1, 2}, {3, 4}]):
+        assert service.users_share_family(db, 10, 20) is False
+
+
+def test_users_share_family_no_memberships_returns_false():
+    db = MagicMock()
+    with patch(f"{REPO}.family_ids_for_user", side_effect=[set(), set()]):
+        assert service.users_share_family(db, 10, 20) is False
