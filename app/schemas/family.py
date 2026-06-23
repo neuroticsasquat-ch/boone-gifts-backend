@@ -3,6 +3,15 @@ from typing import Literal
 from pydantic import BaseModel
 
 
+class FamilyRef(BaseModel):
+    """Minimal family reference used to annotate family-visible lists."""
+
+    id: int
+    name: str
+
+    model_config = {"from_attributes": True}
+
+
 class FamilyCreate(BaseModel):
     name: str
 
