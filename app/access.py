@@ -1,7 +1,7 @@
 from sqlalchemy.orm import Session
 
 from app.connections.repository import find_accepted_connection_between
-from app.families.service import users_share_family
+from app.families.repository import users_share_family
 from app.models.gift_list import GiftList
 from app.models.user import User
 from app.shares.repository import find_share
