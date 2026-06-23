@@ -48,6 +48,15 @@ def family_with_second_member(db, family, second_user):
     return family
 
 
+@pytest.fixture
+def family_with_second_organizer(db, family, second_user):
+    """Adds second_user as a second organizer of `family`."""
+    member = FamilyMember(family_id=family.id, user_id=second_user.id, role="organizer")
+    db.add(member)
+    db.flush()
+    return family
+
+
 # ---------------------------------------------------------------------------
 # POST /families
 # ---------------------------------------------------------------------------
@@ -207,4 +216,222 @@ def test_delete_family_404_for_nonexistent(client, member_headers):
 
 def test_delete_family_requires_auth(client, family):
     response = client.delete(f"/families/{family.id}")
+    assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+
+# ---------------------------------------------------------------------------
+# DELETE /families/{family_id}/members/{user_id}
+# ---------------------------------------------------------------------------
+
+
+def test_remove_member_self_leave(
+    client, second_headers, second_user, family_with_second_member
+):
+    fam = family_with_second_member
+    response = client.delete(
+        f"/families/{fam.id}/members/{second_user.id}", headers=second_headers
+    )
+    assert response.status_code == status.HTTP_204_NO_CONTENT
+    get_resp = client.get(f"/families/{fam.id}", headers=second_headers)
+    assert get_resp.status_code == status.HTTP_403_FORBIDDEN
+
+
+def test_remove_member_organizer_removes_member(
+    client, member_headers, second_user, family_with_second_member
+):
+    fam = family_with_second_member
+    response = client.delete(
+        f"/families/{fam.id}/members/{second_user.id}", headers=member_headers
+    )
+    assert response.status_code == status.HTTP_204_NO_CONTENT
+    detail = client.get(f"/families/{fam.id}", headers=member_headers).json()
+    assert len(detail["members"]) == 1
+
+
+def test_remove_member_organizer_removes_co_organizer(
+    client, member_headers, second_user, family_with_second_organizer
+):
+    fam = family_with_second_organizer
+    response = client.delete(
+        f"/families/{fam.id}/members/{second_user.id}", headers=member_headers
+    )
+    assert response.status_code == status.HTTP_204_NO_CONTENT
+
+
+def test_remove_member_organizer_self_leave_with_co_organizer(
+    client, member_headers, member_user, family_with_second_organizer
+):
+    fam = family_with_second_organizer
+    response = client.delete(
+        f"/families/{fam.id}/members/{member_user.id}", headers=member_headers
+    )
+    assert response.status_code == status.HTTP_204_NO_CONTENT
+    # second_user is still an organizer, so family still accessible
+    get_resp = client.get(f"/families/{fam.id}", headers=member_headers)
+    assert get_resp.status_code == status.HTTP_403_FORBIDDEN
+
+
+def test_remove_member_403_member_removes_other(
+    client, second_headers, member_user, family_with_second_member
+):
+    fam = family_with_second_member
+    response = client.delete(
+        f"/families/{fam.id}/members/{member_user.id}", headers=second_headers
+    )
+    assert response.status_code == status.HTTP_403_FORBIDDEN
+
+
+def test_remove_member_403_actor_not_a_member(
+    client, second_headers, member_user, family
+):
+    response = client.delete(
+        f"/families/{family.id}/members/{member_user.id}", headers=second_headers
+    )
+    assert response.status_code == status.HTTP_403_FORBIDDEN
+
+
+def test_remove_member_404_family_missing(client, member_headers, member_user):
+    response = client.delete(
+        f"/families/99999/members/{member_user.id}", headers=member_headers
+    )
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
+def test_remove_member_404_target_not_a_member(
+    client, member_headers, second_user, family
+):
+    response = client.delete(
+        f"/families/{family.id}/members/{second_user.id}", headers=member_headers
+    )
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
+def test_remove_member_409_last_organizer(client, member_headers, member_user, family):
+    response = client.delete(
+        f"/families/{family.id}/members/{member_user.id}", headers=member_headers
+    )
+    assert response.status_code == status.HTTP_409_CONFLICT
+
+
+def test_remove_member_requires_auth(client, member_user, family):
+    response = client.delete(f"/families/{family.id}/members/{member_user.id}")
+    assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+
+# ---------------------------------------------------------------------------
+# PUT /families/{family_id}/members/{user_id}/role
+# ---------------------------------------------------------------------------
+
+
+def test_update_role_promote_member_to_organizer(
+    client, member_headers, second_user, family_with_second_member
+):
+    fam = family_with_second_member
+    response = client.put(
+        f"/families/{fam.id}/members/{second_user.id}/role",
+        json={"role": "organizer"},
+        headers=member_headers,
+    )
+    assert response.status_code == status.HTTP_200_OK
+    roles = {m["user_id"]: m["role"] for m in response.json()["members"]}
+    assert roles[second_user.id] == "organizer"
+
+
+def test_update_role_demote_organizer_to_member(
+    client, member_headers, second_user, family_with_second_organizer
+):
+    fam = family_with_second_organizer
+    response = client.put(
+        f"/families/{fam.id}/members/{second_user.id}/role",
+        json={"role": "member"},
+        headers=member_headers,
+    )
+    assert response.status_code == status.HTTP_200_OK
+    roles = {m["user_id"]: m["role"] for m in response.json()["members"]}
+    assert roles[second_user.id] == "member"
+
+
+def test_update_role_422_invalid_role(
+    client, member_headers, second_user, family_with_second_member
+):
+    fam = family_with_second_member
+    response = client.put(
+        f"/families/{fam.id}/members/{second_user.id}/role",
+        json={"role": "superuser"},
+        headers=member_headers,
+    )
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
+
+def test_update_role_403_non_organizer(
+    client, second_headers, member_user, family_with_second_member
+):
+    fam = family_with_second_member
+    response = client.put(
+        f"/families/{fam.id}/members/{member_user.id}/role",
+        json={"role": "member"},
+        headers=second_headers,
+    )
+    assert response.status_code == status.HTTP_403_FORBIDDEN
+
+
+def test_update_role_403_member_updates_own_role(
+    client, second_headers, second_user, family_with_second_member
+):
+    fam = family_with_second_member
+    response = client.put(
+        f"/families/{fam.id}/members/{second_user.id}/role",
+        json={"role": "organizer"},
+        headers=second_headers,
+    )
+    assert response.status_code == status.HTTP_403_FORBIDDEN
+
+
+def test_update_role_403_actor_not_a_member(
+    client, second_headers, member_user, family
+):
+    response = client.put(
+        f"/families/{family.id}/members/{member_user.id}/role",
+        json={"role": "member"},
+        headers=second_headers,
+    )
+    assert response.status_code == status.HTTP_403_FORBIDDEN
+
+
+def test_update_role_404_family_missing(client, member_headers, member_user):
+    response = client.put(
+        f"/families/99999/members/{member_user.id}/role",
+        json={"role": "member"},
+        headers=member_headers,
+    )
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
+def test_update_role_404_target_not_a_member(
+    client, member_headers, second_user, family
+):
+    response = client.put(
+        f"/families/{family.id}/members/{second_user.id}/role",
+        json={"role": "organizer"},
+        headers=member_headers,
+    )
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
+def test_update_role_409_demote_last_organizer(
+    client, member_headers, member_user, family
+):
+    response = client.put(
+        f"/families/{family.id}/members/{member_user.id}/role",
+        json={"role": "member"},
+        headers=member_headers,
+    )
+    assert response.status_code == status.HTTP_409_CONFLICT
+
+
+def test_update_role_requires_auth(client, member_user, family):
+    response = client.put(
+        f"/families/{family.id}/members/{member_user.id}/role",
+        json={"role": "member"},
+    )
     assert response.status_code == status.HTTP_401_UNAUTHORIZED

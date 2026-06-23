@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel
 
 
@@ -31,3 +33,7 @@ class FamilyDetail(BaseModel):
     members: list[FamilyMemberInfo]
 
     model_config = {"from_attributes": True}
+
+
+class FamilyMemberRoleUpdate(BaseModel):
+    role: Literal["organizer", "member"]

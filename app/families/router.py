@@ -2,8 +2,14 @@ from fastapi import APIRouter, HTTPException, status
 
 from app.families import service as family_service
 from app.dependencies import CurrentUser, DbSession
-from app.schemas.family import FamilyCreate, FamilyDetail, FamilyRead, FamilyUpdate
-from app.services.exceptions import ForbiddenError, NotFoundError
+from app.schemas.family import (
+    FamilyCreate,
+    FamilyDetail,
+    FamilyMemberRoleUpdate,
+    FamilyRead,
+    FamilyUpdate,
+)
+from app.services.exceptions import ConflictError, ForbiddenError, NotFoundError
 
 router = APIRouter(prefix="/families", tags=["families"])
 
@@ -50,3 +56,45 @@ def delete_family(family_id: int, user: CurrentUser, db: DbSession) -> None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     except ForbiddenError:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+
+
+@router.delete(
+    "/{family_id}/members/{user_id}", status_code=status.HTTP_204_NO_CONTENT
+)
+def remove_member(
+    family_id: int, user_id: int, user: CurrentUser, db: DbSession
+) -> None:
+    try:
+        family_service.remove_member(
+            db, family_id=family_id, actor_id=user.id, target_user_id=user_id
+        )
+    except NotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    except ForbiddenError:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+    except ConflictError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT)
+
+
+@router.put("/{family_id}/members/{user_id}/role", response_model=FamilyDetail)
+def update_member_role(
+    family_id: int,
+    user_id: int,
+    request: FamilyMemberRoleUpdate,
+    user: CurrentUser,
+    db: DbSession,
+) -> dict:
+    try:
+        return family_service.update_member_role(
+            db,
+            family_id=family_id,
+            actor_id=user.id,
+            target_user_id=user_id,
+            role=request.role,
+        )
+    except NotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    except ForbiddenError:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+    except ConflictError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT)
