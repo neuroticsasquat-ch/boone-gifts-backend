@@ -15,6 +15,7 @@ class RegisterRequest(BaseModel):
 
 class InviteInfoResponse(BaseModel):
     email: str
+    family_name: str | None = None
 
 
 class AccessTokenResponse(BaseModel):
