@@ -99,10 +99,39 @@ Set in Coolify (not in `.env` files):
 | `APP_CORS_ORIGINS` | Allowed CORS origins (JSON array) |
 | `APP_FRONTEND_URL` | Frontend URL for email links |
 | `APP_SENTRY_DSN` | Sentry DSN for error tracking |
-| `APP_SENTRY_ENVIRONMENT` | Sentry environment tag |
+| `APP_SENTRY_ENVIRONMENT` | Sentry environment tag (set to `production`) |
+| `APP_SENTRY_RELEASE` | Release tag — set to `${SOURCE_COMMIT}` (see "Sentry release tagging" below) |
 | `APP_EMAIL_PROVIDER` | `log` or `smtp` |
 | `APP_EMAIL_FROM` | Sender address |
 | `APP_EMAIL_SMTP_*` | SMTP connection details |
+
+## Sentry release tagging
+
+Sentry groups errors and traces by release. We tag each deploy with the Git
+commit it was built from so a regression can be tied back to a specific change.
+
+The release value flows through the `APP_SENTRY_RELEASE` environment variable,
+which `sentry_sdk.init` reads at startup (`app/main.py`). To wire it to the
+deploy commit:
+
+1. In the Coolify application's **Build** settings, enable
+   **"Include SOURCE_COMMIT in build"** (also labelled *Use Build Variables /
+   inject `SOURCE_COMMIT`*). This makes Coolify's `SOURCE_COMMIT` variable
+   available at runtime.
+2. In the Coolify application's **Environment Variables**, set:
+
+       APP_SENTRY_RELEASE=${SOURCE_COMMIT}
+
+   Coolify substitutes `${SOURCE_COMMIT}` with the deployed commit SHA.
+3. Confirm `APP_SENTRY_DSN` and `APP_SENTRY_ENVIRONMENT` (`production`) are also
+   set in Coolify, otherwise Sentry stays disabled / mislabelled.
+
+Performance tracing is enabled at a 10% sample rate (`traces_sample_rate=0.1`)
+with explicit FastAPI and SQLAlchemy integrations — no extra config needed.
+
+If "Include SOURCE_COMMIT" is left off, `${SOURCE_COMMIT}` resolves to an empty
+string and the release falls back to unset (`release=None`); error tracking
+still works, it just won't be tied to a commit.
 
 ## Dashboards
 
