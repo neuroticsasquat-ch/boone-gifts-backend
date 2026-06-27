@@ -1,4 +1,6 @@
 import sentry_sdk
+from sentry_sdk.integrations.fastapi import FastApiIntegration
+from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi.errors import RateLimitExceeded
@@ -25,6 +27,11 @@ def create_app() -> FastAPI:
             environment=settings.sentry_environment,
             release=settings.sentry_release or None,
             send_default_pii=False,
+            traces_sample_rate=0.1,
+            integrations=[
+                FastApiIntegration(),
+                SqlalchemyIntegration(),
+            ],
         )
 
     application = FastAPI(title="Boone Gifts API")
