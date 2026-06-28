@@ -6,6 +6,7 @@ import pytest
 
 from app.auth import service
 from app.config import settings
+from app.dependencies import create_access_token
 from app.models.family import Family
 from app.models.family_invite import FamilyInvite
 from app.models.invite import Invite
@@ -428,3 +429,47 @@ def test_family_invite_registerable_truth_table():
         service._family_invite_registerable(_make_family_invite(expires_in_days=-1))
         is False
     )
+
+
+# --- create_access_token simple_mode claim ---
+
+
+def test_create_access_token_includes_simple_mode_true():
+    user = _make_user(simple_mode=True)
+    token = create_access_token(user)
+    payload = jwt.decode(
+        token,
+        settings.jwt_secret,
+        algorithms=[settings.jwt_algorithm],
+        options={"verify_iat": False},
+    )
+    assert payload["simple_mode"] is True
+
+
+def test_create_access_token_includes_simple_mode_false():
+    user = _make_user(simple_mode=False)
+    token = create_access_token(user)
+    payload = jwt.decode(
+        token,
+        settings.jwt_secret,
+        algorithms=[settings.jwt_algorithm],
+        options={"verify_iat": False},
+    )
+    assert payload["simple_mode"] is False
+
+
+# --- update_profile simple_mode toggle ---
+
+
+def test_update_profile_sets_simple_mode_when_provided():
+    db = MagicMock()
+    user = _make_user(simple_mode=False)
+    service.update_profile(db, user, "Test Name", simple_mode=True)
+    assert user.simple_mode is True
+
+
+def test_update_profile_does_not_change_simple_mode_when_not_provided():
+    db = MagicMock()
+    user = _make_user(simple_mode=True)
+    service.update_profile(db, user, "Test Name")
+    assert user.simple_mode is True

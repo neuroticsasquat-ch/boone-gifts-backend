@@ -381,3 +381,47 @@ def test_register_accepted_family_invite(client, member_user, db):
         json={"token": "fam-reg-acc", "name": "Done", "password": "newpass123"},
     )
     assert response.status_code == 400
+
+
+# --- simple_mode in PUT /auth/profile ---
+
+
+def test_update_profile_sets_simple_mode_in_token(client, member_user, member_headers, db):
+    response = client.put(
+        "/auth/profile",
+        json={"name": member_user.name, "simple_mode": True},
+        headers=member_headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "access_token" in data
+    payload = jwt.decode(
+        data["access_token"],
+        settings.jwt_secret,
+        algorithms=[settings.jwt_algorithm],
+        options={"verify_iat": False},
+    )
+    assert payload["simple_mode"] is True
+    db.refresh(member_user)
+    assert member_user.simple_mode is True
+
+
+def test_update_profile_name_only_preserves_simple_mode(client, member_user, member_headers, db):
+    member_user.simple_mode = True
+    db.flush()
+
+    response = client.put(
+        "/auth/profile",
+        json={"name": "new name"},
+        headers=member_headers,
+    )
+    assert response.status_code == 200
+    payload = jwt.decode(
+        response.json()["access_token"],
+        settings.jwt_secret,
+        algorithms=[settings.jwt_algorithm],
+        options={"verify_iat": False},
+    )
+    assert payload["simple_mode"] is True
+    db.refresh(member_user)
+    assert member_user.simple_mode is True
