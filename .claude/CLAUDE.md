@@ -1,5 +1,10 @@
 # Boone Gifts Backend
 
+<!-- Specs/plans live under this repo's own docs/ (not the umbrella). This overrides the
+     personal-skills DOCS_DIR auto-resolution so /planit, /implementit, /reviewit, and the loop
+     resolve DOCS_DIR = <repo>/docs and find files in docs/superpowers/{specs,plans}. -->
+specs_dir: docs
+
 ## Overview
 FastAPI backend for the Boone Gifts project. Python 3.14, SQLite database.
 
