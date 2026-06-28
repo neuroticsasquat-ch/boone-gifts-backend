@@ -19,6 +19,7 @@ def _make_user(
     name: str = "Test User",
     role: str = "member",
     is_active: bool = True,
+    simple_mode: bool = False,
 ) -> MagicMock:
     user = MagicMock(spec=User)
     user.id = id
@@ -26,6 +27,7 @@ def _make_user(
     user.name = name
     user.role = role
     user.is_active = is_active
+    user.simple_mode = simple_mode
     user.password_changed_at = None
     return user
 

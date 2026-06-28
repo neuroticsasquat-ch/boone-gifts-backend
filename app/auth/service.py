@@ -206,13 +206,17 @@ def change_password(
     }
 
 
-def update_profile(db: Session, user, name: str) -> dict:
-    """Update a logged-in user's profile name and issue fresh tokens.
+def update_profile(
+    db: Session, user, name: str, simple_mode: bool | None = None
+) -> dict:
+    """Update a logged-in user's profile name (and optionally simple_mode) and issue fresh tokens.
 
     Returns new access + refresh tokens so the frontend can decode the
-    updated name claim without waiting for the next refresh cycle.
+    updated claims without waiting for the next refresh cycle.
     """
     user.name = name
+    if simple_mode is not None:
+        user.simple_mode = simple_mode
     db.flush()
 
     return {
