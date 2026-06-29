@@ -1,3 +1,42 @@
+## [0.3.0] - 2026-06-29
+
+### 🚀 Features
+
+- Add LinkPreview.net fallback for URL metadata fetching
+- Add families/family_members models and users.simple_mode (M1) (#89)
+- *(families)* Add families CRUD API with organizer-role enforcement (NEU-336) (#90)
+- *(families)* Add member leave/remove and role promote/demote endpoints (NEU-337) (#91)
+- *(access)* Add can_view_list predicate and route ViewableList through it (NEU-338) (#92)
+- *(lists)* Add filter=family to return family co-members' gift lists (#93)
+- *(families)* Unclaim gifts and drop collection items when membership ends (#94)
+- *(collections)* Gate add_item on can_view_list to allow family-visible lists (#95)
+- *(families)* Add family_invites model and M3 migration (NEU-342) (#96)
+- *(families)* Add family invites API (NEU-343) (#97)
+- *(family-invites)* Add accept/decline endpoints and incoming invite listing (NEU-344) (#98)
+- *(auth)* Support registration via family invite token (NEU-345) (#99)
+- *(auth)* Add simple_mode JWT claim and profile toggle (NEU-352) (#106)
+- *(auth)* Propagate simple_mode from family invite to new user on registration (NEU-353) (#107)
+
+### 🐛 Bug Fixes
+
+- Block list deletion when gifts are claimed (#70)
+- Use realistic User-Agent for URL metadata fetching
+- Add Walmart captcha title to useless-title blocklist
+- Delete related shares, collection items, and gifts before deleting a list
+- *(ci)* Merge main into dependency branch via PR instead of force-push
+- Support partial profile updates so simple-mode toggle works (#110)
+
+### 📚 Documentation
+
+- *(claude-md)* Document family groups + simple_mode feature (NEU-356) (#109)
+
+### 🧪 Testing
+
+- *(families)* Add edge-case tests for cascade delete and organizer guard (NEU-355) (#108)
+
+### ⚙️ Miscellaneous Tasks
+
+- Set specs_dir to docs so loop/implementit find specs+plans (NEU-355) (#105)
 ## [0.2.1] - 2026-05-25
 
 ### 🚀 Features
