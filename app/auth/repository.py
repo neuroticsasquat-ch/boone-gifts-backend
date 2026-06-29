@@ -16,12 +16,15 @@ def find_user_by_id(db: Session, user_id: int) -> User | None:
     return db.get(User, user_id)
 
 
-def create_user(db: Session, email: str, name: str, role: str, password: str) -> User:
+def create_user(
+    db: Session, email: str, name: str, role: str, password: str, simple_mode: bool = False
+) -> User:
     user = User(
         email=email,
         name=name,
         role=role,
         password_hash="",
+        simple_mode=simple_mode,
     )
     user.set_password(password)
     db.add(user)

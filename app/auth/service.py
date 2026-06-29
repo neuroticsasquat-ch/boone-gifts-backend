@@ -111,6 +111,7 @@ def register(
             name=name,
             role="member",
             password=password,
+            simple_mode=family_invite.simple_mode,
         )
         families_repo.create_family_member(
             db,

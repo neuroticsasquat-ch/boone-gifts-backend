@@ -20,6 +20,7 @@ def _seed_family_invite(
     email,
     token,
     role="member",
+    simple_mode=False,
     accepted_at=None,
     declined_at=None,
     expires_in_days=7,
@@ -33,7 +34,7 @@ def _seed_family_invite(
         family_id=family.id,
         email=email,
         role=role,
-        simple_mode=False,
+        simple_mode=simple_mode,
         token=token,
         invited_by_id=inviter.id,
         expires_at=datetime.now(timezone.utc) + timedelta(days=expires_in_days),
@@ -448,3 +449,68 @@ def test_update_profile_clears_simple_mode_when_explicitly_false(
     assert payload["simple_mode"] is False
     db.refresh(member_user)
     assert member_user.simple_mode is False
+
+
+# --- register via family invite: simple_mode inheritance ---
+
+
+def test_register_family_invite_simple_mode_true_creates_user_with_simple_mode_true(
+    client, member_user, db
+):
+    _seed_family_invite(
+        db,
+        inviter=member_user,
+        email="simplemode@test.com",
+        token="fam-sm-true",
+        simple_mode=True,
+    )
+
+    response = client.post(
+        "/auth/register",
+        json={"token": "fam-sm-true", "name": "Simple User", "password": "newpass123"},
+    )
+    assert response.status_code == 200
+
+    new_user = db.query(User).filter_by(email="simplemode@test.com").one()
+    assert new_user.simple_mode is True
+
+
+def test_register_family_invite_simple_mode_false_creates_user_with_simple_mode_false(
+    client, member_user, db
+):
+    _seed_family_invite(
+        db,
+        inviter=member_user,
+        email="nosimple@test.com",
+        token="fam-sm-false",
+        simple_mode=False,
+    )
+
+    response = client.post(
+        "/auth/register",
+        json={"token": "fam-sm-false", "name": "Normal User", "password": "newpass123"},
+    )
+    assert response.status_code == 200
+
+    new_user = db.query(User).filter_by(email="nosimple@test.com").one()
+    assert new_user.simple_mode is False
+
+
+def test_register_admin_invite_simple_mode_defaults_false(client, admin_user, db):
+    invite = Invite(
+        email="adminreg@test.com",
+        role="member",
+        expires_at=datetime.now(timezone.utc) + timedelta(days=7),
+        invited_by_id=admin_user.id,
+    )
+    db.add(invite)
+    db.flush()
+
+    response = client.post(
+        "/auth/register",
+        json={"token": invite.token, "name": "Admin Invitee", "password": "newpass123"},
+    )
+    assert response.status_code == 200
+
+    new_user = db.query(User).filter_by(email="adminreg@test.com").one()
+    assert new_user.simple_mode is False
