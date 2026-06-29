@@ -490,11 +490,12 @@ def test_remove_member_cleanup_runs_after_delete(
 
 
 @patch(f"{REPO}.delete_family_member")
+@patch(f"{REPO}.get_member_count", return_value=2)  # other members present → 409 fires
 @patch(f"{REPO}.count_organizers", return_value=1)
 @patch(f"{REPO}.get_family_member")
 @patch(f"{REPO}.get_family")
 def test_remove_member_last_organizer_raises_conflict(
-    mock_get_family, mock_get_member, mock_count, mock_delete, db
+    mock_get_family, mock_get_member, mock_count_org, mock_count_members, mock_delete, db
 ):
     mock_get_family.return_value = _make_family()
     organizer = _make_member(user_id=10, role="organizer")

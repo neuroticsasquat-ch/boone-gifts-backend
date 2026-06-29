@@ -86,8 +86,12 @@ def delete_family(db: Session, family_id: int, user_id: int) -> None:
         raise NotFoundError("Family not found.")
     membership = repo.get_family_member(db, family_id=family_id, user_id=user_id)
     if membership is None:
-        raise ForbiddenError("Not a member of this family.")
-    if membership.role != "organizer":
+        # Allow the family creator to delete an empty family after self-leaving.
+        if family.created_by_id != user_id:
+            raise ForbiddenError("Not a member of this family.")
+        if repo.get_member_count(db, family_id) > 0:
+            raise ForbiddenError("Only organizers can delete the family.")
+    elif membership.role != "organizer":
         raise ForbiddenError("Only organizers can delete the family.")
 
     member_ids = repo.get_member_user_ids(db, family_id)
@@ -110,7 +114,13 @@ def remove_member(db: Session, family_id: int, actor_id: int, target_user_id: in
         raise NotFoundError("Member not found.")
     if actor_id != target_user_id and actor.role != "organizer":
         raise ForbiddenError("Only organizers can remove other members.")
-    if target.role == "organizer" and repo.count_organizers(db, family_id) == 1:
+    # Block only when there are other members who would be left without an organizer.
+    # A sole-organizer who is also the sole remaining member may self-leave (family becomes empty).
+    if (
+        target.role == "organizer"
+        and repo.count_organizers(db, family_id) == 1
+        and repo.get_member_count(db, family_id) > 1
+    ):
         raise ConflictError("Cannot remove the last organizer.")
 
     co_member_ids = [
