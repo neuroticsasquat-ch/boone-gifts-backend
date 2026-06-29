@@ -209,7 +209,7 @@ def change_password(
 def update_profile(
     db: Session, user, name: str, simple_mode: bool | None = None
 ) -> dict:
-    """Update a logged-in user's profile name (and optionally simple_mode) and issue fresh tokens.
+    """Update a profile name (and optionally simple_mode) and issue fresh tokens.
 
     Returns new access + refresh tokens so the frontend can decode the
     updated claims without waiting for the next refresh cycle.

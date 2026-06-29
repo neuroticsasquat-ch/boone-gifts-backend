@@ -473,3 +473,10 @@ def test_update_profile_does_not_change_simple_mode_when_not_provided():
     user = _make_user(simple_mode=True)
     service.update_profile(db, user, "Test Name")
     assert user.simple_mode is True
+
+
+def test_update_profile_clears_simple_mode_when_explicitly_false():
+    db = MagicMock()
+    user = _make_user(simple_mode=True)
+    service.update_profile(db, user, "Test Name", simple_mode=False)
+    assert user.simple_mode is False
