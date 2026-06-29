@@ -56,9 +56,10 @@ app/
   config.py          # Settings via pydantic-settings (APP_ env prefix, .env file)
   database.py        # SQLAlchemy engine, sessionmaker, Base
   dependencies.py    # get_db, JWT token creation, get_current_user, require_admin, list/collection access deps, require_connection
+  access.py          # Shared visibility predicate: can_view_list, users_share_access
   models/
-    __init__.py      # Exports User, Invite, GiftList, Gift, ListShare, Connection, Collection, CollectionItem
-    user.py          # User model (email, name, password_hash, role, is_active)
+    __init__.py      # Exports User, Invite, GiftList, Gift, ListShare, Connection, Collection, CollectionItem, PasswordResetToken, Family, FamilyMember, FamilyInvite
+    user.py          # User model (email, name, password_hash, role, is_active, simple_mode)
     invite.py        # Invite model (token, email, role, expires_at, used_at)
     gift_list.py     # GiftList model (name, description, owner_id, owner relationship)
     gift.py          # Gift model (name, description, url, price, claim tracking)
@@ -66,6 +67,9 @@ app/
     connection.py    # Connection model (requester_id, addressee_id, status, unique constraint)
     collection.py    # Collection model (name, description, owner_id)
     collection_item.py # CollectionItem model (collection_id, list_id, unique constraint)
+    family.py        # Family model (name, created_by_id)
+    family_member.py # FamilyMember model (family_id, user_id, role, unique constraint)
+    family_invite.py # FamilyInvite model (family_id, email, token, role, simple_mode, invited_by_id, accepted_at, declined_at)
   schemas/
     __init__.py
     user.py          # UserRead, UserUpdate
@@ -77,12 +81,14 @@ app/
     connection.py    # ConnectionCreate, ConnectionUserRead, ConnectionRead
     collection.py    # CollectionCreate, CollectionUpdate, CollectionRead, CollectionDetail, CollectionItemCreate
     meta.py          # UrlMetaResponse
+    family.py        # FamilyCreate, FamilyUpdate, FamilyRead, FamilyDetail, FamilyMemberRoleUpdate
+    family_invite.py # FamilyInviteCreate, FamilyInviteRead, IncomingFamilyInviteRead
   services/
     __init__.py
     exceptions.py    # Shared domain exceptions (NotFoundError, ForbiddenError, ConflictError, BadRequestError)
   auth/              # Each domain package has router.py, service.py, repository.py
-    router.py        # POST /auth/login, /auth/register, /auth/refresh, /auth/logout
-    service.py       # Login, registration, refresh token validation
+    router.py        # POST /auth/login, /auth/register, /auth/refresh, /auth/logout; PUT /auth/profile
+    service.py       # Login, registration, refresh token validation, profile update (name + simple_mode)
     repository.py    # User/invite lookups for auth
   users/
     router.py        # GET/PUT/DELETE /users (admin-only)
@@ -112,6 +118,14 @@ app/
     router.py        # POST/GET/PUT/DELETE /collections, POST/DELETE items
     service.py       # Collection CRUD, add/remove items with access checks
     repository.py    # Collection and collection item queries
+  families/
+    router.py        # POST/GET/PUT/DELETE /families, DELETE members, PUT member role
+    service.py       # Family CRUD, membership management, cascade cleanup on leave/remove/delete
+    repository.py    # Family queries; family_ids_for_user, users_share_family, get_member_user_ids
+  family_invites/
+    router.py        # POST/GET/DELETE /families/{id}/invites, GET /families/invites, POST accept/decline
+    service.py       # Invite creation, accept (adds member + sets simple_mode), decline, revoke
+    repository.py    # FamilyInvite queries
   meta/
     router.py        # GET /meta — fetch URL metadata
     service.py       # URL validation, SSRF protection, HTML parsing, metadata extraction
@@ -126,18 +140,21 @@ tests/
   unit/
     services/        # Unit tests for each domain service (mocked repo, no database)
       test_auth.py, test_users.py, test_invites.py, test_lists.py, test_gifts.py,
-      test_shares.py, test_connections.py, test_collections.py, test_meta.py
+      test_shares.py, test_connections.py, test_collections.py, test_meta.py,
+      test_families.py, test_family_invites.py, test_access.py
+    schemas/         # Schema-level unit tests (test_family_invite_schema.py)
   integration/
     conftest.py      # Test fixtures: db, client, users, tokens, headers, sample data
-    models/          # Model integration tests (user, invite, gift_list, gift, list_share, connection, collection)
-    routers/         # Endpoint integration tests (auth, users, invites, lists, gifts, list_shares, connections, collections, meta)
+    models/          # Model integration tests (user, invite, gift_list, gift, list_share, connection, collection, family, family_invite)
+    routers/         # Endpoint integration tests (auth, users, invites, lists, gifts, list_shares, connections, collections, meta, families, family_invites)
+    test_access.py   # Cross-cutting access model integration tests
 ```
 
 ## App Entrypoint
 Top-level `main.py` imports `app` from `app.main`. The app factory (`create_app()`) sets up CORS middleware, includes all routers, and adds a `/health` endpoint that queries the database with `SELECT 1` (returns 503 on failure). Uvicorn serves it as `main:app` on port 8000.
 
 ## Authentication & Authorization
-- **Access token**: JWT HS256, 30 min TTL, contains user id/email/role, returned in JSON body
+- **Access token**: JWT HS256, 30 min TTL, contains user id/email/role/simple_mode, returned in JSON body
 - **Refresh token**: JWT HS256, 7 day TTL, contains user id + type="refresh", stored in HttpOnly cookie (`boone_refresh_token`, `Secure`, `SameSite=None`, `Path=/auth`)
 - **Token rotation**: Each call to `/auth/refresh` sets a new cookie
 - **Logout**: `POST /auth/logout` deletes the cookie
@@ -145,10 +162,12 @@ Top-level `main.py` imports `app` from `app.main`. The app factory (`create_app(
 - **Password hashing**: bcrypt
 - **Route protection**: `get_current_user` (401 if invalid), `require_admin` (403 if not admin)
 - **Defense in depth**: `get_current_user` rejects refresh tokens and checks `is_active` — inactive users cannot authenticate even with a valid token
-- **Registration**: Invite-only — the registrant's email comes from the invite record, not the request body
+- **Registration**: Invite-only — email comes from the invite record (admin invite or family invite), not the request body; accepting a family invite also sets `simple_mode` from the invite
 - **First admin**: Created via `taskcreate-admin`
-- **Gift list access**: `get_list_for_owner` (403 if not owner), `get_list_for_viewer` (403 if not owner or shared)
+- **Gift list access**: `get_list_for_owner` (403 if not owner), `get_list_for_viewer` uses `can_view_list` from `app/access.py`
 - **Gift responses**: `GiftOwnerRead` (no claim fields) for owners, `GiftRead` (with claim fields) for shared users
+- **simple_mode**: Boolean user preference (DB column `users.simple_mode`, default false); included as a JWT claim; toggle via `PUT /auth/profile`. DB is authoritative — `get_current_user` re-reads `simple_mode` from the database, not the token.
+- **Profile update**: `PUT /auth/profile { name?, simple_mode? }` — returns fresh access + refresh tokens
 
 ## Environment Variables
 
@@ -159,8 +178,52 @@ Top-level `main.py` imports `app` from `app.main`. The app factory (`create_app(
 | `APP_JWT_SECRET` | Secret key for JWT signing |
 | `APP_CORS_ORIGINS` | Allowed CORS origins (JSON array) |
 
+## Family Groups
+
+Family groups are an alternative visibility path for gift lists. Members of the same family can see each other's lists without an explicit `ListShare` row or a direct connection.
+
+### Data model
+- **`families`** table: id, name, created_by_id
+- **`family_members`** table: family_id, user_id, role (`organizer` | `member`), joined_at — unique (family_id, user_id)
+- **`family_invites`** table: family_id, email, token (UUID), role, simple_mode, invited_by_id, created_at, accepted_at, declined_at — pending until accepted or declined
+
+### Family API endpoints (`/families`)
+- `POST /families` — create a new family (caller becomes organizer)
+- `GET /families` — list families the current user belongs to
+- `GET /families/{id}` — get family detail (members list)
+- `PUT /families/{id}` — rename (organizer only)
+- `DELETE /families/{id}` — delete family + cascade cleanup (organizer only)
+- `DELETE /families/{id}/members/{user_id}` — leave (self) or remove (organizer)
+- `PUT /families/{id}/members/{user_id}/role` — promote/demote between `member` and `organizer` (organizer only)
+
+### Family invite endpoints
+- `POST /families/{id}/invites` — create invite by email, with optional `role` and `simple_mode` (organizer only)
+- `GET /families/{id}/invites` — list pending outgoing invites for a family (organizer only)
+- `DELETE /families/{id}/invites/{invite_id}` — revoke a pending invite (organizer only)
+- `GET /families/invites` — list pending incoming invites for the current user
+- `POST /families/invites/{token}/accept` — join the family; propagates `simple_mode` from invite to user
+- `POST /families/invites/{token}/decline` — decline without joining
+
+### List filter
+- `GET /lists?filter=family` — returns lists owned by co-family-members (not owned or directly shared)
+
+## Migrations
+
+Alembic migration files in `alembic/versions/`:
+
+| Migration ID | Description |
+|---|---|
+| `f473fa3b8a40` | Initial schema |
+| `e9730fad709a` | Add `seen_at` to `list_shares` |
+| `e721ca9a6ebf` | Add `is_archived` to lists and collections |
+| `a1b2c3d4e5f6` | Add `purchased_at` to gifts |
+| `73e1a8c85058` | Add `password_reset_tokens` table + `users.password_changed_at` column |
+| `bb79d1d4eacb` | Add `families`, `family_members` tables + `users.simple_mode` column |
+| `95844ef3641f` | Add `family_invites` table |
+| `13861325bacf` | Add `declined_at` to `family_invites` |
+
 ## Testing
-- 238 tests: 93 unit + 145 integration
+- ~569 tests: ~239 unit + ~330 integration (counted via `grep -c "def test_"` across test files)
 - Unit tests (`tests/unit/`) mock the repo layer and test service logic in isolation
 - Integration tests (`tests/integration/`) run against the SQLite test database
 - Each integration test wrapped in a transaction that rolls back (no persistent test data)
@@ -173,4 +236,7 @@ Top-level `main.py` imports `app` from `app.main`. The app factory (`create_app(
 - After adding deps with `task add`, run `task up` to rebuild the image so deps persist across container recreations
 - SQLite foreign keys are enabled via a SQLAlchemy event listener on every connection (PRAGMA foreign_keys=ON) — this is required because SQLite disables FK enforcement by default
 - Alembic uses render_as_batch=True for SQLite compatibility — SQLite doesn't support most ALTER TABLE operations, so batch mode recreates tables
-- **Domain package architecture** — each domain (auth, users, invites, lists, gifts, shares, connections, collections, meta) is a package with `router.py` (thin HTTP wrapper), `service.py` (business logic, raises domain exceptions), and `repository.py` (database queries). Shared exceptions live in `app/services/exceptions.py`.
+- **Domain package architecture** — each domain (auth, users, invites, lists, gifts, shares, connections, collections, meta, families, family_invites) is a package with `router.py` (thin HTTP wrapper), `service.py` (business logic, raises domain exceptions), and `repository.py` (database queries). Shared exceptions live in `app/services/exceptions.py`.
+- **List visibility model (Approach B)** — `can_view_list` in `app/access.py` computes visibility as: owner OR has a `ListShare` row OR shares a family with the owner. A connection alone does NOT grant list visibility. Claims and collection-item gating both route through `can_view_list`, so family-visible lists work transparently for those operations without additional changes.
+- **Family cascade cleanup** — when a member leaves, is removed, or a family is deleted, the service calls `unclaim_gifts_between` / `delete_collection_items_between` (from the connections repository) for each affected pair. Cleanup only fires if the two users no longer share access via any remaining path (no accepted connection and no other common family). `list_shares` rows are not touched — family access never creates share rows.
+- **Family invite accept + simple_mode propagation** — accepting a family invite via `POST /families/invites/{token}/accept` adds the user as a family member and sets `users.simple_mode` to the value recorded on the invite. If the invitee is a new user registering via the family invite token, `simple_mode` is applied at account creation time.
