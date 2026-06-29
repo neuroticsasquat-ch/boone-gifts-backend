@@ -1,3 +1,65 @@
+from types import SimpleNamespace
+
+import pytest
+
+from app.dependencies import create_access_token
+from app.models.family import Family
+from app.models.family_member import FamilyMember
+from app.models.gift_list import GiftList
+from app.models.list_share import ListShare
+from app.models.user import User
+
+
+def _auth(user):
+    return {"Authorization": f"Bearer {create_access_token(user)}"}
+
+
+@pytest.fixture
+def family_world(db):
+    """Caller U; family F1 = {U, P}; family F2 = {U, P, Q}.
+    P owns L_p (active) + L_p_archived; Q owns L_q; U owns L_u.
+    L_p is ALSO manually shared with U."""
+
+    def mkuser(email, name):
+        u = User(email=email, name=name, role="member", password_hash="x")
+        u.set_password("pw123456")
+        db.add(u)
+        db.flush()
+        return u
+
+    u = mkuser("u@test.com", "Caller U")
+    p = mkuser("p@test.com", "Owner P")
+    q = mkuser("q@test.com", "Owner Q")
+
+    f1 = Family(name="F1 Family", created_by_id=u.id)
+    f2 = Family(name="F2 Family", created_by_id=u.id)
+    db.add_all([f1, f2])
+    db.flush()
+    db.add_all(
+        [
+            FamilyMember(family_id=f1.id, user_id=u.id, role="organizer"),
+            FamilyMember(family_id=f1.id, user_id=p.id, role="member"),
+            FamilyMember(family_id=f2.id, user_id=u.id, role="organizer"),
+            FamilyMember(family_id=f2.id, user_id=p.id, role="member"),
+            FamilyMember(family_id=f2.id, user_id=q.id, role="member"),
+        ]
+    )
+
+    l_u = GiftList(name="U's List", owner_id=u.id)
+    l_p = GiftList(name="P's List", owner_id=p.id)
+    l_p_arch = GiftList(name="P's Archived", owner_id=p.id, is_archived=True)
+    l_q = GiftList(name="Q's List", owner_id=q.id)
+    db.add_all([l_u, l_p, l_p_arch, l_q])
+    db.flush()
+
+    db.add(ListShare(list_id=l_p.id, user_id=u.id))  # L_p also manually shared with U
+    db.flush()
+
+    return SimpleNamespace(
+        u=u, p=p, q=q, f1=f1, f2=f2, l_u=l_u, l_p=l_p, l_p_arch=l_p_arch, l_q=l_q
+    )
+
+
 def test_create_list(client, member_user, member_headers):
     response = client.post(
         "/lists",
@@ -152,3 +214,66 @@ def test_list_archived_filter(client, member_headers, sample_list, db):
     assert response.status_code == 200
     assert len(response.json()) == 1
     assert response.json()[0]["is_archived"] is True
+
+
+def test_filter_family_returns_comembers_active_lists(client, family_world):
+    w = family_world
+    resp = client.get("/lists?filter=family", headers=_auth(w.u))
+    assert resp.status_code == 200
+    names = {l["name"] for l in resp.json()}
+    assert names == {"P's List", "Q's List"}  # co-members' active lists only
+    assert "U's List" not in names  # own list excluded
+    assert "P's Archived" not in names  # archived excluded by default
+
+
+def test_filter_family_annotates_all_shared_families(client, family_world):
+    w = family_world
+    data = {l["name"]: l for l in client.get(
+        "/lists?filter=family", headers=_auth(w.u)
+    ).json()}
+    # P shares both F1 and F2 with U -> P's list annotated with both (order-agnostic).
+    assert sorted(f["name"] for f in data["P's List"]["families"]) == [
+        "F1 Family",
+        "F2 Family",
+    ]
+    # Q shares only F2 with U.
+    assert sorted(f["name"] for f in data["Q's List"]["families"]) == ["F2 Family"]
+
+
+def test_filter_family_includes_list_also_manually_shared(client, family_world):
+    w = family_world
+    fam = {l["name"] for l in client.get(
+        "/lists?filter=family", headers=_auth(w.u)
+    ).json()}
+    shared = {l["name"] for l in client.get(
+        "/lists?filter=shared", headers=_auth(w.u)
+    ).json()}
+    assert "P's List" in fam  # appears under family
+    assert "P's List" in shared  # AND under shared (independent views)
+
+
+def test_filter_family_archived_returns_archived_only(client, family_world):
+    w = family_world
+    resp = client.get("/lists?filter=family&archived=true", headers=_auth(w.u))
+    assert resp.status_code == 200
+    assert {l["name"] for l in resp.json()} == {"P's Archived"}
+
+
+def test_filter_family_empty_for_non_member(client, member_user, member_headers):
+    # member_user belongs to no family.
+    resp = client.get("/lists?filter=family", headers=member_headers)
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_filter_shared_has_empty_families_annotation(client, family_world):
+    w = family_world
+    resp = client.get("/lists?filter=shared", headers=_auth(w.u))
+    assert resp.status_code == 200
+    for l in resp.json():
+        assert l["families"] == []
+
+
+def test_filter_invalid_value_rejected(client, member_headers):
+    resp = client.get("/lists?filter=bogus", headers=member_headers)
+    assert resp.status_code == 422

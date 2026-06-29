@@ -4,15 +4,14 @@ from typing import Annotated
 import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.access import can_view_list
 from app.config import settings
 from app.connections.repository import find_accepted_connection_between
 from app.database import SessionLocal
 from app.models.collection import Collection
 from app.models.user import User
-from app.models.list_share import ListShare
 from app.models.gift_list import GiftList
 
 
@@ -40,6 +39,7 @@ def create_access_token(user: User, *, iat: datetime | None = None) -> str:
         "email": user.email,
         "name": user.name,
         "role": user.role,
+        "simple_mode": user.simple_mode,
         "iat": issued_at,
         "exp": issued_at + timedelta(minutes=settings.access_token_expire_minutes),
     }
@@ -122,15 +122,7 @@ def get_list_for_viewer(
     gift_list = db.get(GiftList, list_id)
     if gift_list is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
-    if gift_list.owner_id == user.id:
-        return gift_list
-    share = db.execute(
-        select(ListShare).where(
-            ListShare.list_id == list_id,
-            ListShare.user_id == user.id,
-        )
-    ).scalar_one_or_none()
-    if share is None:
+    if not can_view_list(db, user, gift_list):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
     return gift_list
 

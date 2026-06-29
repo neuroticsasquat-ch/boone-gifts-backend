@@ -160,7 +160,7 @@ def update_profile(
     user: CurrentUser,
     db: DbSession,
 ):
-    tokens = auth_service.update_profile(db, user, body.name)
+    tokens = auth_service.update_profile(db, user, body.name, body.simple_mode)
     set_refresh_cookie(response, tokens["refresh_token"])
     return AccessTokenResponse(access_token=tokens["access_token"])
 

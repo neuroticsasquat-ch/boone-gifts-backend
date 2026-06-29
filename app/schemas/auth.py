@@ -15,6 +15,7 @@ class RegisterRequest(BaseModel):
 
 class InviteInfoResponse(BaseModel):
     email: str
+    family_name: str | None = None
 
 
 class AccessTokenResponse(BaseModel):
@@ -37,7 +38,8 @@ class ChangePasswordRequest(BaseModel):
 
 
 class UpdateProfileRequest(BaseModel):
-    name: str
+    name: str | None = None
+    simple_mode: bool | None = None
 
 
 class GenericMessageResponse(BaseModel):
