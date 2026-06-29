@@ -55,6 +55,7 @@ def _make_family_invite(
     accepted_at: datetime | None = None,
     declined_at: datetime | None = None,
     expires_in_days: int = 7,
+    simple_mode: bool = False,
 ) -> MagicMock:
     # spec=FamilyInvite makes unset attrs truthy mocks, so set accepted_at /
     # declined_at explicitly — _family_invite_registerable depends on them.
@@ -66,6 +67,7 @@ def _make_family_invite(
     invite.accepted_at = accepted_at
     invite.declined_at = declined_at
     invite.expires_at = datetime.now(timezone.utc) + timedelta(days=expires_in_days)
+    invite.simple_mode = simple_mode
     return invite
 
 
@@ -230,7 +232,12 @@ def test_register_family_invite_creates_member_and_membership(
     result = service.register(db, "fam-token", "New Member", "password123")
 
     mock_create_user.assert_called_once_with(
-        db, email="newmember@test.com", name="New Member", role="member", password="password123"
+        db,
+        email="newmember@test.com",
+        name="New Member",
+        role="member",
+        password="password123",
+        simple_mode=False,
     )
     mock_create_member.assert_called_once_with(
         db, family_id=3, user_id=42, role="organizer"
@@ -238,6 +245,64 @@ def test_register_family_invite_creates_member_and_membership(
     assert invite.accepted_at is not None
     assert "access_token" in result
     assert "refresh_token" in result
+
+
+@patch(f"{FAMILIES_REPO}.create_family_member")
+@patch(f"{REPO}.create_user")
+@patch(f"{REPO}.find_user_by_email", return_value=None)
+@patch(f"{FAMILY_INVITES_REPO}.get_invite_by_token")
+@patch(f"{REPO}.find_invite_by_token", return_value=None)
+def test_register_family_invite_passes_simple_mode_true_to_create_user(
+    mock_find_admin,
+    mock_get_family_invite,
+    mock_find_user,
+    mock_create_user,
+    mock_create_member,
+):
+    db = MagicMock()
+    invite = _make_family_invite(simple_mode=True)
+    mock_get_family_invite.return_value = invite
+    mock_create_user.return_value = _make_user(simple_mode=True)
+
+    service.register(db, "fam-token", "New Member", "password123")
+
+    mock_create_user.assert_called_once_with(
+        db,
+        email=invite.email,
+        name="New Member",
+        role="member",
+        password="password123",
+        simple_mode=True,
+    )
+
+
+@patch(f"{FAMILIES_REPO}.create_family_member")
+@patch(f"{REPO}.create_user")
+@patch(f"{REPO}.find_user_by_email", return_value=None)
+@patch(f"{FAMILY_INVITES_REPO}.get_invite_by_token")
+@patch(f"{REPO}.find_invite_by_token", return_value=None)
+def test_register_family_invite_passes_simple_mode_false_to_create_user(
+    mock_find_admin,
+    mock_get_family_invite,
+    mock_find_user,
+    mock_create_user,
+    mock_create_member,
+):
+    db = MagicMock()
+    invite = _make_family_invite(simple_mode=False)
+    mock_get_family_invite.return_value = invite
+    mock_create_user.return_value = _make_user(simple_mode=False)
+
+    service.register(db, "fam-token", "New Member", "password123")
+
+    mock_create_user.assert_called_once_with(
+        db,
+        email=invite.email,
+        name="New Member",
+        role="member",
+        password="password123",
+        simple_mode=False,
+    )
 
 
 @patch(f"{FAMILIES_REPO}.create_family_member")
