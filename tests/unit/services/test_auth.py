@@ -545,3 +545,12 @@ def test_update_profile_clears_simple_mode_when_explicitly_false():
     user = _make_user(simple_mode=True)
     service.update_profile(db, user, "Test Name", simple_mode=False)
     assert user.simple_mode is False
+
+
+def test_update_profile_simple_mode_only_preserves_name():
+    db = MagicMock()
+    user = _make_user(simple_mode=False)
+    user.name = "Original Name"
+    service.update_profile(db, user, simple_mode=True)
+    assert user.simple_mode is True
+    assert user.name == "Original Name"

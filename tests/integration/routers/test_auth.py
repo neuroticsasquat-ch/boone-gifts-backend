@@ -428,6 +428,29 @@ def test_update_profile_name_only_preserves_simple_mode(client, member_user, mem
     assert member_user.simple_mode is True
 
 
+def test_update_profile_simple_mode_only_preserves_name(
+    client, member_user, member_headers, db
+):
+    original_name = member_user.name
+
+    response = client.put(
+        "/auth/profile",
+        json={"simple_mode": True},
+        headers=member_headers,
+    )
+    assert response.status_code == 200
+    payload = jwt.decode(
+        response.json()["access_token"],
+        settings.jwt_secret,
+        algorithms=[settings.jwt_algorithm],
+        options={"verify_iat": False},
+    )
+    assert payload["simple_mode"] is True
+    db.refresh(member_user)
+    assert member_user.simple_mode is True
+    assert member_user.name == original_name
+
+
 def test_update_profile_clears_simple_mode_when_explicitly_false(
     client, member_user, member_headers, db
 ):
