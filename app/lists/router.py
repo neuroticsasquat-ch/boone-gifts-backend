@@ -24,7 +24,7 @@ def create_list(request: GiftListCreate, user: CurrentUser, db: DbSession):
 def list_lists(
     user: CurrentUser,
     db: DbSession,
-    filter: str | None = Query(default=None, pattern="^(owned|shared)$"),
+    filter: str | None = Query(default=None, pattern="^(owned|shared|family)$"),
     archived: bool = Query(default=False),
 ):
     return list_service.get_lists(db, user_id=user.id, filter=filter, archived=archived)

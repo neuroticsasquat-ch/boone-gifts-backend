@@ -1,4 +1,6 @@
 import sentry_sdk
+from sentry_sdk.integrations.fastapi import FastApiIntegration
+from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi.errors import RateLimitExceeded
@@ -16,6 +18,8 @@ from app.shares import router as shares
 from app.connections import router as connections
 from app.collections import router as collections_
 from app.meta import router as meta
+from app.families import router as families
+from app.family_invites import router as family_invites
 
 
 def create_app() -> FastAPI:
@@ -25,6 +29,11 @@ def create_app() -> FastAPI:
             environment=settings.sentry_environment,
             release=settings.sentry_release or None,
             send_default_pii=False,
+            traces_sample_rate=0.1,
+            integrations=[
+                FastApiIntegration(),
+                SqlalchemyIntegration(),
+            ],
         )
 
     application = FastAPI(title="Boone Gifts API")
@@ -49,6 +58,8 @@ def create_app() -> FastAPI:
     application.include_router(connections.router)
     application.include_router(collections_.router)
     application.include_router(meta.router)
+    application.include_router(family_invites.router)
+    application.include_router(families.router)
 
     @application.get("/health")
     def health():

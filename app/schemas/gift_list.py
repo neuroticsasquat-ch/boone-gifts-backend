@@ -3,6 +3,8 @@ from decimal import Decimal
 
 from pydantic import BaseModel, model_validator
 
+from app.schemas.family import FamilyRef
+
 
 class GiftListCreate(BaseModel):
     name: str
@@ -51,6 +53,7 @@ class GiftListRead(BaseModel):
     is_archived: bool
     gift_count: int = 0
     claimed_count: int = 0
+    families: list[FamilyRef] = []
     created_at: datetime
     updated_at: datetime
 
@@ -70,6 +73,7 @@ class GiftListRead(BaseModel):
                 "is_archived": data.is_archived,
                 "gift_count": len(gifts),
                 "claimed_count": sum(1 for g in gifts if g.claimed_by_id is not None),
+                "families": getattr(data, "families", []),
                 "created_at": data.created_at,
                 "updated_at": data.updated_at,
             }

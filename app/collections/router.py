@@ -62,7 +62,7 @@ def add_item(
 ):
     try:
         collection_service.add_item(
-            db, collection=collection, list_id=request.list_id, user_id=user.id
+            db, collection=collection, list_id=request.list_id, user=user
         )
     except NotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
