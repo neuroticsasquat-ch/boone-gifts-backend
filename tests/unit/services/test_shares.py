@@ -24,10 +24,13 @@ def _make_user(id: int, name: str = "Test", email: str = "test@test.com", is_act
     return user
 
 
-def _make_gift_list(id: int, name: str = "My List") -> MagicMock:
+def _make_gift_list(
+    id: int, name: str = "My List", recipient_name: str | None = None
+) -> MagicMock:
     gl = MagicMock(spec=GiftList)
     gl.id = id
     gl.name = name
+    gl.recipient_name = recipient_name
     return gl
 
 
@@ -180,3 +183,61 @@ def test_delete_share_cascades_collection_items(mock_find, mock_delete, mock_ite
     mock_del_item.assert_any_call(db, item1)
     mock_del_item.assert_any_call(db, item2)
     assert mock_del_item.call_count == 2
+
+
+# --- share email possessive (NEU-1216) ---
+
+
+def _share_world(gift_list):
+    db = MagicMock()
+    recipient = _make_user(2, "Bob", "bob@test.com")
+    sharer = _make_user(10, "Tom", "tom@test.com")
+
+    def db_get_side_effect(model, id_):
+        if model is User and id_ == 2:
+            return recipient
+        if model is User and id_ == 10:
+            return sharer
+        if model is GiftList and id_ == 1:
+            return gift_list
+        return None
+
+    db.get.side_effect = db_get_side_effect
+    return db
+
+
+@patch(SEND_EMAIL)
+@patch(f"{REPO}.create_share")
+@patch(f"{REPO}.find_share", return_value=None)
+@patch(CONN_REPO)
+def test_share_email_uses_recipient_possessive(
+    mock_conn, mock_find, mock_create, mock_send
+):
+    mock_conn.return_value = MagicMock()
+    mock_create.return_value = MagicMock(spec=ListShare)
+    db = _share_world(_make_gift_list(1, "Christmas Ideas", recipient_name="Beth"))
+
+    service.create_share(db, list_id=1, user_id=2, current_user_id=10)
+
+    body = mock_send.call_args.kwargs["text"]
+    assert "Tom shared Beth's list \"Christmas Ideas\"" in body
+    assert "their list" not in body
+
+
+@patch(SEND_EMAIL)
+@patch(f"{REPO}.create_share")
+@patch(f"{REPO}.find_share", return_value=None)
+@patch(CONN_REPO)
+def test_share_email_falls_back_to_their_list(
+    mock_conn, mock_find, mock_create, mock_send
+):
+    mock_conn.return_value = MagicMock()
+    mock_create.return_value = MagicMock(spec=ListShare)
+    db = _share_world(_make_gift_list(1, "Christmas Ideas"))
+
+    service.create_share(db, list_id=1, user_id=2, current_user_id=10)
+
+    kwargs = mock_send.call_args.kwargs
+    assert "Tom shared their list \"Christmas Ideas\"" in kwargs["text"]
+    # The subject is about who did the sharing either way.
+    assert kwargs["subject"] == "Tom shared a list with you on Boone Gifts"

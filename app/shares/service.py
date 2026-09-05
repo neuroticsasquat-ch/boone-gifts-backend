@@ -42,6 +42,7 @@ def create_share(
             sharer_name=sharer.name,
             list_name=gift_list.name,
             list_url=list_url,
+            recipient_name=gift_list.recipient_name,
         )
         send_email(to=recipient.email, subject=subject, html=html, text=text)
 

@@ -288,3 +288,157 @@ def test_filter_shared_has_empty_families_annotation(client, family_world):
 def test_filter_invalid_value_rejected(client, member_headers):
     resp = client.get("/lists?filter=bogus", headers=member_headers)
     assert resp.status_code == 422
+
+
+# --- recipient fields (NEU-1216) ---
+
+
+def test_create_list_with_recipient(client, member_user, member_headers):
+    response = client.post(
+        "/lists",
+        headers=member_headers,
+        json={
+            "name": "Christmas Ideas",
+            "recipient_name": "Beth",
+            "recipient_has_account": False,
+        },
+    )
+    assert response.status_code == 201
+    data = response.json()
+    assert data["recipient_name"] == "Beth"
+    assert data["recipient_has_account"] is False
+    assert data["owner_id"] == member_user.id
+
+
+def test_create_list_without_recipient_leaves_both_null(client, member_headers):
+    response = client.post(
+        "/lists", headers=member_headers, json={"name": "My own list"}
+    )
+    assert response.status_code == 201
+    data = response.json()
+    assert data["recipient_name"] is None
+    assert data["recipient_has_account"] is None
+
+
+def test_create_list_normalizes_recipient_name(client, member_headers):
+    response = client.post(
+        "/lists",
+        headers=member_headers,
+        json={"name": "L", "recipient_name": " Beth ", "recipient_has_account": True},
+    )
+    assert response.status_code == 201
+    assert response.json()["recipient_name"] == "Beth"
+
+
+def test_create_list_whitespace_recipient_name_becomes_null(client, member_headers):
+    response = client.post(
+        "/lists", headers=member_headers, json={"name": "L", "recipient_name": "   "}
+    )
+    assert response.status_code == 201
+    assert response.json()["recipient_name"] is None
+
+
+def test_create_list_flag_without_name_rejected(client, member_headers):
+    response = client.post(
+        "/lists",
+        headers=member_headers,
+        json={"name": "L", "recipient_has_account": False},
+    )
+    assert response.status_code == 422
+
+
+def test_update_list_sets_recipient(client, member_headers, sample_list):
+    response = client.put(
+        f"/lists/{sample_list.id}",
+        headers=member_headers,
+        json={"recipient_name": "Jane", "recipient_has_account": True},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["recipient_name"] == "Jane"
+    assert data["recipient_has_account"] is True
+
+
+def test_update_list_clears_recipient(client, member_headers, sample_list, db):
+    sample_list.recipient_name = "Beth"
+    sample_list.recipient_has_account = False
+    db.flush()
+
+    response = client.put(
+        f"/lists/{sample_list.id}",
+        headers=member_headers,
+        json={"recipient_name": None, "recipient_has_account": None},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["recipient_name"] is None
+    assert data["recipient_has_account"] is None
+
+
+def test_update_list_name_only_leaves_recipient_untouched(
+    client, member_headers, sample_list, db
+):
+    sample_list.recipient_name = "Beth"
+    sample_list.recipient_has_account = False
+    db.flush()
+
+    response = client.put(
+        f"/lists/{sample_list.id}", headers=member_headers, json={"name": "Renamed"}
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["name"] == "Renamed"
+    assert data["recipient_name"] == "Beth"
+    assert data["recipient_has_account"] is False
+
+
+def test_update_list_flag_without_name_rejected(client, member_headers, sample_list):
+    response = client.put(
+        f"/lists/{sample_list.id}",
+        headers=member_headers,
+        json={"recipient_has_account": True},
+    )
+    assert response.status_code == 422
+
+
+def test_list_collection_endpoint_returns_recipient_fields(
+    client, member_headers, sample_list, db
+):
+    # compute_counts builds an explicit dict; a missing key silently nulls the field.
+    sample_list.recipient_name = "Beth"
+    sample_list.recipient_has_account = False
+    db.flush()
+
+    response = client.get("/lists?filter=owned", headers=member_headers)
+    assert response.status_code == 200
+    row = response.json()[0]
+    assert row["recipient_name"] == "Beth"
+    assert row["recipient_has_account"] is False
+
+
+def test_owner_detail_returns_recipient_fields(
+    client, member_headers, sample_list, db
+):
+    sample_list.recipient_name = "Beth"
+    sample_list.recipient_has_account = False
+    db.flush()
+
+    response = client.get(f"/lists/{sample_list.id}", headers=member_headers)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["recipient_name"] == "Beth"
+    assert data["recipient_has_account"] is False
+
+
+def test_viewer_detail_returns_recipient_fields(
+    client, admin_headers, shared_list, db
+):
+    shared_list.recipient_name = "Beth"
+    shared_list.recipient_has_account = False
+    db.flush()
+
+    response = client.get(f"/lists/{shared_list.id}", headers=admin_headers)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["recipient_name"] == "Beth"
+    assert data["recipient_has_account"] is False

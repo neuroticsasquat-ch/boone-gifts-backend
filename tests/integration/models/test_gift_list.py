@@ -34,3 +34,51 @@ def test_create_gift_list_no_description(db):
 
     assert gift_list.id is not None
     assert gift_list.description is None
+
+
+def test_gift_list_defaults_have_no_recipient(db):
+    owner = User(email="owner-nr@test.com", name="Owner", password_hash="h")
+    db.add(owner)
+    db.flush()
+
+    gift_list = GiftList(name="Mine", owner_id=owner.id)
+    db.add(gift_list)
+    db.flush()
+
+    assert gift_list.recipient_name is None
+    assert gift_list.recipient_has_account is None
+    assert gift_list.kept_for_absent_person is False
+
+
+def test_kept_for_absent_person_false_when_recipient_has_account(db):
+    owner = User(email="owner-ha@test.com", name="Owner", password_hash="h")
+    db.add(owner)
+    db.flush()
+
+    gift_list = GiftList(
+        name="Jane's list",
+        owner_id=owner.id,
+        recipient_name="Jane",
+        recipient_has_account=True,
+    )
+    db.add(gift_list)
+    db.flush()
+
+    assert gift_list.kept_for_absent_person is False
+
+
+def test_kept_for_absent_person_true_only_for_named_absent_recipient(db):
+    owner = User(email="owner-abs@test.com", name="Owner", password_hash="h")
+    db.add(owner)
+    db.flush()
+
+    gift_list = GiftList(
+        name="Beth's list",
+        owner_id=owner.id,
+        recipient_name="Beth",
+        recipient_has_account=False,
+    )
+    db.add(gift_list)
+    db.flush()
+
+    assert gift_list.kept_for_absent_person is True
