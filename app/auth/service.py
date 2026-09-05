@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.auth import repository as repo
 from app.families import repository as families_repo
 from app.family_invites import repository as family_invites_repo
+from app.list_families import service as list_family_service
 from app.config import settings
 from app.dependencies import create_access_token, create_refresh_token
 from app.email import send_email
@@ -118,6 +119,11 @@ def register(
             family_id=family_invite.family_id,
             user_id=user.id,
             role=family_invite.role,
+        )
+        # A no-op in practice (the account owns no lists yet), called so the
+        # simple-mode auto-grant rule lives in exactly one place.
+        list_family_service.grant_existing_lists_on_join(
+            db, user, family_invite.family_id
         )
         family_invite.accepted_at = datetime.now(timezone.utc)
         db.flush()

@@ -58,12 +58,13 @@ app/
   dependencies.py    # get_db, JWT token creation, get_current_user, require_admin, list/collection access deps, require_connection
   access.py          # Shared visibility predicate: can_view_list, users_share_access
   models/
-    __init__.py      # Exports User, Invite, GiftList, Gift, ListShare, Connection, Collection, CollectionItem, PasswordResetToken, Family, FamilyMember, FamilyInvite
+    __init__.py      # Exports User, Invite, GiftList, Gift, ListShare, ListFamilyShare, Connection, Collection, CollectionItem, PasswordResetToken, Family, FamilyMember, FamilyInvite
     user.py          # User model (email, name, password_hash, role, is_active, simple_mode)
     invite.py        # Invite model (token, email, role, expires_at, used_at)
     gift_list.py     # GiftList model (name, description, owner_id, owner relationship)
     gift.py          # Gift model (name, description, url, price, claim tracking)
     list_share.py    # ListShare model (list_id, user_id, unique constraint)
+    list_family_share.py # ListFamilyShare model (list_id, family_id, unique constraint) — the list↔family grant
     connection.py    # Connection model (requester_id, addressee_id, status, unique constraint)
     collection.py    # Collection model (name, description, owner_id)
     collection_item.py # CollectionItem model (collection_id, list_id, unique constraint)
@@ -78,6 +79,7 @@ app/
     gift_list.py     # GiftListCreate, GiftListUpdate, GiftListRead, GiftListDetail*, GiftOwnerRead, GiftRead
     gift.py          # GiftCreate, GiftUpdate
     list_share.py    # ListShareCreate, ListShareRead
+    list_family_share.py # ListFamilyShareState (family id/name + shared flag)
     connection.py    # ConnectionCreate, ConnectionUserRead, ConnectionRead
     collection.py    # CollectionCreate, CollectionUpdate, CollectionRead, CollectionDetail, CollectionItemCreate
     meta.py          # UrlMetaResponse
@@ -110,6 +112,10 @@ app/
     router.py        # POST/GET/DELETE /lists/{id}/shares
     service.py       # Share creation with connection check, cascade on unshare
     repository.py    # Share and collection item queries
+  list_families/
+    router.py        # GET /lists/{id}/families, PUT/DELETE /lists/{id}/families/{family_id}
+    service.py       # Grant CRUD with the simple-mode gate; creation + join auto-grant rules; claim handling on revoke
+    repository.py    # Grant queries; list_granted_to_any_family_of, get_member_ids_losing_access
   connections/
     router.py        # POST/GET/DELETE /connections, GET /requests, POST accept
     service.py       # Connection lifecycle, cascade disconnect
@@ -141,13 +147,15 @@ tests/
     services/        # Unit tests for each domain service (mocked repo, no database)
       test_auth.py, test_users.py, test_invites.py, test_lists.py, test_gifts.py,
       test_shares.py, test_connections.py, test_collections.py, test_meta.py,
-      test_families.py, test_family_invites.py, test_access.py
+      test_families.py, test_family_invites.py, test_access.py, test_list_families.py
     schemas/         # Schema-level unit tests (test_family_invite_schema.py)
   integration/
     conftest.py      # Test fixtures: db, client, users, tokens, headers, sample data
     models/          # Model integration tests (user, invite, gift_list, gift, list_share, connection, collection, family, family_invite)
     routers/         # Endpoint integration tests (auth, users, invites, lists, gifts, list_shares, connections, collections, meta, families, family_invites)
     test_access.py   # Cross-cutting access model integration tests
+    test_list_family_membership.py  # Grant lifecycle across family joins/departures
+    test_migration_list_family_shares.py  # Runs the real Alembic migration + backfill
 ```
 
 ## App Entrypoint
@@ -204,8 +212,15 @@ Family groups are an alternative visibility path for gift lists. Members of the 
 - `POST /families/invites/{token}/accept` — join the family; propagates `simple_mode` from invite to user
 - `POST /families/invites/{token}/decline` — decline without joining
 
+### Per-family list sharing endpoints (`/lists/{list_id}/families`)
+- `GET /lists/{id}/families` — every family the **owner** belongs to, each with a `shared` flag. Readable in both modes.
+- `PUT /lists/{id}/families/{family_id}` — grant. `204`, idempotent. `403` in simple mode.
+- `DELETE /lists/{id}/families/{family_id}?claims=release|keep` — revoke. `204`, or `409` when a member who would lose access holds a claim and no `claims` choice was made. `403` in simple mode.
+
+`POST /lists` accepts `family_ids: list[int]` — honoured in full mode (each must be a family the caller belongs to, else `403`), ignored in simple mode (which shares with all the owner's families).
+
 ### List filter
-- `GET /lists?filter=family` — returns lists owned by co-family-members (not owned or directly shared)
+- `GET /lists?filter=family` — returns co-members' lists **that their owners granted to a shared family** (not owned or directly shared)
 
 ## Migrations
 
@@ -221,9 +236,10 @@ Alembic migration files in `alembic/versions/`:
 | `bb79d1d4eacb` | Add `families`, `family_members` tables + `users.simple_mode` column |
 | `95844ef3641f` | Add `family_invites` table |
 | `13861325bacf` | Add `declined_at` to `family_invites` |
+| `c4f2a91d7e30` | Add `list_family_shares` table + backfill every list against its owner's families |
 
 ## Testing
-- ~569 tests: ~239 unit + ~330 integration (counted via `grep -c "def test_"` across test files)
+- ~635 tests: ~264 unit + ~371 integration (counted via `grep -c "def test_"` across test files)
 - Unit tests (`tests/unit/`) mock the repo layer and test service logic in isolation
 - Integration tests (`tests/integration/`) run against the SQLite test database
 - Each integration test wrapped in a transaction that rolls back (no persistent test data)
@@ -237,6 +253,8 @@ Alembic migration files in `alembic/versions/`:
 - SQLite foreign keys are enabled via a SQLAlchemy event listener on every connection (PRAGMA foreign_keys=ON) — this is required because SQLite disables FK enforcement by default
 - Alembic uses render_as_batch=True for SQLite compatibility — SQLite doesn't support most ALTER TABLE operations, so batch mode recreates tables
 - **Domain package architecture** — each domain (auth, users, invites, lists, gifts, shares, connections, collections, meta, families, family_invites) is a package with `router.py` (thin HTTP wrapper), `service.py` (business logic, raises domain exceptions), and `repository.py` (database queries). Shared exceptions live in `app/services/exceptions.py`.
-- **List visibility model (Approach B)** — `can_view_list` in `app/access.py` computes visibility as: owner OR has a `ListShare` row OR shares a family with the owner. A connection alone does NOT grant list visibility. Claims and collection-item gating both route through `can_view_list`, so family-visible lists work transparently for those operations without additional changes.
+- **List visibility model (Approach B)** — `can_view_list` in `app/access.py` computes visibility as: owner OR has a `ListShare` row OR the owner granted the list to a family the viewer belongs to. Neither a connection nor bare family co-membership grants list visibility. Claims and collection-item gating both route through `can_view_list`, so family-visible lists work transparently for those operations without additional changes.
+- **Per-family list sharing** — family visibility is an explicit per-(list, family) `ListFamilyShare` grant, not implied by co-membership. **A grant row implies the owner is still a member of that family**; the read queries rely on that and do not re-check it, so every membership departure (`remove_member`, `delete_family`) deletes the affected grants. `simple_mode` governs who creates grants: simple-mode owners get them automatically on list creation and on joining a family (existing non-archived lists only), and are blocked from the `PUT`/`DELETE` toggles; full-mode owners opt in per family and never have a list re-shared behind their back. `users_share_access` is deliberately **not** gated on grants — it answers "is there a standing relationship", a different question from list visibility.
+- **Revoking a family grant and claims** — owners are blind to claim state on their own lists (`GiftOwnerRead` omits the claim fields), so `DELETE /lists/{id}/families/{fid}` without a `claims` choice returns `409` when a member who would lose all access holds a claim, revealing only *that* claims exist — no count, no gift or claimer names. `claims=release` unclaims for those members; `claims=keep` leaves the claims standing. Collection items are deleted either way, matching `delete_share`.
 - **Family cascade cleanup** — when a member leaves, is removed, or a family is deleted, the service calls `unclaim_gifts_between` / `delete_collection_items_between` (from the connections repository) for each affected pair. Cleanup only fires if the two users no longer share access via any remaining path (no accepted connection and no other common family). `list_shares` rows are not touched — family access never creates share rows.
 - **Family invite accept + simple_mode propagation** — accepting a family invite via `POST /families/invites/{token}/accept` adds the user as a family member and sets `users.simple_mode` to the value recorded on the invite. If the invitee is a new user registering via the family invite token, `simple_mode` is applied at account creation time.

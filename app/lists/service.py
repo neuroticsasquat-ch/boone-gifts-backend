@@ -1,16 +1,23 @@
 from sqlalchemy.orm import Session
 
+from app.list_families import service as list_family_service
 from app.lists import repository as repo
 from app.models.gift_list import GiftList
+from app.models.user import User
 from app.schemas.family import FamilyRef
 from app.schemas.gift_list import GiftListDetailOwner, GiftListDetailViewer
 from app.services.exceptions import ConflictError
 
 
 def create_list(
-    db: Session, name: str, description: str | None, owner_id: int
+    db: Session, name: str, description: str | None, owner: User,
+    family_ids: list[int] | None = None,
 ) -> GiftList:
-    return repo.create_list(db, name=name, description=description, owner_id=owner_id)
+    gift_list = repo.create_list(
+        db, name=name, description=description, owner_id=owner.id
+    )
+    list_family_service.set_grants_on_create(db, gift_list, owner, family_ids or [])
+    return gift_list
 
 
 def get_lists(db: Session, user_id: int, filter: str | None = None, archived: bool = False) -> list[GiftList]:

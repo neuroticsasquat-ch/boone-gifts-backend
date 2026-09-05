@@ -30,23 +30,41 @@ def _make_gift_list(
 
 
 REPO = "app.lists.service.repo"
+LIST_FAMILY_SVC = "app.lists.service.list_family_service"
 
 
 # --- create_list ---
 
 
+@patch(f"{LIST_FAMILY_SVC}.set_grants_on_create")
 @patch(f"{REPO}.create_list")
-def test_create_list(mock_create):
+def test_create_list(mock_create, mock_grants):
     db = MagicMock()
+    owner = SimpleNamespace(id=1, simple_mode=False)
     expected = _make_gift_list()
     mock_create.return_value = expected
 
-    result = service.create_list(db, name="My List", description="A test list", owner_id=1)
+    result = service.create_list(
+        db, name="My List", description="A test list", owner=owner, family_ids=[7]
+    )
 
     mock_create.assert_called_once_with(
         db, name="My List", description="A test list", owner_id=1
     )
+    mock_grants.assert_called_once_with(db, expected, owner, [7])
     assert result == expected
+
+
+@patch(f"{LIST_FAMILY_SVC}.set_grants_on_create")
+@patch(f"{REPO}.create_list")
+def test_create_list_without_family_ids_passes_empty_list(mock_create, mock_grants):
+    db = MagicMock()
+    owner = SimpleNamespace(id=1, simple_mode=False)
+    mock_create.return_value = _make_gift_list()
+
+    service.create_list(db, name="My List", description=None, owner=owner)
+
+    mock_grants.assert_called_once_with(db, mock_create.return_value, owner, [])
 
 
 # --- get_lists (filter logic) ---
