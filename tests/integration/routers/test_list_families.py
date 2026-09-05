@@ -115,6 +115,21 @@ def test_create_with_a_family_the_caller_is_not_in_returns_403(client, db, world
     assert resp.status_code == 403
 
 
+def test_create_with_a_foreign_family_writes_no_partial_grants(client, db, world):
+    """A foreign id partway through the list must not leave the earlier grants
+    written — validation runs over every id before any grant is created."""
+    outsider = _mkuser(db, "out@test.com", "Outsider")
+    other = _mkfamily(db, "Other Family", outsider)
+
+    resp = client.post(
+        "/lists",
+        headers=_auth(world.owner),
+        json={"name": "Nope", "family_ids": [world.boones.id, other.id]},
+    )
+    assert resp.status_code == 403
+    assert db.query(ListFamilyShare).filter_by(family_id=world.boones.id).count() == 0
+
+
 def test_simple_mode_create_shares_with_all_families(client, db, world):
     world.owner.simple_mode = True
     db.flush()

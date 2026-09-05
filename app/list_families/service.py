@@ -81,8 +81,12 @@ def set_grants_on_create(
         for family_id in families_repo.family_ids_for_user(db, owner.id):
             repo.create_grant(db, gift_list.id, family_id)
         return
-    for family_id in dict.fromkeys(family_ids):
+    requested = list(dict.fromkeys(family_ids))
+    # Validate every id first: a foreign id partway through must not leave the
+    # earlier grants written.
+    for family_id in requested:
         _require_membership(db, owner.id, family_id)
+    for family_id in requested:
         repo.create_grant(db, gift_list.id, family_id)
 
 

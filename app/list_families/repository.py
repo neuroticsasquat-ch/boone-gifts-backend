@@ -66,10 +66,6 @@ def get_families_for_user(db: Session, user_id: int) -> list[Family]:
     )
 
 
-def delete_grants_for_list(db: Session, list_id: int) -> None:
-    db.execute(delete(ListFamilyShare).where(ListFamilyShare.list_id == list_id))
-
-
 def delete_grants_for_family(db: Session, family_id: int) -> None:
     db.execute(delete(ListFamilyShare).where(ListFamilyShare.family_id == family_id))
 

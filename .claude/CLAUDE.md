@@ -239,7 +239,7 @@ Alembic migration files in `alembic/versions/`:
 | `c4f2a91d7e30` | Add `list_family_shares` table + backfill every list against its owner's families |
 
 ## Testing
-- ~635 tests: ~264 unit + ~371 integration (counted via `grep -c "def test_"` across test files)
+- ~636 tests: ~264 unit + ~372 integration (counted via `grep -c "def test_"` across test files)
 - Unit tests (`tests/unit/`) mock the repo layer and test service logic in isolation
 - Integration tests (`tests/integration/`) run against the SQLite test database
 - Each integration test wrapped in a transaction that rolls back (no persistent test data)
