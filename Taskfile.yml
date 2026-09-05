@@ -1,0 +1,42 @@
+version: "3"
+
+# The workspace owns the compose file one level up; stack lifecycle (up, down,
+# logs, restart) lives in ~/project/Taskfile.yml, not here.
+vars:
+  COMPOSE: "docker compose -f ../docker-compose.yml"
+  SVC: api
+  EXEC: "docker compose -f ../docker-compose.yml exec api"
+  EXEC_T: "docker compose -f ../docker-compose.yml exec -T api"
+
+tasks:
+  lock:
+    desc: Regenerate uv.lock from pyproject.toml
+    cmd: "{{.EXEC}} uv lock"
+
+  add:
+    desc: "Add a package (usage: task add -- <package>)"
+    cmd: "{{.EXEC}} uv add {{.CLI_ARGS}}"
+
+  remove:
+    desc: "Remove a package (usage: task remove -- <package>)"
+    cmd: "{{.EXEC}} uv remove {{.CLI_ARGS}}"
+
+  test:
+    desc: Run tests
+    cmd: "{{.EXEC}} pytest tests/ -v"
+
+  test-file:
+    desc: "Run a specific test file (usage: task test-file -- tests/routers/test_auth.py)"
+    cmd: "{{.EXEC}} pytest {{.CLI_ARGS}} -v"
+
+  create-admin:
+    desc: "Create an admin user (usage: task create-admin)"
+    cmd: "{{.EXEC}} python -m app.cli.create_admin"
+
+  migrate:
+    desc: Run database migrations
+    cmd: "{{.EXEC}} alembic upgrade head"
+
+  migration:
+    desc: "Create a new migration (usage: task migration -- 'description')"
+    cmd: '{{.EXEC}} alembic revision --autogenerate -m "{{.CLI_ARGS}}"'
