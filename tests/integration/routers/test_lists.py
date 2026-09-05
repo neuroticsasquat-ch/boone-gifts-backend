@@ -6,6 +6,7 @@ from app.dependencies import create_access_token
 from app.models.family import Family
 from app.models.family_member import FamilyMember
 from app.models.gift_list import GiftList
+from app.models.list_family_share import ListFamilyShare
 from app.models.list_share import ListShare
 from app.models.user import User
 
@@ -53,6 +54,16 @@ def family_world(db):
     db.flush()
 
     db.add(ListShare(list_id=l_p.id, user_id=u.id))  # L_p also manually shared with U
+    # Family visibility is an explicit per-(list, family) grant. These mirror what
+    # the owners would have opted into: P shares with both families, Q with F2.
+    db.add_all(
+        [
+            ListFamilyShare(list_id=l_p.id, family_id=f1.id),
+            ListFamilyShare(list_id=l_p.id, family_id=f2.id),
+            ListFamilyShare(list_id=l_p_arch.id, family_id=f1.id),
+            ListFamilyShare(list_id=l_q.id, family_id=f2.id),
+        ]
+    )
     db.flush()
 
     return SimpleNamespace(

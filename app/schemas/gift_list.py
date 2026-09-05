@@ -9,6 +9,9 @@ from app.schemas.family import FamilyRef
 class GiftListCreate(BaseModel):
     name: str
     description: str | None = None
+    # Families to share the new list with. Ignored for simple-mode owners, who
+    # share with every family they belong to (see app/list_families/service.py).
+    family_ids: list[int] = []
 
 
 class GiftListUpdate(BaseModel):

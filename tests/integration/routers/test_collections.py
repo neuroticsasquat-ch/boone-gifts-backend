@@ -311,9 +311,11 @@ def test_add_family_visible_list(
     from app.models.family import Family
     from app.models.family_member import FamilyMember
     from app.models.gift_list import GiftList
+    from app.models.list_family_share import ListFamilyShare
 
-    # member_user (collection owner) and admin_user share a family.
-    # No connection, no direct ListShare — visibility comes only from the family.
+    # member_user (collection owner) and admin_user share a family, and admin_user
+    # granted the list to it. No connection, no direct ListShare — visibility comes
+    # only from that family grant.
     family = Family(name="The Boones", created_by_id=admin_user.id)
     db.add(family)
     db.flush()
@@ -327,6 +329,8 @@ def test_add_family_visible_list(
 
     admin_list = GiftList(name="Admin's Family List", owner_id=admin_user.id)
     db.add(admin_list)
+    db.flush()
+    db.add(ListFamilyShare(list_id=admin_list.id, family_id=family.id))
     db.flush()
 
     response = client.post(

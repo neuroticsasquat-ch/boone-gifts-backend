@@ -16,7 +16,7 @@ router = APIRouter(prefix="/families", tags=["families"])
 
 @router.post("", response_model=FamilyDetail, status_code=status.HTTP_201_CREATED)
 def create_family(request: FamilyCreate, user: CurrentUser, db: DbSession) -> dict:
-    return family_service.create_family(db, name=request.name, creator_id=user.id)
+    return family_service.create_family(db, name=request.name, creator=user)
 
 
 @router.get("", response_model=list[FamilyRead])

@@ -4,7 +4,7 @@ from pydantic import BaseModel
 from app.dependencies import CurrentUser, DbSession, OwnedList, ViewableList
 from app.lists import service as list_service
 from app.schemas.gift_list import GiftListCreate, GiftListRead, GiftListUpdate
-from app.services.exceptions import ConflictError
+from app.services.exceptions import ConflictError, ForbiddenError
 
 router = APIRouter(prefix="/lists", tags=["lists"])
 
@@ -15,9 +15,16 @@ class UnseenCountResponse(BaseModel):
 
 @router.post("", response_model=GiftListRead, status_code=status.HTTP_201_CREATED)
 def create_list(request: GiftListCreate, user: CurrentUser, db: DbSession):
-    return list_service.create_list(
-        db, name=request.name, description=request.description, owner_id=user.id
-    )
+    try:
+        return list_service.create_list(
+            db,
+            name=request.name,
+            description=request.description,
+            owner=user,
+            family_ids=request.family_ids,
+        )
+    except ForbiddenError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
 
 
 @router.get("", response_model=list[GiftListRead])

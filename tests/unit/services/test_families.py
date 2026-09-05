@@ -39,10 +39,11 @@ def _make_member(
     return member
 
 
-def _make_user(id: int = 10, name: str = "Alice") -> MagicMock:
+def _make_user(id: int = 10, name: str = "Alice", simple_mode: bool = False) -> MagicMock:
     user = MagicMock(spec=User)
     user.id = id
     user.name = name
+    user.simple_mode = simple_mode
     return user
 
 
@@ -76,7 +77,7 @@ def test_create_family_happy_path(
     mock_get_family.return_value = family
     mock_get_members.return_value = [(member, user)]
 
-    result = service.create_family(db, name="Smith Family", creator_id=10)
+    result = service.create_family(db, name="Smith Family", creator=user)
 
     mock_create_family.assert_called_once_with(db, name="Smith Family", created_by_id=10)
     mock_create_member.assert_called_once_with(db, family_id=1, user_id=10, role="organizer")
