@@ -22,6 +22,8 @@ def create_list(request: GiftListCreate, user: CurrentUser, db: DbSession):
             description=request.description,
             owner=user,
             family_ids=request.family_ids,
+            recipient_name=request.recipient_name,
+            recipient_has_account=request.recipient_has_account,
         )
     except ForbiddenError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))

@@ -49,7 +49,12 @@ def test_create_list(mock_create, mock_grants):
     )
 
     mock_create.assert_called_once_with(
-        db, name="My List", description="A test list", owner_id=1
+        db,
+        name="My List",
+        description="A test list",
+        owner_id=1,
+        recipient_name=None,
+        recipient_has_account=None,
     )
     mock_grants.assert_called_once_with(db, expected, owner, [7])
     assert result == expected
@@ -187,6 +192,8 @@ def _read_source(families=None):
         description=None,
         owner_id=2,
         owner_name="Owner",
+        recipient_name=None,
+        recipient_has_account=None,
         is_archived=False,
         gifts=[],
         created_at=datetime(2026, 1, 1),

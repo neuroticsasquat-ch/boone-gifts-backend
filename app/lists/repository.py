@@ -11,9 +11,20 @@ from app.models.list_share import ListShare
 
 
 def create_list(
-    db: Session, name: str, description: str | None, owner_id: int
+    db: Session,
+    name: str,
+    description: str | None,
+    owner_id: int,
+    recipient_name: str | None = None,
+    recipient_has_account: bool | None = None,
 ) -> GiftList:
-    gift_list = GiftList(name=name, description=description, owner_id=owner_id)
+    gift_list = GiftList(
+        name=name,
+        description=description,
+        owner_id=owner_id,
+        recipient_name=recipient_name,
+        recipient_has_account=recipient_has_account,
+    )
     db.add(gift_list)
     db.flush()
     return gift_list

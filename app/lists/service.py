@@ -12,9 +12,16 @@ from app.services.exceptions import ConflictError
 def create_list(
     db: Session, name: str, description: str | None, owner: User,
     family_ids: list[int] | None = None,
+    recipient_name: str | None = None,
+    recipient_has_account: bool | None = None,
 ) -> GiftList:
     gift_list = repo.create_list(
-        db, name=name, description=description, owner_id=owner.id
+        db,
+        name=name,
+        description=description,
+        owner_id=owner.id,
+        recipient_name=recipient_name,
+        recipient_has_account=recipient_has_account,
     )
     list_family_service.set_grants_on_create(db, gift_list, owner, family_ids or [])
     return gift_list
