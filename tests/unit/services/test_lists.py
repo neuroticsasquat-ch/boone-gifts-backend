@@ -27,6 +27,11 @@ def _make_gift_list(
     gl.owner_id = owner_id
     gl.gifts = []
     gl.owner_name = "Test User"
+    # Explicit, because MagicMock(spec=...) hands back a truthy mock for any
+    # attribute left unset — and the service reads both of these to judge the
+    # person/recipient exclusivity of the resulting row.
+    gl.recipient_name = None
+    gl.account_person_id = None
     return gl
 
 
@@ -56,6 +61,7 @@ def test_create_list(mock_create, mock_grants):
         owner_id=1,
         recipient_name=None,
         recipient_has_account=None,
+        account_person_id=None,
     )
     mock_grants.assert_called_once_with(db, expected, owner, [7])
     assert result == expected
@@ -194,6 +200,8 @@ def _read_source(shared_via=None):
         owner_name="Owner",
         recipient_name=None,
         recipient_has_account=None,
+        account_person_id=None,
+        account_person_name=None,
         is_archived=False,
         gifts=[],
         created_at=datetime(2026, 1, 1),

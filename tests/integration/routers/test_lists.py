@@ -499,3 +499,226 @@ def test_viewer_detail_returns_recipient_fields(
     data = response.json()
     assert data["recipient_name"] == "Beth"
     assert data["recipient_has_account"] is False
+
+
+# --- account people on lists (NEU-1228) ---
+
+
+@pytest.fixture
+def account_people(client, member_headers):
+    """The member account marked shared, with Gran and Grandpa on it."""
+    response = client.put(
+        "/account",
+        headers=member_headers,
+        json={
+            "is_shared_account": True,
+            "people": [{"name": "Gran"}, {"name": "Grandpa"}],
+        },
+    )
+    assert response.status_code == 200
+    return response.json()["people"]
+
+
+def test_create_list_with_account_person(client, member_headers, account_people):
+    gran = account_people[0]
+    response = client.post(
+        "/lists",
+        headers=member_headers,
+        json={"name": "Gran's List", "account_person_id": gran["id"]},
+    )
+    assert response.status_code == 201
+    data = response.json()
+    assert data["account_person_id"] == gran["id"]
+    assert data["account_person_name"] == "Gran"
+
+
+def test_create_list_with_neither_person_nor_recipient(
+    client, member_headers, account_people
+):
+    # §4.2: a shared account may own a household list — "ideas for the kitchen"
+    # is for neither person, and the API does not demand an answer.
+    response = client.post(
+        "/lists", headers=member_headers, json={"name": "Ideas for the Kitchen"}
+    )
+    assert response.status_code == 201
+    data = response.json()
+    assert data["account_person_id"] is None
+    assert data["recipient_name"] is None
+
+
+def test_create_list_with_person_and_recipient_is_400(
+    client, member_headers, account_people
+):
+    response = client.post(
+        "/lists",
+        headers=member_headers,
+        json={
+            "name": "Confused",
+            "account_person_id": account_people[0]["id"],
+            "recipient_name": "Beth",
+        },
+    )
+    assert response.status_code == 400
+
+
+def test_create_list_with_another_accounts_person_is_404(
+    client, admin_headers, account_people
+):
+    response = client.post(
+        "/lists",
+        headers=admin_headers,
+        json={"name": "Not mine", "account_person_id": account_people[0]["id"]},
+    )
+    assert response.status_code == 404
+
+
+def test_update_list_sets_account_person(
+    client, member_headers, sample_list, account_people
+):
+    grandpa = account_people[1]
+    response = client.put(
+        f"/lists/{sample_list.id}",
+        headers=member_headers,
+        json={"account_person_id": grandpa["id"]},
+    )
+    assert response.status_code == 200
+    assert response.json()["account_person_name"] == "Grandpa"
+
+
+def test_update_list_clears_account_person_with_explicit_null(
+    client, db, member_headers, sample_list, account_people
+):
+    sample_list.account_person_id = account_people[0]["id"]
+    db.flush()
+
+    response = client.put(
+        f"/lists/{sample_list.id}",
+        headers=member_headers,
+        json={"account_person_id": None},
+    )
+    assert response.status_code == 200
+    assert response.json()["account_person_id"] is None
+
+
+def test_update_list_leaves_account_person_alone_when_omitted(
+    client, db, member_headers, sample_list, account_people
+):
+    sample_list.account_person_id = account_people[0]["id"]
+    db.flush()
+
+    response = client.put(
+        f"/lists/{sample_list.id}", headers=member_headers, json={"name": "Renamed"}
+    )
+    assert response.status_code == 200
+    assert response.json()["account_person_id"] == account_people[0]["id"]
+
+
+def test_adding_a_person_to_a_list_with_a_recipient_is_400(
+    client, db, member_headers, sample_list, account_people
+):
+    # The stored state is what makes this illegal, and only the service can see it.
+    sample_list.recipient_name = "Beth"
+    db.flush()
+
+    response = client.put(
+        f"/lists/{sample_list.id}",
+        headers=member_headers,
+        json={"account_person_id": account_people[0]["id"]},
+    )
+    assert response.status_code == 400
+
+
+def test_adding_a_recipient_to_a_list_with_a_person_is_400(
+    client, db, member_headers, sample_list, account_people
+):
+    sample_list.account_person_id = account_people[0]["id"]
+    db.flush()
+
+    response = client.put(
+        f"/lists/{sample_list.id}",
+        headers=member_headers,
+        json={"recipient_name": "Beth"},
+    )
+    assert response.status_code == 400
+
+
+def test_clearing_one_then_setting_the_other_is_allowed(
+    client, db, member_headers, sample_list, account_people
+):
+    sample_list.recipient_name = "Beth"
+    sample_list.recipient_has_account = False
+    db.flush()
+
+    response = client.put(
+        f"/lists/{sample_list.id}",
+        headers=member_headers,
+        json={
+            "recipient_name": None,
+            "recipient_has_account": None,
+            "account_person_id": account_people[0]["id"],
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["recipient_name"] is None
+    assert data["account_person_name"] == "Gran"
+
+
+def test_update_list_with_another_accounts_person_is_404(
+    client, db, admin_headers, admin_user, account_people
+):
+    admins_list = GiftList(name="Admin's List", owner_id=admin_user.id)
+    db.add(admins_list)
+    db.flush()
+
+    response = client.put(
+        f"/lists/{admins_list.id}",
+        headers=admin_headers,
+        json={"account_person_id": account_people[0]["id"]},
+    )
+    assert response.status_code == 404
+
+
+def test_list_collection_returns_account_person_fields(
+    client, db, member_headers, sample_list, account_people
+):
+    # compute_counts builds an explicit dict; a missing key silently nulls the field.
+    sample_list.account_person_id = account_people[0]["id"]
+    db.flush()
+
+    row = client.get("/lists?filter=owned", headers=member_headers).json()[0]
+    assert row["account_person_id"] == account_people[0]["id"]
+    assert row["account_person_name"] == "Gran"
+
+
+def test_owner_detail_returns_account_person_fields(
+    client, db, member_headers, sample_list, account_people
+):
+    sample_list.account_person_id = account_people[0]["id"]
+    db.flush()
+
+    data = client.get(f"/lists/{sample_list.id}", headers=member_headers).json()
+    assert data["account_person_id"] == account_people[0]["id"]
+    assert data["account_person_name"] == "Gran"
+
+
+def test_viewer_detail_returns_account_person_fields(
+    client, db, admin_headers, shared_list, account_people
+):
+    # A family member browsing a shared account's lists sees "for Gran" — that
+    # is the whole point of labelling them, and it discloses nothing the
+    # account has not chosen to publish.
+    shared_list.account_person_id = account_people[0]["id"]
+    db.flush()
+
+    data = client.get(f"/lists/{shared_list.id}", headers=admin_headers).json()
+    assert data["account_person_id"] == account_people[0]["id"]
+    assert data["account_person_name"] == "Gran"
+
+
+def test_list_without_a_person_reports_both_fields_null(
+    client, member_headers, sample_list
+):
+    data = client.get(f"/lists/{sample_list.id}", headers=member_headers).json()
+    assert data["account_person_id"] is None
+    assert data["account_person_name"] is None
