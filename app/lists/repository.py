@@ -1,7 +1,7 @@
 from sqlalchemy import delete, or_, select
 from sqlalchemy.orm import Session
 
-from app.models.collection_item import CollectionItem
+from app.models.occasion_item import OccasionItem
 from app.models.family import Family
 from app.models.family_member import FamilyMember
 from app.models.gift import Gift
@@ -82,7 +82,7 @@ def has_claimed_gifts(db: Session, list_id: int) -> bool:
 
 def delete_list(db: Session, gift_list: GiftList) -> None:
     list_id = gift_list.id
-    db.execute(delete(CollectionItem).where(CollectionItem.list_id == list_id))
+    db.execute(delete(OccasionItem).where(OccasionItem.list_id == list_id))
     db.execute(delete(ListShare).where(ListShare.list_id == list_id))
     db.execute(delete(ListFamilyShare).where(ListFamilyShare.list_id == list_id))
     db.execute(delete(Gift).where(Gift.list_id == list_id))

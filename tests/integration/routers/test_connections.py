@@ -301,13 +301,13 @@ def test_disconnect_unclaims_gifts(
     assert gift.claimed_at is None
 
 
-def test_disconnect_removes_collection_items(
+def test_disconnect_removes_occasion_items(
     client, member_user, member_headers, admin_user, connection, db
 ):
     from app.models.gift_list import GiftList
     from app.models.list_share import ListShare
-    from app.models.collection import Collection
-    from app.models.collection_item import CollectionItem
+    from app.models.occasion import Occasion
+    from app.models.occasion_item import OccasionItem
 
     admin_list = GiftList(name="Admin's List", owner_id=admin_user.id)
     db.add(admin_list)
@@ -317,14 +317,14 @@ def test_disconnect_removes_collection_items(
     db.add(share)
     db.flush()
 
-    member_collection = Collection(
-        name="Member Collection", owner_id=member_user.id
+    member_occasion = Occasion(
+        name="Member Occasion", owner_id=member_user.id
     )
-    db.add(member_collection)
+    db.add(member_occasion)
     db.flush()
 
-    item = CollectionItem(
-        collection_id=member_collection.id, list_id=admin_list.id
+    item = OccasionItem(
+        occasion_id=member_occasion.id, list_id=admin_list.id
     )
     db.add(item)
     db.flush()
@@ -338,9 +338,9 @@ def test_disconnect_removes_collection_items(
     from sqlalchemy import select
 
     remaining = db.execute(
-        select(CollectionItem).where(
-            CollectionItem.collection_id == member_collection.id,
-            CollectionItem.list_id == admin_list.id,
+        select(OccasionItem).where(
+            OccasionItem.occasion_id == member_occasion.id,
+            OccasionItem.list_id == admin_list.id,
         )
     ).scalar_one_or_none()
     assert remaining is None

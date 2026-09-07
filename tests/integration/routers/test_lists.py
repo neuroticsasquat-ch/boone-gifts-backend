@@ -401,7 +401,7 @@ def test_update_list_flag_without_name_rejected(client, member_headers, sample_l
     assert response.status_code == 422
 
 
-def test_list_collection_endpoint_returns_recipient_fields(
+def test_list_occasion_endpoint_returns_recipient_fields(
     client, member_headers, sample_list, db
 ):
     # compute_counts builds an explicit dict; a missing key silently nulls the field.
