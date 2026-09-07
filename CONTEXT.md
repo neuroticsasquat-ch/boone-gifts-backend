@@ -47,13 +47,17 @@ reached through a family grant is just a shared list).
    claims stay hidden on every list a shared account owns, including a list marked for the other
    person — accepted deliberately, see [ADR 0001](docs/adr/0001-shared-accounts-are-one-identity.md).
 
-6. **A list is for an account person, or for a recipient, or for neither — never both.**
-   `lists.account_person_id` and `lists.recipient_name` are mutually exclusive, enforced in the
-   service layer.
+6. **An account marked shared always has at least two people.** Marking it with fewer is refused,
+   and deleting down to one un-marks the account rather than leaving it in a one-person state.
 
-7. **A recipient has no account.** `recipient_name is not None` means the list is kept on behalf of
+7. **A list is for an account person, or for a recipient, or for neither — never both.**
+   `lists.account_person_id` and `lists.recipient_name` are mutually exclusive, enforced in the
+   service layer. "Neither" is a legitimate state on a shared account: it is a household list,
+   belonging to everyone who uses the login.
+
+8. **A recipient has no account.** `recipient_name is not None` means the list is kept on behalf of
    someone who will never log in, so its keeper cannot see claims on it and cannot claim from it.
 
-8. **Simple mode is a sharing behaviour, not only a UI preference.** A simple-mode owner's lists are
+9. **Simple mode is a sharing behaviour, not only a UI preference.** A simple-mode owner's lists are
    auto-granted to all their families on creation and on joining, and the per-family toggles are
    refused. Changing this changes who can see what.
