@@ -357,31 +357,29 @@ def test_create_list_with_recipient(client, member_user, member_headers):
         json={
             "name": "Christmas Ideas",
             "recipient_name": "Beth",
-            "recipient_has_account": False,
         },
     )
     assert response.status_code == 201
     data = response.json()
     assert data["recipient_name"] == "Beth"
-    assert data["recipient_has_account"] is False
+    assert "recipient_has_account" not in data
     assert data["owner_id"] == member_user.id
 
 
-def test_create_list_without_recipient_leaves_both_null(client, member_headers):
+def test_create_list_without_recipient_leaves_it_null(client, member_headers):
     response = client.post(
         "/lists", headers=member_headers, json={"name": "My own list"}
     )
     assert response.status_code == 201
     data = response.json()
     assert data["recipient_name"] is None
-    assert data["recipient_has_account"] is None
 
 
 def test_create_list_normalizes_recipient_name(client, member_headers):
     response = client.post(
         "/lists",
         headers=member_headers,
-        json={"name": "L", "recipient_name": " Beth ", "recipient_has_account": True},
+        json={"name": "L", "recipient_name": " Beth "},
     )
     assert response.status_code == 201
     assert response.json()["recipient_name"] == "Beth"
@@ -395,48 +393,34 @@ def test_create_list_whitespace_recipient_name_becomes_null(client, member_heade
     assert response.json()["recipient_name"] is None
 
 
-def test_create_list_flag_without_name_rejected(client, member_headers):
-    response = client.post(
-        "/lists",
-        headers=member_headers,
-        json={"name": "L", "recipient_has_account": False},
-    )
-    assert response.status_code == 422
-
-
 def test_update_list_sets_recipient(client, member_headers, sample_list):
     response = client.put(
         f"/lists/{sample_list.id}",
         headers=member_headers,
-        json={"recipient_name": "Jane", "recipient_has_account": True},
+        json={"recipient_name": "Jane"},
     )
     assert response.status_code == 200
     data = response.json()
     assert data["recipient_name"] == "Jane"
-    assert data["recipient_has_account"] is True
 
 
 def test_update_list_clears_recipient(client, member_headers, sample_list, db):
     sample_list.recipient_name = "Beth"
-    sample_list.recipient_has_account = False
     db.flush()
 
     response = client.put(
         f"/lists/{sample_list.id}",
         headers=member_headers,
-        json={"recipient_name": None, "recipient_has_account": None},
+        json={"recipient_name": None},
     )
     assert response.status_code == 200
-    data = response.json()
-    assert data["recipient_name"] is None
-    assert data["recipient_has_account"] is None
+    assert response.json()["recipient_name"] is None
 
 
 def test_update_list_name_only_leaves_recipient_untouched(
     client, member_headers, sample_list, db
 ):
     sample_list.recipient_name = "Beth"
-    sample_list.recipient_has_account = False
     db.flush()
 
     response = client.put(
@@ -446,16 +430,6 @@ def test_update_list_name_only_leaves_recipient_untouched(
     data = response.json()
     assert data["name"] == "Renamed"
     assert data["recipient_name"] == "Beth"
-    assert data["recipient_has_account"] is False
-
-
-def test_update_list_flag_without_name_rejected(client, member_headers, sample_list):
-    response = client.put(
-        f"/lists/{sample_list.id}",
-        headers=member_headers,
-        json={"recipient_has_account": True},
-    )
-    assert response.status_code == 422
 
 
 def test_list_occasion_endpoint_returns_recipient_fields(
@@ -463,42 +437,39 @@ def test_list_occasion_endpoint_returns_recipient_fields(
 ):
     # compute_counts builds an explicit dict; a missing key silently nulls the field.
     sample_list.recipient_name = "Beth"
-    sample_list.recipient_has_account = False
     db.flush()
 
     response = client.get("/lists?filter=owned", headers=member_headers)
     assert response.status_code == 200
     row = response.json()[0]
     assert row["recipient_name"] == "Beth"
-    assert row["recipient_has_account"] is False
+    assert "recipient_has_account" not in row
 
 
 def test_owner_detail_returns_recipient_fields(
     client, member_headers, sample_list, db
 ):
     sample_list.recipient_name = "Beth"
-    sample_list.recipient_has_account = False
     db.flush()
 
     response = client.get(f"/lists/{sample_list.id}", headers=member_headers)
     assert response.status_code == 200
     data = response.json()
     assert data["recipient_name"] == "Beth"
-    assert data["recipient_has_account"] is False
+    assert "recipient_has_account" not in data
 
 
 def test_viewer_detail_returns_recipient_fields(
     client, admin_headers, shared_list, db
 ):
     shared_list.recipient_name = "Beth"
-    shared_list.recipient_has_account = False
     db.flush()
 
     response = client.get(f"/lists/{shared_list.id}", headers=admin_headers)
     assert response.status_code == 200
     data = response.json()
     assert data["recipient_name"] == "Beth"
-    assert data["recipient_has_account"] is False
+    assert "recipient_has_account" not in data
 
 
 # --- account people on lists (NEU-1228) ---
@@ -646,7 +617,6 @@ def test_clearing_one_then_setting_the_other_is_allowed(
     client, db, member_headers, sample_list, account_people
 ):
     sample_list.recipient_name = "Beth"
-    sample_list.recipient_has_account = False
     db.flush()
 
     response = client.put(
@@ -654,7 +624,6 @@ def test_clearing_one_then_setting_the_other_is_allowed(
         headers=member_headers,
         json={
             "recipient_name": None,
-            "recipient_has_account": None,
             "account_person_id": account_people[0]["id"],
         },
     )

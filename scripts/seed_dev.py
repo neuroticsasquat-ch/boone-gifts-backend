@@ -154,14 +154,13 @@ def seed(db, password: str) -> None:
     gran = users["gran@example.com"]
     dave = users["cousin@example.com"]
 
-    def new_list(owner, name, description=None, recipient=None, has_account=None,
+    def new_list(owner, name, description=None, recipient=None,
                  archived=False, person=None):
         gift_list = GiftList(
             name=name,
             description=description,
             owner_id=owner.id,
             recipient_name=recipient,
-            recipient_has_account=has_account,
             account_person_id=person.id if person is not None else None,
             is_archived=archived,
         )
@@ -184,10 +183,9 @@ def seed(db, password: str) -> None:
 
     tom_wishlist = new_list(tom, "Tom's Wishlist", "Ideas for me")
     tom_christmas = new_list(tom, "Christmas 2026", "What I want this year")
-    # recipient_has_account=False: kept for someone with no account, so Tom sees
-    # no claims on it and cannot claim from it.
-    beths_list = new_list(tom, "Beth's List", "Kept for Beth", recipient="Beth",
-                          has_account=False)
+    # A recipient means one thing: someone with no account. Tom sees no claims on
+    # it and cannot claim from it.
+    beths_list = new_list(tom, "Beth's List", "Kept for Beth", recipient="Beth")
     new_list(tom, "Birthday 2025", archived=True)
     jane_wishlist = new_list(jane, "Jane's Wishlist", "Things I'd like")
     carol_wishlist = new_list(carol, "Carol's Wishlist", "Shared directly AND via family")

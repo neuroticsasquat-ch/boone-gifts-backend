@@ -145,7 +145,7 @@ Family visibility is an explicit per-(list, family) `ListFamilyShare` grant, not
 **A grant row implies the owner is still a member of that family.** Read queries rely on that and don't re-check, so every membership departure (`remove_member`, `delete_family`) deletes the affected grants.
 
 ## Data model notes
-- **Lists carry a recipient**: `recipient_name` plus three-valued `recipient_has_account`. Read `GiftList.kept_for_absent_person` rather than testing the column — `not recipient_has_account` is also true for a list with no recipient at all
+- **Lists carry a recipient**: `recipient_name` alone, meaning one thing — a person with no account. Read `GiftList.kept_for_absent_person` rather than testing the column. The co-resident case that `recipient_has_account = true` used to cover is an account person now (dropped in `e2b7d4a91c53`)
 - **Lists may instead carry an account person**: `account_person_id`, mutually exclusive with `recipient_name` (both null is a legal household list). See "Shared accounts" below
 - **Migrations** (chain order):
 
@@ -163,6 +163,7 @@ Family visibility is an explicit per-(list, family) `ListFamilyShare` grant, not
 | `d8a3f1c05b64` | `recipient_name` / `recipient_has_account` on lists |
 | `a7c4e2b91f38` | `collections` → `occasions`, `collection_items` → `occasion_items` |
 | `b5e1c7d92a04` | `users.is_shared_account`, `account_people` table, `lists.account_person_id` |
+| `e2b7d4a91c53` | Drop `lists.recipient_has_account` |
 
 ## Testing
 - ~709 test functions across 53 files

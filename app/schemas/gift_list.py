@@ -20,7 +20,6 @@ class RecipientFields(BaseModel):
     drift between them."""
 
     recipient_name: str | None = None
-    recipient_has_account: bool | None = None
     account_person_id: int | None = None
 
     @field_validator("recipient_name")
@@ -29,14 +28,6 @@ class RecipientFields(BaseModel):
         if v is None:
             return None
         return v.strip() or None
-
-    @model_validator(mode="after")
-    def require_name_with_account_answer(self):
-        # A flag with no name is meaningless, and the two fields are one control
-        # in the UI, so they always travel together.
-        if self.recipient_has_account is not None and self.recipient_name is None:
-            raise ValueError("recipient_has_account requires a recipient_name")
-        return self
 
     # `account_person_id` and `recipient_name` are mutually exclusive — a list
     # is for an account person, or for someone with no account, or for neither
@@ -95,7 +86,6 @@ class GiftListRead(BaseModel):
     owner_id: int
     owner_name: str
     recipient_name: str | None = None
-    recipient_has_account: bool | None = None
     account_person_id: int | None = None
     account_person_name: str | None = None
     is_archived: bool
@@ -119,7 +109,6 @@ class GiftListRead(BaseModel):
                 "owner_id": data.owner_id,
                 "owner_name": data.owner_name,
                 "recipient_name": data.recipient_name,
-                "recipient_has_account": data.recipient_has_account,
                 "account_person_id": data.account_person_id,
                 "account_person_name": data.account_person_name,
                 "is_archived": data.is_archived,
@@ -139,7 +128,6 @@ class GiftListDetailOwner(BaseModel):
     owner_id: int
     owner_name: str
     recipient_name: str | None = None
-    recipient_has_account: bool | None = None
     account_person_id: int | None = None
     account_person_name: str | None = None
     is_archived: bool
@@ -157,7 +145,6 @@ class GiftListDetailViewer(BaseModel):
     owner_id: int
     owner_name: str
     recipient_name: str | None = None
-    recipient_has_account: bool | None = None
     account_person_id: int | None = None
     account_person_name: str | None = None
     is_archived: bool

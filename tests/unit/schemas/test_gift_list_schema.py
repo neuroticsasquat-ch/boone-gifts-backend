@@ -1,7 +1,12 @@
 import pytest
-from pydantic import ValidationError
 
-from app.schemas.gift_list import GiftListCreate, GiftListUpdate
+from app.schemas.gift_list import (
+    GiftListCreate,
+    GiftListDetailOwner,
+    GiftListDetailViewer,
+    GiftListRead,
+    GiftListUpdate,
+)
 
 
 # --- recipient_name normalization ---
@@ -25,55 +30,36 @@ def test_recipient_name_none_stays_none(schema):
     assert payload.recipient_name is None
 
 
-# --- the flag requires a name ---
+# --- recipient_has_account is gone (NEU-1230) ---
+
+
+@pytest.mark.parametrize(
+    "schema",
+    [GiftListCreate, GiftListUpdate, GiftListRead, GiftListDetailOwner,
+     GiftListDetailViewer],
+)
+def test_recipient_has_account_is_not_a_field(schema):
+    assert "recipient_has_account" not in schema.model_fields
 
 
 @pytest.mark.parametrize("schema", [GiftListCreate, GiftListUpdate])
-@pytest.mark.parametrize("has_account", [True, False])
-def test_flag_without_name_is_rejected(schema, has_account):
-    with pytest.raises(ValidationError, match="requires a recipient_name"):
-        schema(name="Christmas", recipient_has_account=has_account)
-
-
-@pytest.mark.parametrize("schema", [GiftListCreate, GiftListUpdate])
-def test_flag_with_whitespace_only_name_is_rejected(schema):
-    # The normalizer runs first, so "   " is None by the time the invariant is checked.
-    with pytest.raises(ValidationError, match="requires a recipient_name"):
-        schema(name="Christmas", recipient_name="  ", recipient_has_account=False)
-
-
-@pytest.mark.parametrize("schema", [GiftListCreate, GiftListUpdate])
-@pytest.mark.parametrize("has_account", [True, False])
-def test_name_with_flag_is_accepted(schema, has_account):
-    payload = schema(
-        name="Christmas", recipient_name="Beth", recipient_has_account=has_account
-    )
-    assert payload.recipient_name == "Beth"
-    assert payload.recipient_has_account is has_account
-
-
-@pytest.mark.parametrize("schema", [GiftListCreate, GiftListUpdate])
-def test_name_without_flag_is_accepted(schema):
+def test_recipient_name_alone_is_accepted(schema):
     payload = schema(name="Christmas", recipient_name="Beth")
     assert payload.recipient_name == "Beth"
-    assert payload.recipient_has_account is None
 
 
 @pytest.mark.parametrize("schema", [GiftListCreate, GiftListUpdate])
-def test_neither_field_is_accepted(schema):
+def test_no_recipient_is_accepted(schema):
     payload = schema(name="Christmas")
     assert payload.recipient_name is None
-    assert payload.recipient_has_account is None
 
 
 def test_update_leaves_recipient_fields_unset_when_omitted():
-    # exclude_unset is what lets a rename leave both columns alone.
+    # exclude_unset is what lets a rename leave the recipient columns alone.
     updates = GiftListUpdate(name="Renamed").model_dump(exclude_unset=True)
     assert updates == {"name": "Renamed"}
 
 
-def test_update_can_explicitly_clear_both_fields():
-    updates = GiftListUpdate(
-        recipient_name=None, recipient_has_account=None
-    ).model_dump(exclude_unset=True)
-    assert updates == {"recipient_name": None, "recipient_has_account": None}
+def test_update_can_explicitly_clear_the_recipient():
+    updates = GiftListUpdate(recipient_name=None).model_dump(exclude_unset=True)
+    assert updates == {"recipient_name": None}

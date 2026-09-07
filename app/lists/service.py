@@ -31,7 +31,6 @@ def create_list(
     db: Session, name: str, description: str | None, owner: User,
     family_ids: list[int] | None = None,
     recipient_name: str | None = None,
-    recipient_has_account: bool | None = None,
     account_person_id: int | None = None,
 ) -> GiftList:
     _reject_person_with_recipient(account_person_id, recipient_name)
@@ -42,7 +41,6 @@ def create_list(
         description=description,
         owner_id=owner.id,
         recipient_name=recipient_name,
-        recipient_has_account=recipient_has_account,
         account_person_id=account_person_id,
     )
     list_family_service.set_grants_on_create(db, gift_list, owner, family_ids or [])

@@ -20,7 +20,6 @@ class GiftList(Base):
     description: Mapped[str | None] = mapped_column(String(500), default=None)
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     recipient_name: Mapped[str | None] = mapped_column(String(255), default=None)
-    recipient_has_account: Mapped[bool | None] = mapped_column(Boolean, default=None)
     account_person_id: Mapped[int | None] = mapped_column(
         ForeignKey("account_people.id"), default=None, index=True
     )
@@ -53,10 +52,9 @@ class GiftList(Base):
     @property
     def kept_for_absent_person(self) -> bool:
         """This list is kept on behalf of someone who has no account and will never
-        log in. Distinct from a list for a co-resident who shares this login — that
-        person reads the list themselves, so nothing about it is hidden from them.
+        log in. That is now the only thing a recipient can mean — a co-resident who
+        reads this list on the same login is an account person instead.
 
-        Read this instead of touching `recipient_has_account` directly: the column is
-        three-valued, so `not recipient_has_account` is also true for a list with no
-        recipient at all."""
-        return self.recipient_name is not None and self.recipient_has_account is False
+        Read this rather than testing `recipient_name` directly: callers care about
+        the question, not the column that happens to answer it."""
+        return self.recipient_name is not None
