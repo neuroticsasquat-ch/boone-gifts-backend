@@ -10,7 +10,7 @@ from app.access import can_view_list
 from app.config import settings
 from app.connections.repository import find_accepted_connection_between
 from app.database import SessionLocal
-from app.models.collection import Collection
+from app.models.occasion import Occasion
 from app.models.user import User
 from app.models.gift_list import GiftList
 
@@ -144,30 +144,30 @@ def require_connection(
         )
 
 
-def get_collection_for_owner(
-    collection_id: int,
+def get_occasion_for_owner(
+    occasion_id: int,
     user: Annotated[User, Depends(get_current_user)],
     db: DbSession,
-) -> Collection:
-    """Load a collection and verify the current user owns it.
+) -> Occasion:
+    """Load an occasion and verify the current user owns it.
 
     Parameters:
-        collection_id: The collection ID from the path.
+        occasion_id: The occasion ID from the path.
         user: The authenticated user.
         db: Database session.
 
     Returns:
-        The collection if found and owned by user.
+        The occasion if found and owned by user.
 
     Raises:
         HTTPException: 404 if not found, 403 if not owner.
     """
-    collection = db.get(Collection, collection_id)
-    if collection is None:
+    occasion = db.get(Occasion, occasion_id)
+    if occasion is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
-    if collection.owner_id != user.id:
+    if occasion.owner_id != user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
-    return collection
+    return occasion
 
 
-OwnedCollection = Annotated[Collection, Depends(get_collection_for_owner)]
+OwnedOccasion = Annotated[Occasion, Depends(get_occasion_for_owner)]

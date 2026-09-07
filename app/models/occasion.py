@@ -7,11 +7,11 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
 if TYPE_CHECKING:
-    from app.models.collection_item import CollectionItem
+    from app.models.occasion_item import OccasionItem
 
 
-class Collection(Base):
-    __tablename__ = "collections"
+class Occasion(Base):
+    __tablename__ = "occasions"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
@@ -23,6 +23,6 @@ class Collection(Base):
         server_default=func.now(), onupdate=func.now()
     )
 
-    items: Mapped[list["CollectionItem"]] = relationship(
-        "CollectionItem", lazy="selectin", cascade="all, delete-orphan"
+    items: Mapped[list["OccasionItem"]] = relationship(
+        "OccasionItem", lazy="selectin", cascade="all, delete-orphan"
     )

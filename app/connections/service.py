@@ -135,4 +135,4 @@ def get_connection_lists(
 def cascade_disconnect(db: Session, user_a_id: int, user_b_id: int) -> None:
     repo.unclaim_gifts_between(db, user_a_id, user_b_id)
     repo.delete_shares_between(db, user_a_id, user_b_id)
-    repo.delete_collection_items_between(db, user_a_id, user_b_id)
+    repo.delete_occasion_items_between(db, user_a_id, user_b_id)

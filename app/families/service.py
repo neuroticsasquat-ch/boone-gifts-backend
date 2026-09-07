@@ -2,7 +2,7 @@ from sqlalchemy.orm import Session
 
 from app.access import users_share_access
 from app.connections.repository import (
-    delete_collection_items_between,
+    delete_occasion_items_between,
     unclaim_gifts_between,
 )
 from app.families import repository as repo
@@ -14,11 +14,11 @@ from app.services.exceptions import ConflictError, ForbiddenError, NotFoundError
 
 def _cleanup_if_dropped(db: Session, a_id: int, b_id: int) -> None:
     """If two users no longer share any access path, unclaim gifts both
-    directions and drop collection items referencing each other's lists.
+    directions and drop occasion items referencing each other's lists.
     Shares are intentionally left untouched (see design §2)."""
     if not users_share_access(db, a_id, b_id):
         unclaim_gifts_between(db, a_id, b_id)
-        delete_collection_items_between(db, a_id, b_id)
+        delete_occasion_items_between(db, a_id, b_id)
 
 
 def _build_family_detail(db: Session, family_id: int) -> dict:
