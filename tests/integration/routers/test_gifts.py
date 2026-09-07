@@ -217,6 +217,49 @@ def test_get_list_shows_claims_to_shared_user(
     assert gift_data["claimed_by_id"] == admin_user.id
 
 
+# --- a list kept for a recipient (NEU-1230) ---
+#
+# Regression guards, not new behaviour: claim privacy has never consulted the
+# recipient columns — the owner is the owner, whoever the list is kept for. What
+# these pin is that narrowing `kept_for_absent_person` to `recipient_name is not
+# None` left that alone, so the list a keeper holds for an absent person is
+# still one they cannot see claims on or claim from.
+
+
+def test_get_list_with_a_recipient_hides_claims_from_the_owner(
+    client, member_headers, admin_user, shared_list, db
+):
+    shared_list.recipient_name = "Beth"
+    gift = Gift(list_id=shared_list.id, name="For Beth")
+    gift.claimed_by_id = admin_user.id
+    db.add(gift)
+    db.flush()
+    assert shared_list.kept_for_absent_person is True
+
+    response = client.get(f"/lists/{shared_list.id}", headers=member_headers)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["recipient_name"] == "Beth"
+    assert "claimed_by_id" not in data["gifts"][0]
+    assert "claimed_at" not in data["gifts"][0]
+
+
+def test_owner_cannot_claim_on_a_list_kept_for_a_recipient(
+    client, member_headers, sample_list, db
+):
+    sample_list.recipient_name = "Beth"
+    gift = Gift(list_id=sample_list.id, name="For Beth")
+    db.add(gift)
+    db.flush()
+    assert sample_list.kept_for_absent_person is True
+
+    response = client.post(
+        f"/lists/{sample_list.id}/gifts/{gift.id}/claim",
+        headers=member_headers,
+    )
+    assert response.status_code == 403
+
+
 def test_concurrent_claims_exactly_one_wins():
     """
     Verify that the atomic UPDATE WHERE claim prevents double-claiming.

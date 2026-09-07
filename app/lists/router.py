@@ -28,7 +28,6 @@ def create_list(request: GiftListCreate, user: CurrentUser, db: DbSession):
             owner=user,
             family_ids=request.family_ids,
             recipient_name=request.recipient_name,
-            recipient_has_account=request.recipient_has_account,
             account_person_id=request.account_person_id,
         )
     except ForbiddenError as e:

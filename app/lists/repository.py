@@ -17,7 +17,6 @@ def create_list(
     description: str | None,
     owner_id: int,
     recipient_name: str | None = None,
-    recipient_has_account: bool | None = None,
     account_person_id: int | None = None,
 ) -> GiftList:
     gift_list = GiftList(
@@ -25,7 +24,6 @@ def create_list(
         description=description,
         owner_id=owner_id,
         recipient_name=recipient_name,
-        recipient_has_account=recipient_has_account,
         account_person_id=account_person_id,
     )
     db.add(gift_list)

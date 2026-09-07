@@ -60,7 +60,6 @@ def test_create_list(mock_create, mock_grants):
         description="A test list",
         owner_id=1,
         recipient_name=None,
-        recipient_has_account=None,
         account_person_id=None,
     )
     mock_grants.assert_called_once_with(db, expected, owner, [7])
@@ -199,7 +198,6 @@ def _read_source(shared_via=None):
         owner_id=2,
         owner_name="Owner",
         recipient_name=None,
-        recipient_has_account=None,
         account_person_id=None,
         account_person_name=None,
         is_archived=False,

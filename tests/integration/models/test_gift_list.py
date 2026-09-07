@@ -1,3 +1,4 @@
+from app.models.account_person import AccountPerson
 from app.models.gift_list import GiftList
 from app.models.user import User
 
@@ -46,28 +47,11 @@ def test_gift_list_defaults_have_no_recipient(db):
     db.flush()
 
     assert gift_list.recipient_name is None
-    assert gift_list.recipient_has_account is None
     assert gift_list.kept_for_absent_person is False
 
 
-def test_kept_for_absent_person_false_when_recipient_has_account(db):
-    owner = User(email="owner-ha@test.com", name="Owner", password_hash="h")
-    db.add(owner)
-    db.flush()
-
-    gift_list = GiftList(
-        name="Jane's list",
-        owner_id=owner.id,
-        recipient_name="Jane",
-        recipient_has_account=True,
-    )
-    db.add(gift_list)
-    db.flush()
-
-    assert gift_list.kept_for_absent_person is False
-
-
-def test_kept_for_absent_person_true_only_for_named_absent_recipient(db):
+def test_kept_for_absent_person_true_for_any_named_recipient(db):
+    # Since NEU-1230 a recipient has one meaning, so the name alone decides it.
     owner = User(email="owner-abs@test.com", name="Owner", password_hash="h")
     db.add(owner)
     db.flush()
@@ -76,9 +60,27 @@ def test_kept_for_absent_person_true_only_for_named_absent_recipient(db):
         name="Beth's list",
         owner_id=owner.id,
         recipient_name="Beth",
-        recipient_has_account=False,
     )
     db.add(gift_list)
     db.flush()
 
     assert gift_list.kept_for_absent_person is True
+
+
+def test_kept_for_absent_person_false_for_an_account_person_list(db):
+    owner = User(email="owner-ap@test.com", name="Owner", password_hash="h")
+    db.add(owner)
+    db.flush()
+    person = AccountPerson(user_id=owner.id, name="Gran", position=0)
+    db.add(person)
+    db.flush()
+
+    gift_list = GiftList(
+        name="Gran's list",
+        owner_id=owner.id,
+        account_person_id=person.id,
+    )
+    db.add(gift_list)
+    db.flush()
+
+    assert gift_list.kept_for_absent_person is False
