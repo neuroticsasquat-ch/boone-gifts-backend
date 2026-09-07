@@ -191,22 +191,22 @@ Family visibility is an explicit per-(list, family) `ListFamilyShare` grant, not
 
 ## Commits and release notes
 
-**Commit subjects follow [Conventional Commits](https://www.conventionalcommits.org/), and this is load-bearing**: `RELEASE_NOTES.md` is generated from the commit history with [git-cliff](https://git-cliff.org/), so a commit subject *is* its release-note entry. Get the format wrong and the change is filed under the wrong heading, or missing from the notes entirely.
+**Commit subjects follow [Conventional Commits](https://www.conventionalcommits.org/), and this is load-bearing**: `RELEASE_NOTES.md` is generated from the commit history by [git-cliff](https://git-cliff.org/), configured in `cliff.toml` at the repo root. A commit subject *is* its release-note entry.
 
 ```
 <type>(<scope>): <description> (NEU-1234)
 ```
 
-- **Type** selects the section. Seen in the notes so far: `feat` → 🚀 Features, `fix` → 🐛 Bug Fixes, `docs` → 📚 Documentation, `test` → 🧪 Testing, `chore` → ⚙️ Miscellaneous Tasks, `revert` → ◀️ Revert. `cliff.toml` at the repo root is the authority on the full mapping and on what happens to a subject that doesn't parse.
-- **Scope** is optional and renders as the italic prefix: `*(families)* Add family invites API`.
-- **Description**: imperative mood, ≤72 chars, no trailing period.
-- **Ticket ID** last, as a trailing parenthetical. The squash merge appends the PR number, giving the shape the notes actually carry: `feat(families): add family invites API (NEU-343) (#97)`.
+- **Type decides whether the commit appears at all.** Only `feat`, `fix`, `perf` and `revert` are kept. `chore`, `ci`, `test`, `build`, `style`, `refactor` and `docs` are skipped outright, as is anything that doesn't parse as a conventional commit (`filter_unconventional = true`). A breaking change survives whatever its type (`protect_breaking_commits = true`).
+- **Scope is the section heading.** Entries are grouped by *scope*, not by type, so `feat(families):` and `fix(families):` land together under `### Families`. A kept commit with no scope falls under `### General` — so a missing scope isn't a formatting nit, it's the difference between a named section and the catch-all.
+- **The description is the entire entry.** git-cliff renders the description alone, capitalised, with the `type(scope):` prefix stripped. The line has to stand on its own without the type or scope for context: imperative mood, ≤72 chars, no trailing period.
+- **Ticket ID last, as a trailing parenthetical.** The squash merge appends the PR number, and both are rewritten into links (Linear, GitHub) when the notes render.
 
 **No co-author lines, no footers** — they land in the generated notes.
 
-**One ticket, one entry.** Work branches are squash-merged, so a ticket contributes exactly one commit and therefore exactly one line. That is why the PR title has to be a well-formed Conventional Commit subject: it becomes the squash commit's subject, and thence the release-note line.
+**One ticket, at most one entry.** Work branches are squash-merged, so a ticket contributes exactly one commit. That is why the PR title has to be a well-formed Conventional Commit subject: it becomes the squash commit's subject, and thence the release-note line.
 
-**Releases are cut by hand.** There is no release workflow — `git cliff` is run locally to update `RELEASE_NOTES.md`, then the release is tagged and pushed. Nothing regenerates the notes afterwards, so a malformed subject can only be fixed by rewriting history or editing the notes by hand.
+**Releases are cut by hand.** There is no release workflow — `git cliff` is run locally to update `RELEASE_NOTES.md`, then the release is tagged (`tag_pattern = "v[0-9].*"`) and pushed. Nothing regenerates the notes afterwards, so a subject that was wrong at merge time can only be fixed by rewriting history or editing the notes directly. `git cliff --unreleased` previews what the next release will read like.
 
 ## Pre-commit (planned, not yet installed)
 Pre-commit will live **on the host** (system Python), not in the container; its hooks delegate to `task` commands that run the checks inside Docker (`task lint`, `task test`). Never install pre-commit or its hooks inside the container.
