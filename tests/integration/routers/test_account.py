@@ -357,3 +357,22 @@ def test_deleting_a_person_leaves_the_list_and_its_gifts_intact(
     # No claim is ever released by this ticket.
     assert surviving.claimed_by_id == admin_user.id
     assert db.get(ListShare, share.id) is not None
+
+
+def test_staying_shared_with_no_people_is_400(client, member_headers, shared_account):
+    # Not the auto-unmark case: "still shared, but nobody is on it" contradicts
+    # itself, so it is refused rather than quietly answered with 200.
+    response = _put(client, member_headers, [])
+    assert response.status_code == 400
+    assert "two people" in response.json()["detail"]
+
+
+def test_staying_shared_with_one_person_still_auto_unmarks(
+    client, member_headers, shared_account
+):
+    # The neighbouring case, pinned so the stricter empty-array rule above
+    # cannot creep into it: dropping to one is a delete, not a contradiction.
+    gran = shared_account["people"][0]
+    response = _put(client, member_headers, [{"id": gran["id"], "name": "Gran"}])
+    assert response.status_code == 200
+    assert response.json() == {"is_shared_account": False, "people": []}

@@ -84,12 +84,16 @@ def replace_account(
             # from one that never existed — a 403 would confirm it exists.
             raise NotFoundError(UNKNOWN_PERSON_MESSAGE)
 
-    # Marking an account shared takes at least two people. This is the check on
-    # the *transition*: an account that is already shared and drops below two
-    # auto-unmarks below instead of erroring, which is what lets the client
-    # delete a person by simply leaving them out.
-    if desired.is_shared_account and not user.is_shared_account and len(desired.people) < 2:
-        raise BadRequestError(TOO_FEW_PEOPLE_MESSAGE)
+    # A shared account takes at least two people (§4.3). The one exception is
+    # an account that is already shared being cut down to exactly one: that is
+    # the documented auto-unmark below, which is what lets a client delete a
+    # person by simply leaving them out and learn from the 200 that the mode
+    # changed. Asking for a shared account with *nobody* on it is not that
+    # case — it is a contradiction, and answering 200 would silently do
+    # something other than what was asked.
+    if desired.is_shared_account and len(desired.people) < 2:
+        if not user.is_shared_account or not desired.people:
+            raise BadRequestError(TOO_FEW_PEOPLE_MESSAGE)
 
     entries = desired.people
     if len(entries) < 2:
