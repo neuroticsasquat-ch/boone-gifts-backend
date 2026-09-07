@@ -240,6 +240,10 @@ Unit (mocked repo) for the service rules; integration for the endpoints and the 
 
 ## 8. Conventions to honour
 
+- **Branch from `release/v0.4.0`, and target it with the PR** — not `main`. Every ticket in this
+  project does; see the project-wide spec §9.1. The migration in §2.1 therefore chains from whatever
+  is head on `release/v0.4.0` at implementation time, which is what NEU-1226 will have moved if the
+  occasions rename lands first.
 - **Routers use `db.flush()`, never `db.commit()`** — `get_db` commits on success.
 - Domain package shape: `router.py` (thin HTTP), `service.py` (rules, raises domain exceptions from
   `app/services/exceptions.py`), `repository.py` (queries).
