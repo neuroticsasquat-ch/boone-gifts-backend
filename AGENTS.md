@@ -110,7 +110,10 @@ Family visibility is an explicit per-(list, family) `ListFamilyShare` grant, not
 - `PUT /lists/{id}/families/{family_id}` — grant; 204, idempotent; 403 in simple mode
 - `DELETE /lists/{id}/families/{family_id}?claims=release|keep` — revoke; 204, or **409** when a member who would lose access holds a claim and no `claims` choice was given
 - `POST /lists` accepts `family_ids` — honoured in full mode (each must be the caller's family, else 403), ignored in simple mode, which shares with all the owner's families
-- `GET /lists?filter=family` — co-members' lists their owners granted to a shared family (not owned, not directly shared)
+- `GET /lists?filter=shared` — **the one shared scope**: every list another account has made
+  visible to the caller, by a direct `ListShare` **or** a family grant. Each row carries
+  `shared_via` (`{kind: user|family, id, name}`); a list reachable both ways appears once, as
+  `kind: user`. The caller's own lists are never in it. There is no `?filter=family`
 
 **A grant row implies the owner is still a member of that family.** Read queries rely on that and don't re-check, so every membership departure (`remove_member`, `delete_family`) deletes the affected grants.
 

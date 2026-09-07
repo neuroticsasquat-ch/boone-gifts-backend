@@ -227,66 +227,123 @@ def test_list_archived_filter(client, member_headers, sample_list, db):
     assert response.json()[0]["is_archived"] is True
 
 
-def test_filter_family_returns_comembers_active_lists(client, family_world):
+def test_filter_shared_returns_both_paths(client, family_world):
+    """One scope: lists shared directly AND lists granted through a family."""
     w = family_world
-    resp = client.get("/lists?filter=family", headers=_auth(w.u))
+    resp = client.get("/lists?filter=shared", headers=_auth(w.u))
     assert resp.status_code == 200
     names = {l["name"] for l in resp.json()}
-    assert names == {"P's List", "Q's List"}  # co-members' active lists only
+    assert names == {"P's List", "Q's List"}
     assert "U's List" not in names  # own list excluded
     assert "P's Archived" not in names  # archived excluded by default
 
 
-def test_filter_family_annotates_all_shared_families(client, family_world):
+def test_filter_shared_labels_a_family_only_list_with_its_family(client, family_world):
     w = family_world
-    data = {l["name"]: l for l in client.get(
-        "/lists?filter=family", headers=_auth(w.u)
-    ).json()}
-    # P shares both F1 and F2 with U -> P's list annotated with both (order-agnostic).
-    assert sorted(f["name"] for f in data["P's List"]["families"]) == [
-        "F1 Family",
-        "F2 Family",
+    row = next(
+        l for l in client.get("/lists?filter=shared", headers=_auth(w.u)).json()
+        if l["name"] == "Q's List"
+    )
+    assert row["shared_via"] == {"kind": "family", "id": w.f2.id, "name": "F2 Family"}
+
+
+def test_filter_shared_dedupes_both_paths_to_the_direct_share(client, family_world):
+    """L_p is shared directly with U *and* granted to two of U's families: one row,
+    labelled with the owner, because the direct share is the more specific fact."""
+    w = family_world
+    rows = [
+        l for l in client.get("/lists?filter=shared", headers=_auth(w.u)).json()
+        if l["name"] == "P's List"
     ]
-    # Q shares only F2 with U.
-    assert sorted(f["name"] for f in data["Q's List"]["families"]) == ["F2 Family"]
+    assert len(rows) == 1
+    assert rows[0]["shared_via"] == {"kind": "user", "id": w.p.id, "name": "Owner P"}
 
 
-def test_filter_family_includes_list_also_manually_shared(client, family_world):
+def test_filter_shared_dedupes_a_list_granted_to_two_families(client, family_world, db):
+    """P's List is granted to both of U's families. Without the direct share it is
+    still one row, carrying one of them."""
     w = family_world
-    fam = {l["name"] for l in client.get(
-        "/lists?filter=family", headers=_auth(w.u)
-    ).json()}
-    shared = {l["name"] for l in client.get(
-        "/lists?filter=shared", headers=_auth(w.u)
-    ).json()}
-    assert "P's List" in fam  # appears under family
-    assert "P's List" in shared  # AND under shared (independent views)
+    db.query(ListShare).filter(ListShare.list_id == w.l_p.id).delete()
+    db.flush()
+
+    rows = [
+        l for l in client.get("/lists?filter=shared", headers=_auth(w.u)).json()
+        if l["name"] == "P's List"
+    ]
+    assert len(rows) == 1
+    assert rows[0]["shared_via"]["kind"] == "family"
+    assert rows[0]["shared_via"]["id"] in {w.f1.id, w.f2.id}
 
 
-def test_filter_family_archived_returns_archived_only(client, family_world):
+def test_filter_shared_direct_only_list_is_labelled_with_its_owner(
+    client, admin_user, admin_headers, shared_list, member_user
+):
+    data = client.get("/lists?filter=shared", headers=admin_headers).json()
+    assert len(data) == 1
+    assert data[0]["shared_via"] == {
+        "kind": "user",
+        "id": member_user.id,
+        "name": member_user.name,
+    }
+
+
+def test_filter_shared_excludes_own_list_granted_to_own_family(client, family_world, db):
+    """U grants their own list to a family U belongs to: still not shared *with* U."""
     w = family_world
-    resp = client.get("/lists?filter=family&archived=true", headers=_auth(w.u))
+    db.add(ListFamilyShare(list_id=w.l_u.id, family_id=w.f1.id))
+    db.flush()
+
+    names = {
+        l["name"] for l in client.get("/lists?filter=shared", headers=_auth(w.u)).json()
+    }
+    assert "U's List" not in names
+
+
+def test_filter_shared_archived_returns_archived_only(client, family_world):
+    w = family_world
+    resp = client.get("/lists?filter=shared&archived=true", headers=_auth(w.u))
     assert resp.status_code == 200
-    assert {l["name"] for l in resp.json()} == {"P's Archived"}
+    data = resp.json()
+    assert {l["name"] for l in data} == {"P's Archived"}
+    assert data[0]["shared_via"] == {"kind": "family", "id": w.f1.id, "name": "F1 Family"}
 
 
-def test_filter_family_empty_for_non_member(client, member_user, member_headers):
-    # member_user belongs to no family.
-    resp = client.get("/lists?filter=family", headers=member_headers)
+def test_filter_shared_drops_a_list_whose_family_grant_was_revoked(
+    client, family_world, db
+):
+    w = family_world
+    db.query(ListFamilyShare).filter(ListFamilyShare.list_id == w.l_q.id).delete()
+    db.flush()
+
+    names = {
+        l["name"] for l in client.get("/lists?filter=shared", headers=_auth(w.u)).json()
+    }
+    assert "Q's List" not in names
+
+
+def test_filter_shared_orders_most_recently_updated_first(client, family_world):
+    w = family_world
+    data = client.get("/lists?filter=shared", headers=_auth(w.u)).json()
+    assert [l["updated_at"] for l in data] == sorted(
+        (l["updated_at"] for l in data), reverse=True
+    )
+
+
+def test_filter_shared_empty_for_a_user_with_no_shares(client, member_headers):
+    resp = client.get("/lists?filter=shared", headers=member_headers)
     assert resp.status_code == 200
     assert resp.json() == []
 
 
-def test_filter_shared_has_empty_families_annotation(client, family_world):
-    w = family_world
-    resp = client.get("/lists?filter=shared", headers=_auth(w.u))
+def test_owned_lists_carry_no_shared_via(client, member_headers, sample_list):
+    resp = client.get("/lists?filter=owned", headers=member_headers)
     assert resp.status_code == 200
-    for l in resp.json():
-        assert l["families"] == []
+    assert resp.json()[0]["shared_via"] is None
 
 
-def test_filter_invalid_value_rejected(client, member_headers):
-    resp = client.get("/lists?filter=bogus", headers=member_headers)
+def test_filter_family_is_gone(client, member_headers):
+    """The separate family scope was folded into ?filter=shared."""
+    resp = client.get("/lists?filter=family", headers=member_headers)
     assert resp.status_code == 422
 
 

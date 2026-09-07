@@ -81,8 +81,8 @@ def test_full_mode_create_with_no_families_shares_with_none(client, db, world):
     assert resp.status_code == 201
     assert _granted(db, resp.json()["id"]) == set()
 
-    # And it is invisible to a co-member's family view.
-    fam = client.get("/lists?filter=family", headers=_auth(world.rel)).json()
+    # And it is invisible in a co-member's shared scope.
+    fam = client.get("/lists?filter=shared", headers=_auth(world.rel)).json()
     assert "Private" not in {l["name"] for l in fam}
 
 
@@ -95,11 +95,15 @@ def test_full_mode_create_with_family_ids_shares_with_exactly_those(client, db, 
     assert resp.status_code == 201
     assert _granted(db, resp.json()["id"]) == {world.boones.id}
 
-    rel_view = client.get("/lists?filter=family", headers=_auth(world.rel)).json()
+    rel_view = client.get("/lists?filter=shared", headers=_auth(world.rel)).json()
     entry = next(l for l in rel_view if l["name"] == "Birthday")
-    assert [f["name"] for f in entry["families"]] == ["The Boones"]
+    assert entry["shared_via"] == {
+        "kind": "family",
+        "id": world.boones.id,
+        "name": "The Boones",
+    }
 
-    cousin_view = client.get("/lists?filter=family", headers=_auth(world.cousin)).json()
+    cousin_view = client.get("/lists?filter=shared", headers=_auth(world.cousin)).json()
     assert "Birthday" not in {l["name"] for l in cousin_view}
 
 
