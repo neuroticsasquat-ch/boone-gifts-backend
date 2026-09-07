@@ -1,5 +1,6 @@
 from sqlalchemy.orm import Session
 
+from app.account import service as account_service
 from app.list_families import service as list_family_service
 from app.lists import repository as repo
 from app.models.gift_list import GiftList
@@ -9,7 +10,21 @@ from app.schemas.gift_list import (
     GiftListDetailViewer,
     SharedVia,
 )
-from app.services.exceptions import ConflictError
+from app.services.exceptions import BadRequestError, ConflictError
+
+RECIPIENT_EXCLUSIVE_MESSAGE = (
+    "A list is for an account person or for someone with no account, not both."
+)
+
+
+def _reject_person_with_recipient(
+    account_person_id: int | None, recipient_name: str | None
+) -> None:
+    """§4.1, checked against the *resulting* row. The schema validator catches
+    both fields arriving in one payload; only the service can see a partial
+    update landing on a row that already carries the other one."""
+    if account_person_id is not None and recipient_name is not None:
+        raise BadRequestError(RECIPIENT_EXCLUSIVE_MESSAGE)
 
 
 def create_list(
@@ -17,7 +32,10 @@ def create_list(
     family_ids: list[int] | None = None,
     recipient_name: str | None = None,
     recipient_has_account: bool | None = None,
+    account_person_id: int | None = None,
 ) -> GiftList:
+    _reject_person_with_recipient(account_person_id, recipient_name)
+    account_service.get_owned_person_id(db, owner.id, account_person_id)
     gift_list = repo.create_list(
         db,
         name=name,
@@ -25,6 +43,7 @@ def create_list(
         owner_id=owner.id,
         recipient_name=recipient_name,
         recipient_has_account=recipient_has_account,
+        account_person_id=account_person_id,
     )
     list_family_service.set_grants_on_create(db, gift_list, owner, family_ids or [])
     return gift_list
@@ -60,6 +79,16 @@ def get_list(
 
 
 def update_list(db: Session, gift_list: GiftList, updates: dict) -> GiftList:
+    # `updates` is model_dump(exclude_unset=True), so an absent key means "leave
+    # it alone" and an explicit null means "clear it". Resolve both fields to
+    # what the row will actually hold before judging the pair.
+    resulting_person_id = updates.get("account_person_id", gift_list.account_person_id)
+    resulting_recipient = updates.get("recipient_name", gift_list.recipient_name)
+    _reject_person_with_recipient(resulting_person_id, resulting_recipient)
+    if "account_person_id" in updates:
+        account_service.get_owned_person_id(
+            db, gift_list.owner_id, updates["account_person_id"]
+        )
     return repo.update_list(db, gift_list, updates)
 
 

@@ -9,6 +9,7 @@ from sqlalchemy import text
 from app.config import settings
 from app.database import engine
 from app.rate_limit import limiter, rate_limit_exceeded_handler
+from app.account import router as account
 from app.auth import router as auth
 from app.users import router as users
 from app.invites import router as invites
@@ -51,6 +52,7 @@ def create_app() -> FastAPI:
     )
 
     application.include_router(auth.router)
+    application.include_router(account.router)
     application.include_router(users.router)
     application.include_router(invites.router)
     application.include_router(lists.router)

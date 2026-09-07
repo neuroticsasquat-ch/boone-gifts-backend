@@ -1,4 +1,5 @@
 from app.models.user import User
+from app.models.account_person import AccountPerson
 from app.models.invite import Invite
 from app.models.gift_list import GiftList
 from app.models.gift import Gift
@@ -14,6 +15,7 @@ from app.models.family_invite import FamilyInvite
 
 __all__ = [
     "User",
+    "AccountPerson",
     "Invite",
     "GiftList",
     "Gift",

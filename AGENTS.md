@@ -59,11 +59,12 @@ app/
   database.py          # Engine, sessionmaker, Base
   dependencies.py      # get_db, token creation, get_current_user, require_admin, access deps
   access.py            # Visibility predicates: can_view_list, users_share_access
-  models/              # user, invite, gift_list, gift, list_share, list_family_share,
-                       # connection, occasion, occasion_item, password_reset_token,
-                       # family, family_member, family_invite
+  models/              # user, account_person, invite, gift_list, gift, list_share,
+                       # list_family_share, connection, occasion, occasion_item,
+                       # password_reset_token, family, family_member, family_invite
   schemas/             # Pydantic request/response models, one module per domain
   services/exceptions.py   # NotFoundError, ForbiddenError, ConflictError, BadRequestError
+  account/             # GET/PUT /account — the shared-account flag and its people
   auth/                # /auth login, register, refresh, logout, profile
   users/               # /users CRUD (admin-only)
   invites/             # /invites CRUD (admin-only)
@@ -104,6 +105,32 @@ tests/
 - `POST/GET/PUT/DELETE /families`, `DELETE /families/{id}/members/{user_id}` (leave or remove), `PUT /families/{id}/members/{user_id}/role`
 - Invites: `POST/GET/DELETE /families/{id}/invites`, `GET /families/invites` (incoming), `POST /families/invites/{token}/accept|decline`. Accepting adds the member **and** sets `users.simple_mode` from the invite — including at account creation when the invitee registers through the invite token
 
+### Shared accounts
+One login used by more than one person. **Account people are labels, not identities** — the account
+stays the single identity everywhere (one family member, one connection, one claimer), and nothing
+about visibility, claims, membership or attribution knows they exist. See
+`docs/adr/0001-shared-accounts-are-one-identity.md`; that includes the accepted cost that claims stay
+hidden on every list the account owns, so a couple cannot coordinate shopping through the app.
+
+- **Tables**: `users.is_shared_account`; `account_people` (user_id, name, position, unique per
+  (user_id, name)); `lists.account_person_id`, nullable
+- `GET /account` returns the flag and the ordered people. `PUT /account` is a **declarative full
+  replace**: an entry with an id renames in place, one without creates, an omitted person is
+  deleted, and array order becomes `position`
+- **`is_shared_account` is deliberately not a JWT claim.** That is why this is its own resource
+  rather than `PUT /auth/profile`, which reissues both tokens on every call — renaming a person must
+  not rotate the session
+- **A shared account always has at least two people**: marking shared with fewer is a 400, and
+  falling below two auto-unmarks the account, removing the last person and clearing every label
+- **Destructive changes need `?confirm=true`**: a PUT that would strip labels off lists (deleting a
+  person lists point at, or unmarking the account) returns **409** with `{"affected_lists": N}` and
+  changes nothing. Mirrors the `?claims=release|keep` revoke idiom
+- **Deleting a person nulls, never cascades**: their lists become household lists; the lists, gifts,
+  shares and claims are untouched, and no claim is ever released
+- The people rules answer **400, not 422**, so they live in `app/account/service.py` rather than in
+  a request-body validator; the same applies to the person/recipient exclusivity rule, which only
+  `app/lists/service.py` can judge against the *stored* row on a partial update
+
 ### Per-family list sharing
 Family visibility is an explicit per-(list, family) `ListFamilyShare` grant, not implied by co-membership.
 - `GET /lists/{id}/families` — every family the **owner** belongs to, each with a `shared` flag; readable in both modes
@@ -119,6 +146,7 @@ Family visibility is an explicit per-(list, family) `ListFamilyShare` grant, not
 
 ## Data model notes
 - **Lists carry a recipient**: `recipient_name` plus three-valued `recipient_has_account`. Read `GiftList.kept_for_absent_person` rather than testing the column — `not recipient_has_account` is also true for a list with no recipient at all
+- **Lists may instead carry an account person**: `account_person_id`, mutually exclusive with `recipient_name` (both null is a legal household list). See "Shared accounts" below
 - **Migrations** (chain order):
 
 | Migration ID | Description |
@@ -134,17 +162,19 @@ Family visibility is an explicit per-(list, family) `ListFamilyShare` grant, not
 | `c4f2a91d7e30` | `list_family_shares` table + backfill of every list against its owner's families |
 | `d8a3f1c05b64` | `recipient_name` / `recipient_has_account` on lists |
 | `a7c4e2b91f38` | `collections` → `occasions`, `collection_items` → `occasion_items` |
+| `b5e1c7d92a04` | `users.is_shared_account`, `account_people` table, `lists.account_person_id` |
 
 ## Testing
-- ~659 test functions across 55 files
+- ~709 test functions across 53 files
 - `tests/unit/` mocks the repository layer and tests service logic in isolation
 - `tests/integration/` runs against `APP_TEST_DATABASE_URL`; each test is wrapped in a transaction that rolls back, so no data persists
 - Conftest fixtures: `db`, `client`, `admin_user`, `member_user`, `admin_headers`, `member_headers`, `sample_list`, `shared_list`, `connection`, `occasion`
+- `tests/integration/test_migration_*.py` run the real Alembic revisions against a throwaway SQLite file — the only place schema-level behaviour (backfills, foreign keys, downgrades) is actually exercised, since the rest of the suite builds tables from the models
 - The rate limiter is reset by an autouse fixture
 - CI runs `uv sync --frozen && pytest tests/ -v` with `APP_JWT_SECRET=ci-test-secret`
 
 ## Dev fixtures
-`python -m scripts.seed_dev` (add `--reset` to re-seed, `--purge` to remove) builds the visibility states a single account can't produce: a directly shared list, a list reaching you only through a family, a list kept for someone with no account, an archived list, a claimed gift, a pending connection request, and a simple-mode user. All fixture users are `@example.com`, and purge only deletes rows reachable from them. Run it with `-m` — executing the file directly puts `scripts/` on `sys.path` instead of `/app`.
+`python -m scripts.seed_dev` (add `--reset` to re-seed, `--purge` to remove) builds the visibility states a single account can't produce: a directly shared list, a list reaching you only through a family, a list kept for someone with no account, an archived list, a claimed gift, a pending connection request, a simple-mode user, and a shared account with two people. All fixture users are `@example.com`, and purge only deletes rows reachable from them. Run it with `-m` — executing the file directly puts `scripts/` on `sys.path` instead of `/app`.
 
 ## Critical conventions
 - **Router endpoints use `db.flush()`, never `db.commit()`** — the `get_db` dependency commits on success and rolls back on exception. In tests the fixture rolls back. New endpoints must follow this.
