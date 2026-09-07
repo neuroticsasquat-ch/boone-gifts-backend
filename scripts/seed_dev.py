@@ -26,8 +26,8 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 
 from app.database import Base, SessionLocal, engine
-from app.models.collection import Collection
-from app.models.collection_item import CollectionItem
+from app.models.occasion import Occasion
+from app.models.occasion_item import OccasionItem
 from app.models.connection import Connection
 from app.models.family import Family
 from app.models.family_invite import FamilyInvite
@@ -72,9 +72,9 @@ def purge(db) -> int:
             select(Family.id).where(Family.created_by_id.in_(user_ids))
         ).scalars()
     )
-    collection_ids = set(
+    occasion_ids = set(
         db.execute(
-            select(Collection.id).where(Collection.owner_id.in_(user_ids))
+            select(Occasion.id).where(Occasion.owner_id.in_(user_ids))
         ).scalars()
     )
 
@@ -93,13 +93,13 @@ def purge(db) -> int:
             ListFamilyShare.list_id.in_(list_ids)
             | ListFamilyShare.family_id.in_(family_ids)
         ).delete(synchronize_session=False)
-    if collection_ids or list_ids:
-        db.query(CollectionItem).filter(
-            CollectionItem.collection_id.in_(collection_ids)
-            | CollectionItem.list_id.in_(list_ids)
+    if occasion_ids or list_ids:
+        db.query(OccasionItem).filter(
+            OccasionItem.occasion_id.in_(occasion_ids)
+            | OccasionItem.list_id.in_(list_ids)
         ).delete(synchronize_session=False)
-    if collection_ids:
-        db.query(Collection).filter(Collection.id.in_(collection_ids)).delete(
+    if occasion_ids:
+        db.query(Occasion).filter(Occasion.id.in_(occasion_ids)).delete(
             synchronize_session=False
         )
     if family_ids or user_ids:
@@ -229,14 +229,14 @@ def seed(db, password: str) -> None:
     db.add(ListFamilyShare(list_id=tom_christmas.id, family_id=extended.id))
     db.add(ListFamilyShare(list_id=dave_wishlist.id, family_id=extended.id))
 
-    christmas = Collection(owner_id=tom.id, name="Christmas 2026 Shopping",
+    christmas = Occasion(owner_id=tom.id, name="Christmas 2026 Shopping",
                            description="Everyone I'm buying for")
-    birthdays = Collection(owner_id=tom.id, name="Kids' Birthdays")
+    birthdays = Occasion(owner_id=tom.id, name="Kids' Birthdays")
     db.add_all([christmas, birthdays])
     db.flush()
     for gift_list in (jane_wishlist, carol_wishlist, gran_list):
-        db.add(CollectionItem(collection_id=christmas.id, list_id=gift_list.id))
-    db.add(CollectionItem(collection_id=birthdays.id, list_id=beths_list.id))
+        db.add(OccasionItem(occasion_id=christmas.id, list_id=gift_list.id))
+    db.add(OccasionItem(occasion_id=birthdays.id, list_id=beths_list.id))
 
     db.commit()
 
@@ -268,7 +268,7 @@ def main() -> None:
             sys.exit(1)
 
         seed(db, args.password)
-        print("Seeded 5 users, 8 lists, 2 families, 2 collections.")
+        print("Seeded 5 users, 8 lists, 2 families, 2 occasions.")
         print(f"Log in as any of: {', '.join(SEED_EMAILS)}")
         print(f"Password: {args.password}")
     finally:

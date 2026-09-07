@@ -60,7 +60,7 @@ app/
   dependencies.py      # get_db, token creation, get_current_user, require_admin, access deps
   access.py            # Visibility predicates: can_view_list, users_share_access
   models/              # user, invite, gift_list, gift, list_share, list_family_share,
-                       # connection, collection, collection_item, password_reset_token,
+                       # connection, occasion, occasion_item, password_reset_token,
                        # family, family_member, family_invite
   schemas/             # Pydantic request/response models, one module per domain
   services/exceptions.py   # NotFoundError, ForbiddenError, ConflictError, BadRequestError
@@ -72,7 +72,7 @@ app/
   shares/              # /lists/{id}/shares — direct shares, cascade on unshare
   list_families/       # /lists/{id}/families — per-family grants, claim handling on revoke
   connections/         # /connections lifecycle + cascade disconnect
-  collections/         # /collections CRUD + items with access checks
+  occasions/           # /occasions CRUD + items with access checks
   families/            # /families CRUD, membership, cascade cleanup
   family_invites/      # Family invite create/accept/decline/revoke
   meta/                # GET /meta — URL metadata with SSRF protection
@@ -95,7 +95,7 @@ tests/
 
 ## Visibility model
 
-`can_view_list` in `app/access.py` is the single predicate: **owner OR a `ListShare` row OR the owner granted the list to a family the viewer belongs to.** A connection alone does not grant visibility, and neither does bare family co-membership. Claims and collection-item gating both route through it, so family-visible lists work for those operations without special cases.
+`can_view_list` in `app/access.py` is the single predicate: **owner OR a `ListShare` row OR the owner granted the list to a family the viewer belongs to.** A connection alone does not grant visibility, and neither does bare family co-membership. Claims and occasion-item gating both route through it, so family-visible lists work for those operations without special cases.
 
 `users_share_access` answers a different question — "is there a standing relationship" — and is deliberately **not** gated on grants.
 
@@ -130,12 +130,13 @@ Family visibility is an explicit per-(list, family) `ListFamilyShare` grant, not
 | `13861325bacf` | `declined_at` on `family_invites` |
 | `c4f2a91d7e30` | `list_family_shares` table + backfill of every list against its owner's families |
 | `d8a3f1c05b64` | `recipient_name` / `recipient_has_account` on lists |
+| `a7c4e2b91f38` | `collections` → `occasions`, `collection_items` → `occasion_items` |
 
 ## Testing
 - ~659 test functions across 55 files
 - `tests/unit/` mocks the repository layer and tests service logic in isolation
 - `tests/integration/` runs against `APP_TEST_DATABASE_URL`; each test is wrapped in a transaction that rolls back, so no data persists
-- Conftest fixtures: `db`, `client`, `admin_user`, `member_user`, `admin_headers`, `member_headers`, `sample_list`, `shared_list`, `connection`, `collection`
+- Conftest fixtures: `db`, `client`, `admin_user`, `member_user`, `admin_headers`, `member_headers`, `sample_list`, `shared_list`, `connection`, `occasion`
 - The rate limiter is reset by an autouse fixture
 - CI runs `uv sync --frozen && pytest tests/ -v` with `APP_JWT_SECRET=ci-test-secret`
 
@@ -147,8 +148,8 @@ Family visibility is an explicit per-(list, family) `ListFamilyShare` grant, not
 - **SQLite FK enforcement**: `PRAGMA foreign_keys=ON` is set by a SQLAlchemy event listener on every connection — SQLite disables FK enforcement by default.
 - **Alembic uses `render_as_batch=True`** — SQLite can't do most `ALTER TABLE`, so batch mode recreates tables.
 - **Packages install to `/opt/venv`** (`UV_PROJECT_ENVIRONMENT=/opt/venv`) so the bind mount can't shadow them; `/opt/venv/bin` is on `PATH`. After `task add`, rebuild the image so the dep survives container recreation.
-- **Revoking a family grant is claim-aware but claim-blind**: owners never see claim state on their own lists, so a 409 reveals only *that* claims exist — no counts, no gift or claimer names. `claims=release` unclaims for the members losing access; `claims=keep` leaves them standing. Collection items are deleted either way, matching `delete_share`.
-- **Cascade cleanup on relationship loss**: when a member leaves, is removed, or a family is deleted, the service calls `unclaim_gifts_between` / `delete_collection_items_between` per affected pair — but only when the two users no longer share access by any remaining path (no accepted connection, no other common family). `list_shares` rows are never touched; family access doesn't create share rows.
+- **Revoking a family grant is claim-aware but claim-blind**: owners never see claim state on their own lists, so a 409 reveals only *that* claims exist — no counts, no gift or claimer names. `claims=release` unclaims for the members losing access; `claims=keep` leaves them standing. Occasion items are deleted either way, matching `delete_share`.
+- **Cascade cleanup on relationship loss**: when a member leaves, is removed, or a family is deleted, the service calls `unclaim_gifts_between` / `delete_occasion_items_between` per affected pair — but only when the two users no longer share access by any remaining path (no accepted connection, no other common family). `list_shares` rows are never touched; family access doesn't create share rows.
 
 ## Debugging CI failures
 - **If told a CI/workflow run failed, always investigate via `gh` first** before running anything locally or claiming it's fixed: `gh run list -w CI` to find the failed run, then `gh run view <id> --log-failed`.

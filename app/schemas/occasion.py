@@ -6,23 +6,23 @@ from pydantic import BaseModel
 from app.schemas.gift_list import GiftListRead
 
 
-class CollectionCreate(BaseModel):
-    """Schema for creating a new collection."""
+class OccasionCreate(BaseModel):
+    """Schema for creating a new occasion."""
 
     name: str
     description: str | None = None
 
 
-class CollectionUpdate(BaseModel):
-    """Schema for updating an existing collection."""
+class OccasionUpdate(BaseModel):
+    """Schema for updating an existing occasion."""
 
     name: str | None = None
     description: str | None = None
     is_archived: bool | None = None
 
 
-class CollectionRead(BaseModel):
-    """Schema for reading a collection without nested lists."""
+class OccasionRead(BaseModel):
+    """Schema for reading an occasion without nested lists."""
 
     id: int
     name: str
@@ -35,8 +35,8 @@ class CollectionRead(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class CollectionDetail(BaseModel):
-    """Schema for reading a collection with its nested gift lists."""
+class OccasionDetail(BaseModel):
+    """Schema for reading an occasion with its nested gift lists."""
 
     id: int
     name: str
@@ -50,14 +50,14 @@ class CollectionDetail(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class CollectionItemCreate(BaseModel):
-    """Schema for adding a gift list to a collection."""
+class OccasionItemCreate(BaseModel):
+    """Schema for adding a gift list to an occasion."""
 
     list_id: int
 
 
 class ShoppingListItem(BaseModel):
-    """Schema for a single item in a collection's shopping list."""
+    """Schema for a single item in an occasion's shopping list."""
 
     id: int
     name: str
