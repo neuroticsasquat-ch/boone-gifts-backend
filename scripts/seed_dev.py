@@ -2,8 +2,8 @@
 
 The states that matter are the ones a single account cannot produce on its own:
 a list shared directly with you, a list that reaches you only through a family,
-a list you keep for someone with no account, a pending connection request, and a
-simple-mode user. Reproducing those by hand through the UI takes five logins, so
+a list that reaches you both ways at once, a list you keep for someone with no
+account, a pending connection request, and a simple-mode user. Reproducing those by hand through the UI takes five logins, so
 this builds them in one pass.
 
     docker compose exec api python -m scripts.seed_dev            # seed
@@ -181,7 +181,7 @@ def seed(db, password: str) -> None:
                           has_account=False)
     new_list(tom, "Birthday 2025", archived=True)
     jane_wishlist = new_list(jane, "Jane's Wishlist", "Things I'd like")
-    carol_wishlist = new_list(carol, "Carol's Wishlist", "Family shared only")
+    carol_wishlist = new_list(carol, "Carol's Wishlist", "Shared directly AND via family")
     gran_list = new_list(gran, "Gran's List")
     dave_wishlist = new_list(dave, "Dave's Wishlist")
     db.flush()
@@ -221,8 +221,12 @@ def seed(db, password: str) -> None:
     db.add(ListShare(list_id=jane_wishlist.id, user_id=tom.id))
     db.add(ListShare(list_id=tom_wishlist.id, user_id=jane.id))
 
-    # Family shares. Carol's and Gran's lists reach Tom *only* this way — they
-    # are the lists that prove the family/direct split.
+    # Carol's list reaches Tom BOTH ways — it is the list that proves the dedupe
+    # rule: one row in the shared scope, labelled with Carol, not the family.
+    db.add(ListShare(list_id=carol_wishlist.id, user_id=tom.id))
+
+    # Family shares. Gran's and Dave's lists reach Tom *only* this way — they are
+    # the lists that prove the family/direct split.
     db.add(ListFamilyShare(list_id=carol_wishlist.id, family_id=boones.id))
     db.add(ListFamilyShare(list_id=gran_list.id, family_id=boones.id))
     db.add(ListFamilyShare(list_id=tom_christmas.id, family_id=boones.id))

@@ -4,8 +4,11 @@ from app.list_families import service as list_family_service
 from app.lists import repository as repo
 from app.models.gift_list import GiftList
 from app.models.user import User
-from app.schemas.family import FamilyRef
-from app.schemas.gift_list import GiftListDetailOwner, GiftListDetailViewer
+from app.schemas.gift_list import (
+    GiftListDetailOwner,
+    GiftListDetailViewer,
+    SharedVia,
+)
 from app.services.exceptions import ConflictError
 
 
@@ -31,27 +34,21 @@ def get_lists(db: Session, user_id: int, filter: str | None = None, archived: bo
     if filter == "owned":
         return repo.get_lists_by_owner(db, user_id, archived=archived)
     elif filter == "shared":
-        return repo.get_shared_lists(db, user_id, archived=archived)
-    elif filter == "family":
-        return get_family_lists(db, user_id, archived=archived)
+        return get_shared_lists(db, user_id, archived=archived)
     else:
         return repo.get_all_visible_lists(db, user_id, archived=archived)
 
 
-def get_family_lists(db: Session, user_id: int, archived: bool = False) -> list[GiftList]:
-    """Lists owned by the caller's family co-members, each annotated with the
-    family/families granting visibility. Co-members sharing multiple families
-    collapse to one list carrying all granting families (order preserved)."""
-    rows = repo.get_family_visible_lists_with_grants(db, user_id, archived=archived)
-    by_id: dict[int, GiftList] = {}
-    for gift_list, family_id, family_name in rows:
-        existing = by_id.get(gift_list.id)
-        if existing is None:
-            gift_list.families = []
-            by_id[gift_list.id] = gift_list
-            existing = gift_list
-        existing.families.append(FamilyRef(id=family_id, name=family_name))
-    return list(by_id.values())
+def get_shared_lists(db: Session, user_id: int, archived: bool = False) -> list[GiftList]:
+    """Every list someone else has made visible to the caller — directly or through
+    a family — each annotated with the `shared_via` source that explains it. This is
+    the one shared scope; there is no separate family view."""
+    rows = repo.get_shared_lists_with_source(db, user_id, archived=archived)
+    lists: list[GiftList] = []
+    for gift_list, kind, source_id, source_name in rows:
+        gift_list.shared_via = SharedVia(kind=kind, id=source_id, name=source_name)
+        lists.append(gift_list)
+    return lists
 
 
 def get_list(

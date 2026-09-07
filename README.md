@@ -135,7 +135,9 @@ Creates five `@example.com` users with the list-visibility states a single accou
 
 ### Lists (`/lists`)
 - `POST /lists` -- Create a gift list (accepts `family_ids` in full mode)
-- `GET /lists` -- Your lists; `?filter=owned|shared|family`, `?archived=true`
+- `GET /lists` -- Your lists; `?filter=owned|shared`, `?archived=true`. `shared` is the one
+  scope for lists others made visible to you, direct or via a family; each row carries
+  `shared_via`
 - `GET /lists/unseen-count` -- Count of newly shared lists you haven't opened
 - `GET /lists/{id}` -- Get list with gifts (owner view or viewer view)
 - `PUT /lists/{id}` -- Update a list

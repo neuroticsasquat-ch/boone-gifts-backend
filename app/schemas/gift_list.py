@@ -1,9 +1,17 @@
 from datetime import datetime
 from decimal import Decimal
+from typing import Literal
 
 from pydantic import BaseModel, field_validator, model_validator
 
-from app.schemas.family import FamilyRef
+
+class SharedVia(BaseModel):
+    """How a shared list reached the viewer: the owner who shared it directly, or
+    the family it was granted to. Absent on a list the viewer owns."""
+
+    kind: Literal["user", "family"]
+    id: int
+    name: str
 
 
 class RecipientFields(BaseModel):
@@ -82,7 +90,7 @@ class GiftListRead(BaseModel):
     is_archived: bool
     gift_count: int = 0
     claimed_count: int = 0
-    families: list[FamilyRef] = []
+    shared_via: SharedVia | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -104,7 +112,7 @@ class GiftListRead(BaseModel):
                 "is_archived": data.is_archived,
                 "gift_count": len(gifts),
                 "claimed_count": sum(1 for g in gifts if g.claimed_by_id is not None),
-                "families": getattr(data, "families", []),
+                "shared_via": getattr(data, "shared_via", None),
                 "created_at": data.created_at,
                 "updated_at": data.updated_at,
             }
