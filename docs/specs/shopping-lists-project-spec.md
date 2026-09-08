@@ -176,14 +176,26 @@ viewer-facing rows. It is currently returned for lists the caller owns.
 
 ### 6.2 Filing a claim under an occasion
 
-Resolved when the claim is made, from the candidate set — the occasions the list is shared to,
-intersected with the families the claimer belongs to:
+Resolved when the claim is made, from **two** derived sets — not one. Conflating them produces
+either permanent nagging or unfixable misfilings. Full reasoning in
+`docs/specs/NEU-1269-claim-filing-and-candidates.md` §2 (backend repo).
 
-| Candidates | Behaviour |
+- **`allowed`** — the occasions the list is shared to, intersected with the families the claimer
+  belongs to, **archived included**. Validates an explicitly supplied `occasion_id`.
+- **`suggested`** — the active members of `allowed`; or, when none are active, all of `allowed`.
+  Decides auto-pick versus prompt, and is what the client renders.
+
+| `suggested` | Behaviour |
 |---|---|
 | 0 (a direct share) | `occasion_id = null`. Budgets reach it only through a folder |
 | 1 | Set silently. No prompt |
 | 2+ | Prompt once, store the answer |
+
+`suggested` narrows to active because occasions never disappear: by year three a standing wishlist is
+shared to three Christmases, and a uniform set would prompt on every claim forever with the answer
+obvious each time. `allowed` stays wide so a late claim filed under the wrong occasion can still be
+corrected — archive Christmas 2026 while "Gran's 80th" is active and a January Christmas purchase
+lands under Gran's 80th, which must remain fixable.
 
 Always editable afterwards from the occasion's shopping tab. Deliberately **stored, not derived**: a
 budget whose history rewrites itself when someone revokes a share, archives an occasion, or leaves a
@@ -393,14 +405,30 @@ A list reachable both directly and through an occasion still reports `kind: "use
 
 | Method | Path | Body |
 |---|---|---|
-| `POST` | `/lists/{list_id}/gifts/{gift_id}/claim` | `{ "occasion_id": int \| null }` — 400 if 2+ candidates and none given; 403 if the given occasion is not a candidate |
+| `POST` | `/lists/{list_id}/gifts/{gift_id}/claim` | `{ "occasion_id": int \| null }` — **400** if 2+ `suggested` and none given; an id outside `allowed` still returns **201** with the filing fallen back (§10.4.1) |
 | `DELETE` | `/lists/{list_id}/gifts/{gift_id}/claim` | Deletes the row; clears purchase and amount with it |
 | `POST` | `/lists/{list_id}/gifts/{gift_id}/purchase` | `{ "amount_paid": Decimal \| null }` |
 | `DELETE` | `/lists/{list_id}/gifts/{gift_id}/purchase` | Clears `purchased_at`; leaves `amount_paid` for re-ticking |
 | `PATCH` | `/claims/{id}` | `{ "occasion_id"?, "amount_paid"? }` — claimer only |
 
-`GET /lists/{id}/claim-candidates` (or the equivalent on the list detail payload) tells the client
-whether to prompt. Settle its exact home in the owning ticket's `/planit`.
+`GiftListDetailViewer` carries **`claim_candidates`** (= `suggested`) and **`claim_options`**
+(= `allowed`), each entry `{ id, name, is_archived, family: { id, name } }`. This is how the client
+knows whether to prompt, without a second request. **`GiftListDetailOwner` carries neither, ever** —
+this is the field class that produced the `claimed_count` leak (§6.1).
+
+#### 10.4.1 Why a stale `occasion_id` does not fail the claim
+
+**Claiming is competitive** — it exists so two people don't buy the same present. A share revoked
+between the client's read and the user's click is not the client's fault, and failing that claim
+hands the gift to whoever clicks next, over a private bookkeeping detail nobody else can see. So
+`POST` falls back and still creates the claim.
+
+The **400** stays, because it is a different fault: the client had `claim_candidates` and should have
+prompted. Without it, a frontend regression that silently stops prompting is indistinguishable from a
+working one — every claim files under null, every budget quietly reads low, and no test fails.
+
+`PATCH /claims/{id}` **does** return 403 for an occasion outside `allowed`: there the user is
+explicitly choosing, and silently recording something else would be worse than refusing.
 
 ### 10.5 Budgets
 
@@ -569,6 +597,7 @@ Resolve these in the owning ticket's `/planit`, not by guessing:
    hardcodes a literal `$`. Budgets make this visible. At minimum this project adds one shared
    formatting helper used by every money site; whether it also adds a stored currency is the call to
    make in the ticket that introduces `budgets`.
-2. **Where claim candidates are exposed** — a dedicated `GET /lists/{id}/claim-candidates`, or a
-   field on the existing list-detail viewer payload. Decide in the claims ticket; the client needs
-   to know whether to prompt *before* the user clicks claim.
+2. ~~**Where claim candidates are exposed.**~~ **Resolved 2026-09-08** in NEU-1269's `/planit`:
+   `claim_candidates` and `claim_options` ride on the viewer list-detail payload (§10.4), and the
+   `allowed`/`suggested` split is settled in §6.2. See
+   `docs/specs/NEU-1269-claim-filing-and-candidates.md` in the backend repo.
