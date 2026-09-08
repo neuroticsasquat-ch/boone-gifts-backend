@@ -4,7 +4,12 @@ from pydantic import BaseModel
 from app.dependencies import CurrentUser, DbSession, OwnedList, ViewableList
 from app.lists import service as list_service
 from app.schemas.gift_list import GiftListCreate, GiftListRead, GiftListUpdate
-from app.services.exceptions import ConflictError, ForbiddenError
+from app.services.exceptions import (
+    BadRequestError,
+    ConflictError,
+    ForbiddenError,
+    NotFoundError,
+)
 
 router = APIRouter(prefix="/lists", tags=["lists"])
 
@@ -23,17 +28,21 @@ def create_list(request: GiftListCreate, user: CurrentUser, db: DbSession):
             owner=user,
             family_ids=request.family_ids,
             recipient_name=request.recipient_name,
-            recipient_has_account=request.recipient_has_account,
+            account_person_id=request.account_person_id,
         )
     except ForbiddenError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except NotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except BadRequestError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
 @router.get("", response_model=list[GiftListRead])
 def list_lists(
     user: CurrentUser,
     db: DbSession,
-    filter: str | None = Query(default=None, pattern="^(owned|shared|family)$"),
+    filter: str | None = Query(default=None, pattern="^(owned|shared)$"),
     archived: bool = Query(default=False),
 ):
     return list_service.get_lists(db, user_id=user.id, filter=filter, archived=archived)
@@ -54,9 +63,14 @@ def get_list(gift_list: ViewableList, user: CurrentUser, db: DbSession):
 
 @router.put("/{list_id}", response_model=GiftListRead)
 def update_list(updates: GiftListUpdate, gift_list: OwnedList, db: DbSession):
-    return list_service.update_list(
-        db, gift_list, updates=updates.model_dump(exclude_unset=True)
-    )
+    try:
+        return list_service.update_list(
+            db, gift_list, updates=updates.model_dump(exclude_unset=True)
+        )
+    except NotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except BadRequestError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
 @router.delete("/{list_id}", status_code=status.HTTP_204_NO_CONTENT)

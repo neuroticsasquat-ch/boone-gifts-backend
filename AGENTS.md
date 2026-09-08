@@ -59,11 +59,12 @@ app/
   database.py          # Engine, sessionmaker, Base
   dependencies.py      # get_db, token creation, get_current_user, require_admin, access deps
   access.py            # Visibility predicates: can_view_list, users_share_access
-  models/              # user, invite, gift_list, gift, list_share, list_family_share,
-                       # connection, collection, collection_item, password_reset_token,
-                       # family, family_member, family_invite
+  models/              # user, account_person, invite, gift_list, gift, list_share,
+                       # list_family_share, connection, occasion, occasion_item,
+                       # password_reset_token, family, family_member, family_invite
   schemas/             # Pydantic request/response models, one module per domain
   services/exceptions.py   # NotFoundError, ForbiddenError, ConflictError, BadRequestError
+  account/             # GET/PUT /account — the shared-account flag and its people
   auth/                # /auth login, register, refresh, logout, profile
   users/               # /users CRUD (admin-only)
   invites/             # /invites CRUD (admin-only)
@@ -72,7 +73,7 @@ app/
   shares/              # /lists/{id}/shares — direct shares, cascade on unshare
   list_families/       # /lists/{id}/families — per-family grants, claim handling on revoke
   connections/         # /connections lifecycle + cascade disconnect
-  collections/         # /collections CRUD + items with access checks
+  occasions/           # /occasions CRUD + items with access checks
   families/            # /families CRUD, membership, cascade cleanup
   family_invites/      # Family invite create/accept/decline/revoke
   meta/                # GET /meta — URL metadata with SSRF protection
@@ -95,7 +96,7 @@ tests/
 
 ## Visibility model
 
-`can_view_list` in `app/access.py` is the single predicate: **owner OR a `ListShare` row OR the owner granted the list to a family the viewer belongs to.** A connection alone does not grant visibility, and neither does bare family co-membership. Claims and collection-item gating both route through it, so family-visible lists work for those operations without special cases.
+`can_view_list` in `app/access.py` is the single predicate: **owner OR a `ListShare` row OR the owner granted the list to a family the viewer belongs to.** A connection alone does not grant visibility, and neither does bare family co-membership. Claims and occasion-item gating both route through it, so family-visible lists work for those operations without special cases.
 
 `users_share_access` answers a different question — "is there a standing relationship" — and is deliberately **not** gated on grants.
 
@@ -104,18 +105,48 @@ tests/
 - `POST/GET/PUT/DELETE /families`, `DELETE /families/{id}/members/{user_id}` (leave or remove), `PUT /families/{id}/members/{user_id}/role`
 - Invites: `POST/GET/DELETE /families/{id}/invites`, `GET /families/invites` (incoming), `POST /families/invites/{token}/accept|decline`. Accepting adds the member **and** sets `users.simple_mode` from the invite — including at account creation when the invitee registers through the invite token
 
+### Shared accounts
+One login used by more than one person. **Account people are labels, not identities** — the account
+stays the single identity everywhere (one family member, one connection, one claimer), and nothing
+about visibility, claims, membership or attribution knows they exist. See
+`docs/adr/0001-shared-accounts-are-one-identity.md`; that includes the accepted cost that claims stay
+hidden on every list the account owns, so a couple cannot coordinate shopping through the app.
+
+- **Tables**: `users.is_shared_account`; `account_people` (user_id, name, position, unique per
+  (user_id, name)); `lists.account_person_id`, nullable
+- `GET /account` returns the flag and the ordered people. `PUT /account` is a **declarative full
+  replace**: an entry with an id renames in place, one without creates, an omitted person is
+  deleted, and array order becomes `position`
+- **`is_shared_account` is deliberately not a JWT claim.** That is why this is its own resource
+  rather than `PUT /auth/profile`, which reissues both tokens on every call — renaming a person must
+  not rotate the session
+- **A shared account always has at least two people**: marking shared with fewer is a 400, and
+  falling below two auto-unmarks the account, removing the last person and clearing every label
+- **Destructive changes need `?confirm=true`**: a PUT that would strip labels off lists (deleting a
+  person lists point at, or unmarking the account) returns **409** with `{"affected_lists": N}` and
+  changes nothing. Mirrors the `?claims=release|keep` revoke idiom
+- **Deleting a person nulls, never cascades**: their lists become household lists; the lists, gifts,
+  shares and claims are untouched, and no claim is ever released
+- The people rules answer **400, not 422**, so they live in `app/account/service.py` rather than in
+  a request-body validator; the same applies to the person/recipient exclusivity rule, which only
+  `app/lists/service.py` can judge against the *stored* row on a partial update
+
 ### Per-family list sharing
 Family visibility is an explicit per-(list, family) `ListFamilyShare` grant, not implied by co-membership.
 - `GET /lists/{id}/families` — every family the **owner** belongs to, each with a `shared` flag; readable in both modes
 - `PUT /lists/{id}/families/{family_id}` — grant; 204, idempotent; 403 in simple mode
 - `DELETE /lists/{id}/families/{family_id}?claims=release|keep` — revoke; 204, or **409** when a member who would lose access holds a claim and no `claims` choice was given
 - `POST /lists` accepts `family_ids` — honoured in full mode (each must be the caller's family, else 403), ignored in simple mode, which shares with all the owner's families
-- `GET /lists?filter=family` — co-members' lists their owners granted to a shared family (not owned, not directly shared)
+- `GET /lists?filter=shared` — **the one shared scope**: every list another account has made
+  visible to the caller, by a direct `ListShare` **or** a family grant. Each row carries
+  `shared_via` (`{kind: user|family, id, name}`); a list reachable both ways appears once, as
+  `kind: user`. The caller's own lists are never in it. There is no `?filter=family`
 
 **A grant row implies the owner is still a member of that family.** Read queries rely on that and don't re-check, so every membership departure (`remove_member`, `delete_family`) deletes the affected grants.
 
 ## Data model notes
-- **Lists carry a recipient**: `recipient_name` plus three-valued `recipient_has_account`. Read `GiftList.kept_for_absent_person` rather than testing the column — `not recipient_has_account` is also true for a list with no recipient at all
+- **Lists carry a recipient**: `recipient_name` alone, meaning one thing — a person with no account. Read `GiftList.kept_for_absent_person` rather than testing the column. The co-resident case that `recipient_has_account = true` used to cover is an account person now (dropped in `e2b7d4a91c53`)
+- **Lists may instead carry an account person**: `account_person_id`, mutually exclusive with `recipient_name` (both null is a legal household list). See "Shared accounts" below
 - **Migrations** (chain order):
 
 | Migration ID | Description |
@@ -130,29 +161,53 @@ Family visibility is an explicit per-(list, family) `ListFamilyShare` grant, not
 | `13861325bacf` | `declined_at` on `family_invites` |
 | `c4f2a91d7e30` | `list_family_shares` table + backfill of every list against its owner's families |
 | `d8a3f1c05b64` | `recipient_name` / `recipient_has_account` on lists |
+| `a7c4e2b91f38` | `collections` → `occasions`, `collection_items` → `occasion_items` |
+| `b5e1c7d92a04` | `users.is_shared_account`, `account_people` table, `lists.account_person_id` |
+| `e2b7d4a91c53` | Drop `lists.recipient_has_account` |
 
 ## Testing
-- ~659 test functions across 55 files
+- ~709 test functions across 53 files
 - `tests/unit/` mocks the repository layer and tests service logic in isolation
 - `tests/integration/` runs against `APP_TEST_DATABASE_URL`; each test is wrapped in a transaction that rolls back, so no data persists
-- Conftest fixtures: `db`, `client`, `admin_user`, `member_user`, `admin_headers`, `member_headers`, `sample_list`, `shared_list`, `connection`, `collection`
+- Conftest fixtures: `db`, `client`, `admin_user`, `member_user`, `admin_headers`, `member_headers`, `sample_list`, `shared_list`, `connection`, `occasion`
+- `tests/integration/test_migration_*.py` run the real Alembic revisions against a throwaway SQLite file — the only place schema-level behaviour (backfills, foreign keys, downgrades) is actually exercised, since the rest of the suite builds tables from the models
 - The rate limiter is reset by an autouse fixture
 - CI runs `uv sync --frozen && pytest tests/ -v` with `APP_JWT_SECRET=ci-test-secret`
 
 ## Dev fixtures
-`python -m scripts.seed_dev` (add `--reset` to re-seed, `--purge` to remove) builds the visibility states a single account can't produce: a directly shared list, a list reaching you only through a family, a list kept for someone with no account, an archived list, a claimed gift, a pending connection request, and a simple-mode user. All fixture users are `@example.com`, and purge only deletes rows reachable from them. Run it with `-m` — executing the file directly puts `scripts/` on `sys.path` instead of `/app`.
+`python -m scripts.seed_dev` (add `--reset` to re-seed, `--purge` to remove) builds the visibility states a single account can't produce: a directly shared list, a list reaching you only through a family, a list kept for someone with no account, an archived list, a claimed gift, a pending connection request, a simple-mode user, and a shared account with two people. All fixture users are `@example.com`, and purge only deletes rows reachable from them. Run it with `-m` — executing the file directly puts `scripts/` on `sys.path` instead of `/app`.
 
 ## Critical conventions
 - **Router endpoints use `db.flush()`, never `db.commit()`** — the `get_db` dependency commits on success and rolls back on exception. In tests the fixture rolls back. New endpoints must follow this.
 - **SQLite FK enforcement**: `PRAGMA foreign_keys=ON` is set by a SQLAlchemy event listener on every connection — SQLite disables FK enforcement by default.
 - **Alembic uses `render_as_batch=True`** — SQLite can't do most `ALTER TABLE`, so batch mode recreates tables.
 - **Packages install to `/opt/venv`** (`UV_PROJECT_ENVIRONMENT=/opt/venv`) so the bind mount can't shadow them; `/opt/venv/bin` is on `PATH`. After `task add`, rebuild the image so the dep survives container recreation.
-- **Revoking a family grant is claim-aware but claim-blind**: owners never see claim state on their own lists, so a 409 reveals only *that* claims exist — no counts, no gift or claimer names. `claims=release` unclaims for the members losing access; `claims=keep` leaves them standing. Collection items are deleted either way, matching `delete_share`.
-- **Cascade cleanup on relationship loss**: when a member leaves, is removed, or a family is deleted, the service calls `unclaim_gifts_between` / `delete_collection_items_between` per affected pair — but only when the two users no longer share access by any remaining path (no accepted connection, no other common family). `list_shares` rows are never touched; family access doesn't create share rows.
+- **Revoking a family grant is claim-aware but claim-blind**: owners never see claim state on their own lists, so a 409 reveals only *that* claims exist — no counts, no gift or claimer names. `claims=release` unclaims for the members losing access; `claims=keep` leaves them standing. Occasion items are deleted either way, matching `delete_share`.
+- **Cascade cleanup on relationship loss**: when a member leaves, is removed, or a family is deleted, the service calls `unclaim_gifts_between` / `delete_occasion_items_between` per affected pair — but only when the two users no longer share access by any remaining path (no accepted connection, no other common family). `list_shares` rows are never touched; family access doesn't create share rows.
 
 ## Debugging CI failures
 - **If told a CI/workflow run failed, always investigate via `gh` first** before running anything locally or claiming it's fixed: `gh run list -w CI` to find the failed run, then `gh run view <id> --log-failed`.
 - **Never report something as fixed based on local runs alone** — CI runs in a Docker container and may surface issues local runs miss. Push, then confirm a fresh CI run passes before declaring done.
+
+## Commits and release notes
+
+**Commit subjects follow [Conventional Commits](https://www.conventionalcommits.org/), and this is load-bearing**: `RELEASE_NOTES.md` is generated from the commit history by [git-cliff](https://git-cliff.org/), configured in `cliff.toml` at the repo root. A commit subject *is* its release-note entry.
+
+```
+<type>(<scope>): <description> (NEU-1234)
+```
+
+- **Type decides whether the commit appears at all.** Only `feat`, `fix`, `perf` and `revert` are kept. `chore`, `ci`, `test`, `build`, `style`, `refactor` and `docs` are skipped outright, as is anything that doesn't parse as a conventional commit (`filter_unconventional = true`). A breaking change survives whatever its type (`protect_breaking_commits = true`).
+- **Every commit carries a scope.** `type(scope):`, never a bare `type:`. This is a hard rule, not a preference: entries are grouped by *scope*, not by type, so the scope **is** the section heading — `feat(families):` and `fix(families):` land together under `### Families`. Omit it and the entry falls into the `### General` catch-all (`default_scope = "general"`), which is where release notes go to become unreadable.
+- **Scope the skipped types too.** `docs`, `chore`, `test` and friends never reach the notes today, but scoping them costs nothing, keeps the log uniform to read and grep, and means the history is already correct if `cliff.toml`'s parsers ever change. Pick the scope from the area of the codebase the change lives in — the same vocabulary the existing sections use.
+- **The description is the entire entry.** git-cliff renders the description alone, capitalised, with the `type(scope):` prefix stripped. The line has to stand on its own without the type or scope for context: imperative mood, ≤72 chars, no trailing period.
+- **Ticket ID last, as a trailing parenthetical.** The squash merge appends the PR number, and both are rewritten into links (Linear, GitHub) when the notes render.
+
+**No co-author lines, no footers** — they land in the generated notes.
+
+**One ticket, at most one entry.** Work branches are squash-merged, so a ticket contributes exactly one commit. That is why the PR title has to be a well-formed Conventional Commit subject: it becomes the squash commit's subject, and thence the release-note line.
+
+**Releases are cut by hand.** There is no release workflow — `git cliff` is run locally to update `RELEASE_NOTES.md`, then the release is tagged (`tag_pattern = "v[0-9].*"`) and pushed. Nothing regenerates the notes afterwards, so a subject that was wrong at merge time can only be fixed by rewriting history or editing the notes directly. `git cliff --unreleased` previews what the next release will read like.
 
 ## Pre-commit (planned, not yet installed)
 Pre-commit will live **on the host** (system Python), not in the container; its hooks delegate to `task` commands that run the checks inside Docker (`task lint`, `task test`). Never install pre-commit or its hooks inside the container.

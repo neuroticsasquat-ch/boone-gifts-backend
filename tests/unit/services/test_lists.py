@@ -10,6 +10,7 @@ from app.schemas.gift_list import (
     GiftListDetailOwner,
     GiftListDetailViewer,
     GiftListRead,
+    SharedVia,
 )
 
 
@@ -26,6 +27,11 @@ def _make_gift_list(
     gl.owner_id = owner_id
     gl.gifts = []
     gl.owner_name = "Test User"
+    # Explicit, because MagicMock(spec=...) hands back a truthy mock for any
+    # attribute left unset — and the service reads both of these to judge the
+    # person/recipient exclusivity of the resulting row.
+    gl.recipient_name = None
+    gl.account_person_id = None
     return gl
 
 
@@ -54,7 +60,7 @@ def test_create_list(mock_create, mock_grants):
         description="A test list",
         owner_id=1,
         recipient_name=None,
-        recipient_has_account=None,
+        account_person_id=None,
     )
     mock_grants.assert_called_once_with(db, expected, owner, [7])
     assert result == expected
@@ -87,11 +93,10 @@ def test_get_lists_owned(mock_get_owned):
     assert len(result) == 2
 
 
-@patch(f"{REPO}.get_shared_lists")
+@patch(f"{REPO}.get_shared_lists_with_source")
 def test_get_lists_shared(mock_get_shared):
     db = MagicMock()
-    lists = [_make_gift_list(id=3, owner_id=2)]
-    mock_get_shared.return_value = lists
+    mock_get_shared.return_value = [(_make_gift_list(id=3, owner_id=2), "user", 2, "Jane")]
 
     result = service.get_lists(db, user_id=1, filter="shared")
 
@@ -180,10 +185,10 @@ def test_delete_list_blocked_by_claims(mock_has_claims):
         service.delete_list(db, gift_list)
 
 
-# --- GiftListRead.families annotation ---
+# --- GiftListRead.shared_via annotation ---
 
 
-def _read_source(families=None):
+def _read_source(shared_via=None):
     """A stand-in for a GiftList ORM instance that GiftListRead.model_validate
     consumes (it reads `.gifts` to compute counts)."""
     obj = SimpleNamespace(
@@ -193,107 +198,82 @@ def _read_source(families=None):
         owner_id=2,
         owner_name="Owner",
         recipient_name=None,
-        recipient_has_account=None,
+        account_person_id=None,
+        account_person_name=None,
         is_archived=False,
         gifts=[],
         created_at=datetime(2026, 1, 1),
         updated_at=datetime(2026, 1, 2),
     )
-    if families is not None:
-        obj.families = families
+    if shared_via is not None:
+        obj.shared_via = shared_via
     return obj
 
 
-def test_gift_list_read_includes_families():
-    obj = _read_source(
-        families=[{"id": 1, "name": "Boone Family"}, {"id": 2, "name": "Holidays"}]
-    )
+def test_gift_list_read_includes_shared_via():
+    obj = _read_source(shared_via={"kind": "family", "id": 1, "name": "Boone Family"})
     result = GiftListRead.model_validate(obj)
-    assert [(f.id, f.name) for f in result.families] == [
-        (1, "Boone Family"),
-        (2, "Holidays"),
-    ]
+    assert result.shared_via.kind == "family"
+    assert (result.shared_via.id, result.shared_via.name) == (1, "Boone Family")
 
 
-def test_gift_list_read_families_defaults_empty():
-    obj = _read_source()  # no families attribute set
+def test_gift_list_read_shared_via_defaults_none():
+    obj = _read_source()  # no shared_via attribute set — an owned list
     result = GiftListRead.model_validate(obj)
-    assert result.families == []
+    assert result.shared_via is None
 
 
-# --- get_family_lists (grouping + annotation) ---
+# --- get_shared_lists (source annotation) ---
 
 
-@patch(f"{REPO}.get_family_visible_lists_with_grants")
-def test_get_family_lists_single_family(mock_grants):
+@patch(f"{REPO}.get_shared_lists_with_source")
+def test_get_shared_lists_annotates_direct_share(mock_rows):
     db = MagicMock()
     gl = SimpleNamespace(id=10)
-    mock_grants.return_value = [(gl, 1, "Boone Family")]
+    mock_rows.return_value = [(gl, "user", 2, "Jane Boone")]
 
-    result = service.get_family_lists(db, user_id=5)
+    result = service.get_shared_lists(db, user_id=5)
 
-    mock_grants.assert_called_once_with(db, 5, archived=False)
-    assert len(result) == 1
-    assert result[0].id == 10
-    assert [(f.id, f.name) for f in result[0].families] == [(1, "Boone Family")]
+    mock_rows.assert_called_once_with(db, 5, archived=False)
+    assert result == [gl]
+    assert result[0].shared_via == SharedVia(kind="user", id=2, name="Jane Boone")
 
 
-@patch(f"{REPO}.get_family_visible_lists_with_grants")
-def test_get_family_lists_dedups_multi_family(mock_grants):
+@patch(f"{REPO}.get_shared_lists_with_source")
+def test_get_shared_lists_annotates_family_grant(mock_rows):
     db = MagicMock()
-    # Two rows for the same list id (co-member shares two families) -> one list.
-    gl_a = SimpleNamespace(id=10)
-    gl_b = SimpleNamespace(id=10)
-    mock_grants.return_value = [(gl_a, 1, "Boone Family"), (gl_b, 2, "Holidays")]
+    gl = SimpleNamespace(id=10)
+    mock_rows.return_value = [(gl, "family", 1, "Boone Family")]
 
-    result = service.get_family_lists(db, user_id=5)
+    result = service.get_shared_lists(db, user_id=5)
 
-    assert len(result) == 1
-    assert result[0] is gl_a  # first occurrence wins
-    assert [f.name for f in result[0].families] == ["Boone Family", "Holidays"]
+    assert result[0].shared_via == SharedVia(kind="family", id=1, name="Boone Family")
 
 
-@patch(f"{REPO}.get_family_visible_lists_with_grants")
-def test_get_family_lists_multiple_owners_preserves_order(mock_grants):
+@patch(f"{REPO}.get_shared_lists_with_source")
+def test_get_shared_lists_preserves_repository_order(mock_rows):
     db = MagicMock()
-    gl1 = SimpleNamespace(id=10)
-    gl2 = SimpleNamespace(id=20)
-    mock_grants.return_value = [(gl1, 1, "F1"), (gl2, 1, "F1")]
+    gl1, gl2 = SimpleNamespace(id=10), SimpleNamespace(id=20)
+    mock_rows.return_value = [(gl1, "user", 2, "Jane"), (gl2, "family", 1, "Boones")]
 
-    result = service.get_family_lists(db, user_id=5)
+    result = service.get_shared_lists(db, user_id=5)
 
     assert [l.id for l in result] == [10, 20]
-    assert [f.name for f in result[0].families] == ["F1"]
-    assert [f.name for f in result[1].families] == ["F1"]
 
 
-@patch(f"{REPO}.get_family_visible_lists_with_grants")
-def test_get_family_lists_empty(mock_grants):
+@patch(f"{REPO}.get_shared_lists_with_source")
+def test_get_shared_lists_empty(mock_rows):
     db = MagicMock()
-    mock_grants.return_value = []
+    mock_rows.return_value = []
 
-    result = service.get_family_lists(db, user_id=5)
-
-    assert result == []
+    assert service.get_shared_lists(db, user_id=5) == []
 
 
-@patch(f"{REPO}.get_family_visible_lists_with_grants")
-def test_get_lists_family_filter_dispatches(mock_grants):
+@patch(f"{REPO}.get_shared_lists_with_source")
+def test_get_lists_shared_archived_passthrough(mock_rows):
     db = MagicMock()
-    gl = SimpleNamespace(id=10)
-    mock_grants.return_value = [(gl, 1, "F1")]
+    mock_rows.return_value = []
 
-    result = service.get_lists(db, user_id=5, filter="family")
+    service.get_lists(db, user_id=5, filter="shared", archived=True)
 
-    mock_grants.assert_called_once_with(db, 5, archived=False)
-    assert len(result) == 1
-
-
-@patch(f"{REPO}.get_family_visible_lists_with_grants")
-def test_get_lists_family_archived_passthrough(mock_grants):
-    db = MagicMock()
-    mock_grants.return_value = []
-
-    service.get_lists(db, user_id=5, filter="family", archived=True)
-
-    mock_grants.assert_called_once_with(db, 5, archived=True)
+    mock_rows.assert_called_once_with(db, 5, archived=True)

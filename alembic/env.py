@@ -7,7 +7,7 @@ from alembic import context
 from app.config import settings
 from app.database import Base
 from app.models import (
-    User, Invite, GiftList, Gift, ListShare, Connection, Collection, CollectionItem
+    User, Invite, GiftList, Gift, ListShare, Connection, Occasion, OccasionItem
 )
 
 config = context.config

@@ -5,8 +5,8 @@ from types import SimpleNamespace
 import pytest
 
 from app.dependencies import create_access_token
-from app.models.collection import Collection
-from app.models.collection_item import CollectionItem
+from app.models.occasion import Occasion
+from app.models.occasion_item import OccasionItem
 from app.models.family import Family
 from app.models.family_member import FamilyMember
 from app.models.gift import Gift
@@ -81,8 +81,8 @@ def test_full_mode_create_with_no_families_shares_with_none(client, db, world):
     assert resp.status_code == 201
     assert _granted(db, resp.json()["id"]) == set()
 
-    # And it is invisible to a co-member's family view.
-    fam = client.get("/lists?filter=family", headers=_auth(world.rel)).json()
+    # And it is invisible in a co-member's shared scope.
+    fam = client.get("/lists?filter=shared", headers=_auth(world.rel)).json()
     assert "Private" not in {l["name"] for l in fam}
 
 
@@ -95,11 +95,15 @@ def test_full_mode_create_with_family_ids_shares_with_exactly_those(client, db, 
     assert resp.status_code == 201
     assert _granted(db, resp.json()["id"]) == {world.boones.id}
 
-    rel_view = client.get("/lists?filter=family", headers=_auth(world.rel)).json()
+    rel_view = client.get("/lists?filter=shared", headers=_auth(world.rel)).json()
     entry = next(l for l in rel_view if l["name"] == "Birthday")
-    assert [f["name"] for f in entry["families"]] == ["The Boones"]
+    assert entry["shared_via"] == {
+        "kind": "family",
+        "id": world.boones.id,
+        "name": "The Boones",
+    }
 
-    cousin_view = client.get("/lists?filter=family", headers=_auth(world.cousin)).json()
+    cousin_view = client.get("/lists?filter=shared", headers=_auth(world.cousin)).json()
     assert "Birthday" not in {l["name"] for l in cousin_view}
 
 
@@ -267,20 +271,20 @@ def test_put_and_delete_forbidden_in_simple_mode(client, db, world, owned_list):
 @pytest.fixture
 def claimed(db, world, owned_list):
     """Owner's list granted to the Boones, with a gift claimed by rel and a
-    collection item pointing at it from rel's collection."""
+    occasion item pointing at it from rel's occasion."""
     db.add(ListFamilyShare(list_id=owned_list.id, family_id=world.boones.id))
     gift = Gift(list_id=owned_list.id, name="A Book", claimed_by_id=world.rel.id)
     db.add(gift)
-    collection = Collection(name="Rel's Shopping", owner_id=world.rel.id)
-    db.add(collection)
+    occasion = Occasion(name="Rel's Shopping", owner_id=world.rel.id)
+    db.add(occasion)
     db.flush()
-    db.add(CollectionItem(collection_id=collection.id, list_id=owned_list.id))
+    db.add(OccasionItem(occasion_id=occasion.id, list_id=owned_list.id))
     db.flush()
-    return SimpleNamespace(gift=gift, collection=collection)
+    return SimpleNamespace(gift=gift, occasion=occasion)
 
 
-def _items(db, collection_id):
-    return db.query(CollectionItem).filter_by(collection_id=collection_id).count()
+def _items(db, occasion_id):
+    return db.query(OccasionItem).filter_by(occasion_id=occasion_id).count()
 
 
 def test_revoke_with_no_affected_claims_returns_204(client, db, world, owned_list):
@@ -313,10 +317,10 @@ def test_revoke_with_a_claim_returns_409_and_changes_nothing(
     assert _granted(db, owned_list.id) == {world.boones.id}
     db.refresh(claimed.gift)
     assert claimed.gift.claimed_by_id == world.rel.id
-    assert _items(db, claimed.collection.id) == 1
+    assert _items(db, claimed.occasion.id) == 1
 
 
-def test_revoke_claims_release_unclaims_and_drops_collection_items(
+def test_revoke_claims_release_unclaims_and_drops_occasion_items(
     client, db, world, owned_list, claimed
 ):
     resp = client.delete(
@@ -328,10 +332,10 @@ def test_revoke_claims_release_unclaims_and_drops_collection_items(
     db.refresh(claimed.gift)
     assert claimed.gift.claimed_by_id is None
     assert claimed.gift.claimed_at is None
-    assert _items(db, claimed.collection.id) == 0
+    assert _items(db, claimed.occasion.id) == 0
 
 
-def test_revoke_claims_keep_leaves_the_claim_but_drops_collection_items(
+def test_revoke_claims_keep_leaves_the_claim_but_drops_occasion_items(
     client, db, world, owned_list, claimed
 ):
     resp = client.delete(
@@ -342,7 +346,7 @@ def test_revoke_claims_keep_leaves_the_claim_but_drops_collection_items(
     assert _granted(db, owned_list.id) == set()
     db.refresh(claimed.gift)
     assert claimed.gift.claimed_by_id == world.rel.id
-    assert _items(db, claimed.collection.id) == 0
+    assert _items(db, claimed.occasion.id) == 0
 
 
 def test_revoke_release_spares_a_claimer_who_still_has_a_list_share(
@@ -358,7 +362,7 @@ def test_revoke_release_spares_a_claimer_who_still_has_a_list_share(
     assert resp.status_code == 204
     db.refresh(claimed.gift)
     assert claimed.gift.claimed_by_id == world.rel.id
-    assert _items(db, claimed.collection.id) == 1
+    assert _items(db, claimed.occasion.id) == 1
 
 
 def test_revoke_release_spares_a_claimer_who_sees_it_via_another_family(
@@ -376,7 +380,7 @@ def test_revoke_release_spares_a_claimer_who_sees_it_via_another_family(
     assert resp.status_code == 204
     db.refresh(claimed.gift)
     assert claimed.gift.claimed_by_id == world.rel.id
-    assert _items(db, claimed.collection.id) == 1
+    assert _items(db, claimed.occasion.id) == 1
 
 
 def test_revoke_without_claims_is_not_blocked_by_a_claimer_who_keeps_access(

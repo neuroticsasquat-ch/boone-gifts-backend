@@ -158,18 +158,18 @@ def test_shared_users_not_shared(client, admin_user, admin_headers, sample_list)
     assert response.status_code == 403
 
 
-def test_unshare_removes_collection_items(
+def test_unshare_removes_occasion_items(
     client, member_headers, shared_list, admin_user, db
 ):
-    from app.models.collection import Collection
-    from app.models.collection_item import CollectionItem
+    from app.models.occasion import Occasion
+    from app.models.occasion_item import OccasionItem
 
-    admin_collection = Collection(name="Admin Collection", owner_id=admin_user.id)
-    db.add(admin_collection)
+    admin_occasion = Occasion(name="Admin Occasion", owner_id=admin_user.id)
+    db.add(admin_occasion)
     db.flush()
 
-    item = CollectionItem(
-        collection_id=admin_collection.id, list_id=shared_list.id
+    item = OccasionItem(
+        occasion_id=admin_occasion.id, list_id=shared_list.id
     )
     db.add(item)
     db.flush()
@@ -183,9 +183,9 @@ def test_unshare_removes_collection_items(
     from sqlalchemy import select
 
     remaining = db.execute(
-        select(CollectionItem).where(
-            CollectionItem.collection_id == admin_collection.id,
-            CollectionItem.list_id == shared_list.id,
+        select(OccasionItem).where(
+            OccasionItem.occasion_id == admin_occasion.id,
+            OccasionItem.list_id == shared_list.id,
         )
     ).scalar_one_or_none()
     assert remaining is None

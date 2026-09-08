@@ -1,18 +1,26 @@
 from datetime import datetime
 from decimal import Decimal
+from typing import Literal
 
 from pydantic import BaseModel, field_validator, model_validator
 
-from app.schemas.family import FamilyRef
+
+class SharedVia(BaseModel):
+    """How a shared list reached the viewer: the owner who shared it directly, or
+    the family it was granted to. Absent on a list the viewer owns."""
+
+    kind: Literal["user", "family"]
+    id: int
+    name: str
 
 
 class RecipientFields(BaseModel):
-    """The two columns naming who a list is *for*, plus the invariant tying them
-    together. Shared by the create and update payloads so the rule cannot drift
-    between them."""
+    """The columns naming who a list is *for*, plus the invariants tying them
+    together. Shared by the create and update payloads so the rules cannot
+    drift between them."""
 
     recipient_name: str | None = None
-    recipient_has_account: bool | None = None
+    account_person_id: int | None = None
 
     @field_validator("recipient_name")
     @classmethod
@@ -21,13 +29,13 @@ class RecipientFields(BaseModel):
             return None
         return v.strip() or None
 
-    @model_validator(mode="after")
-    def require_name_with_account_answer(self):
-        # A flag with no name is meaningless, and the two fields are one control
-        # in the UI, so they always travel together.
-        if self.recipient_has_account is not None and self.recipient_name is None:
-            raise ValueError("recipient_has_account requires a recipient_name")
-        return self
+    # `account_person_id` and `recipient_name` are mutually exclusive — a list
+    # is for an account person, or for someone with no account, or for neither
+    # (spec §4.1, §4.2; supplying neither is a legal household list). That rule
+    # is *not* here: a partial update cannot see the stored value of the other
+    # field, and a ValueError in a request-body validator surfaces as 422 where
+    # §4.1 asks for 400. app/lists/service.py enforces it against the resulting
+    # row, which is the only place both halves are visible.
 
 
 class GiftListCreate(RecipientFields):
@@ -78,11 +86,12 @@ class GiftListRead(BaseModel):
     owner_id: int
     owner_name: str
     recipient_name: str | None = None
-    recipient_has_account: bool | None = None
+    account_person_id: int | None = None
+    account_person_name: str | None = None
     is_archived: bool
     gift_count: int = 0
     claimed_count: int = 0
-    families: list[FamilyRef] = []
+    shared_via: SharedVia | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -100,11 +109,12 @@ class GiftListRead(BaseModel):
                 "owner_id": data.owner_id,
                 "owner_name": data.owner_name,
                 "recipient_name": data.recipient_name,
-                "recipient_has_account": data.recipient_has_account,
+                "account_person_id": data.account_person_id,
+                "account_person_name": data.account_person_name,
                 "is_archived": data.is_archived,
                 "gift_count": len(gifts),
                 "claimed_count": sum(1 for g in gifts if g.claimed_by_id is not None),
-                "families": getattr(data, "families", []),
+                "shared_via": getattr(data, "shared_via", None),
                 "created_at": data.created_at,
                 "updated_at": data.updated_at,
             }
@@ -118,7 +128,8 @@ class GiftListDetailOwner(BaseModel):
     owner_id: int
     owner_name: str
     recipient_name: str | None = None
-    recipient_has_account: bool | None = None
+    account_person_id: int | None = None
+    account_person_name: str | None = None
     is_archived: bool
     gifts: list[GiftOwnerRead]
     created_at: datetime
@@ -134,7 +145,8 @@ class GiftListDetailViewer(BaseModel):
     owner_id: int
     owner_name: str
     recipient_name: str | None = None
-    recipient_has_account: bool | None = None
+    account_person_id: int | None = None
+    account_person_name: str | None = None
     is_archived: bool
     gifts: list[GiftRead]
     created_at: datetime

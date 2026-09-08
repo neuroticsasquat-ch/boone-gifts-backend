@@ -2,9 +2,10 @@
 
 The states that matter are the ones a single account cannot produce on its own:
 a list shared directly with you, a list that reaches you only through a family,
-a list you keep for someone with no account, a pending connection request, and a
-simple-mode user. Reproducing those by hand through the UI takes five logins, so
-this builds them in one pass.
+a list that reaches you both ways at once, a list you keep for someone with no
+account, a pending connection request, a simple-mode user, and a shared account
+with two people and a list apiece. Reproducing those by hand through the UI takes
+five logins, so this builds them in one pass.
 
     docker compose exec api python -m scripts.seed_dev            # seed
     docker compose exec api python -m scripts.seed_dev --reset    # re-seed
@@ -26,8 +27,9 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 
 from app.database import Base, SessionLocal, engine
-from app.models.collection import Collection
-from app.models.collection_item import CollectionItem
+from app.models.account_person import AccountPerson
+from app.models.occasion import Occasion
+from app.models.occasion_item import OccasionItem
 from app.models.connection import Connection
 from app.models.family import Family
 from app.models.family_invite import FamilyInvite
@@ -45,6 +47,7 @@ SEED_USERS = [
     ("tom@example.com", "Tom Boone", "admin", False),
     ("jane@example.com", "Jane Boone", "member", False),
     ("mom@example.com", "Carol Boone", "member", False),
+    # Gran and Grandpa share this login — the shared-account fixture.
     ("gran@example.com", "Gran Boone", "member", True),
     ("cousin@example.com", "Dave Boone", "member", False),
 ]
@@ -72,9 +75,9 @@ def purge(db) -> int:
             select(Family.id).where(Family.created_by_id.in_(user_ids))
         ).scalars()
     )
-    collection_ids = set(
+    occasion_ids = set(
         db.execute(
-            select(Collection.id).where(Collection.owner_id.in_(user_ids))
+            select(Occasion.id).where(Occasion.owner_id.in_(user_ids))
         ).scalars()
     )
 
@@ -93,13 +96,13 @@ def purge(db) -> int:
             ListFamilyShare.list_id.in_(list_ids)
             | ListFamilyShare.family_id.in_(family_ids)
         ).delete(synchronize_session=False)
-    if collection_ids or list_ids:
-        db.query(CollectionItem).filter(
-            CollectionItem.collection_id.in_(collection_ids)
-            | CollectionItem.list_id.in_(list_ids)
+    if occasion_ids or list_ids:
+        db.query(OccasionItem).filter(
+            OccasionItem.occasion_id.in_(occasion_ids)
+            | OccasionItem.list_id.in_(list_ids)
         ).delete(synchronize_session=False)
-    if collection_ids:
-        db.query(Collection).filter(Collection.id.in_(collection_ids)).delete(
+    if occasion_ids:
+        db.query(Occasion).filter(Occasion.id.in_(occasion_ids)).delete(
             synchronize_session=False
         )
     if family_ids or user_ids:
@@ -122,6 +125,11 @@ def purge(db) -> int:
         db.query(GiftList).filter(GiftList.id.in_(list_ids)).delete(
             synchronize_session=False
         )
+    # After the lists: lists.account_person_id references these rows and the FK
+    # is enforced.
+    db.query(AccountPerson).filter(AccountPerson.user_id.in_(user_ids)).delete(
+        synchronize_session=False
+    )
     db.query(User).filter(User.id.in_(user_ids)).delete(synchronize_session=False)
     db.commit()
     return len(user_ids)
@@ -146,14 +154,14 @@ def seed(db, password: str) -> None:
     gran = users["gran@example.com"]
     dave = users["cousin@example.com"]
 
-    def new_list(owner, name, description=None, recipient=None, has_account=None,
-                 archived=False):
+    def new_list(owner, name, description=None, recipient=None,
+                 archived=False, person=None):
         gift_list = GiftList(
             name=name,
             description=description,
             owner_id=owner.id,
             recipient_name=recipient,
-            recipient_has_account=has_account,
+            account_person_id=person.id if person is not None else None,
             is_archived=archived,
         )
         db.add(gift_list)
@@ -175,14 +183,24 @@ def seed(db, password: str) -> None:
 
     tom_wishlist = new_list(tom, "Tom's Wishlist", "Ideas for me")
     tom_christmas = new_list(tom, "Christmas 2026", "What I want this year")
-    # recipient_has_account=False: kept for someone with no account, so Tom sees
-    # no claims on it and cannot claim from it.
-    beths_list = new_list(tom, "Beth's List", "Kept for Beth", recipient="Beth",
-                          has_account=False)
+    # A recipient means one thing: someone with no account. Tom sees no claims on
+    # it and cannot claim from it.
+    beths_list = new_list(tom, "Beth's List", "Kept for Beth", recipient="Beth")
     new_list(tom, "Birthday 2025", archived=True)
     jane_wishlist = new_list(jane, "Jane's Wishlist", "Things I'd like")
-    carol_wishlist = new_list(carol, "Carol's Wishlist", "Family shared only")
-    gran_list = new_list(gran, "Gran's List")
+    carol_wishlist = new_list(carol, "Carol's Wishlist", "Shared directly AND via family")
+    # The shared account: one login, two people, and the three list shapes it
+    # can produce — one for each person, and a household list for neither.
+    gran.is_shared_account = True
+    gran_person = AccountPerson(user_id=gran.id, name="Gran", position=0)
+    grandpa_person = AccountPerson(user_id=gran.id, name="Grandpa", position=1)
+    db.add_all([gran_person, grandpa_person])
+    db.flush()
+
+    gran_list = new_list(gran, "Gran's List", person=gran_person)
+    grandpa_list = new_list(gran, "Grandpa's List", person=grandpa_person)
+    kitchen_list = new_list(gran, "Ideas for the Kitchen",
+                            "For the house, not for either of us")
     dave_wishlist = new_list(dave, "Dave's Wishlist")
     db.flush()
 
@@ -193,6 +211,8 @@ def seed(db, password: str) -> None:
               claimed_by=tom)
     add_gifts(carol_wishlist, ["Scarf", "Cookbook"], claimed_by=tom)
     add_gifts(gran_list, ["Cardigan", "Bird feeder"])
+    add_gifts(grandpa_list, ["Fishing reel", "Reading lamp"])
+    add_gifts(kitchen_list, ["Stand mixer", "Knife block"])
     add_gifts(dave_wishlist, ["Board game", "Whiskey glasses"])
 
     # Dave's request stays pending so the connection-request UI has something to
@@ -209,11 +229,14 @@ def seed(db, password: str) -> None:
     extended = Family(name="Extended Family", created_by_id=carol.id)
     db.add_all([boones, extended])
     db.flush()
-    # Tom is admin of one family and a plain member of the other, and belongs to
-    # both — so "which family did this list come from?" has a real answer.
-    for user, role in [(tom, "admin"), (carol, "member"), (gran, "member")]:
+    # Tom is organizer of one family and a plain member of the other, and belongs
+    # to both — so "which family did this list come from?" has a real answer, and
+    # the organizer-only surfaces (invites, rename, delete) are reachable as Tom.
+    # "organizer"/"member" are the only roles the app understands; a family whose
+    # top role is spelled anything else has no organizer at all.
+    for user, role in [(tom, "organizer"), (carol, "member"), (gran, "member")]:
         db.add(FamilyMember(family_id=boones.id, user_id=user.id, role=role))
-    for user, role in [(carol, "admin"), (tom, "member"), (dave, "member")]:
+    for user, role in [(carol, "organizer"), (tom, "member"), (dave, "member")]:
         db.add(FamilyMember(family_id=extended.id, user_id=user.id, role=role))
 
     # Direct shares both ways, so "shared with me" and "shared by me" are both
@@ -221,22 +244,28 @@ def seed(db, password: str) -> None:
     db.add(ListShare(list_id=jane_wishlist.id, user_id=tom.id))
     db.add(ListShare(list_id=tom_wishlist.id, user_id=jane.id))
 
-    # Family shares. Carol's and Gran's lists reach Tom *only* this way — they
-    # are the lists that prove the family/direct split.
+    # Carol's list reaches Tom BOTH ways — it is the list that proves the dedupe
+    # rule: one row in the shared scope, labelled with Carol, not the family.
+    db.add(ListShare(list_id=carol_wishlist.id, user_id=tom.id))
+
+    # Family shares. Gran's and Dave's lists reach Tom *only* this way — they are
+    # the lists that prove the family/direct split.
     db.add(ListFamilyShare(list_id=carol_wishlist.id, family_id=boones.id))
     db.add(ListFamilyShare(list_id=gran_list.id, family_id=boones.id))
+    db.add(ListFamilyShare(list_id=grandpa_list.id, family_id=boones.id))
+    db.add(ListFamilyShare(list_id=kitchen_list.id, family_id=boones.id))
     db.add(ListFamilyShare(list_id=tom_christmas.id, family_id=boones.id))
     db.add(ListFamilyShare(list_id=tom_christmas.id, family_id=extended.id))
     db.add(ListFamilyShare(list_id=dave_wishlist.id, family_id=extended.id))
 
-    christmas = Collection(owner_id=tom.id, name="Christmas 2026 Shopping",
+    christmas = Occasion(owner_id=tom.id, name="Christmas 2026 Shopping",
                            description="Everyone I'm buying for")
-    birthdays = Collection(owner_id=tom.id, name="Kids' Birthdays")
+    birthdays = Occasion(owner_id=tom.id, name="Kids' Birthdays")
     db.add_all([christmas, birthdays])
     db.flush()
     for gift_list in (jane_wishlist, carol_wishlist, gran_list):
-        db.add(CollectionItem(collection_id=christmas.id, list_id=gift_list.id))
-    db.add(CollectionItem(collection_id=birthdays.id, list_id=beths_list.id))
+        db.add(OccasionItem(occasion_id=christmas.id, list_id=gift_list.id))
+    db.add(OccasionItem(occasion_id=birthdays.id, list_id=beths_list.id))
 
     db.commit()
 
@@ -268,7 +297,7 @@ def main() -> None:
             sys.exit(1)
 
         seed(db, args.password)
-        print("Seeded 5 users, 8 lists, 2 families, 2 collections.")
+        print("Seeded 5 users, 10 lists, 2 families, 2 occasions.")
         print(f"Log in as any of: {', '.join(SEED_EMAILS)}")
         print(f"Password: {args.password}")
     finally:

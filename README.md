@@ -135,7 +135,9 @@ Creates five `@example.com` users with the list-visibility states a single accou
 
 ### Lists (`/lists`)
 - `POST /lists` -- Create a gift list (accepts `family_ids` in full mode)
-- `GET /lists` -- Your lists; `?filter=owned|shared|family`, `?archived=true`
+- `GET /lists` -- Your lists; `?filter=owned|shared`, `?archived=true`. `shared` is the one
+  scope for lists others made visible to you, direct or via a family; each row carries
+  `shared_via`
 - `GET /lists/unseen-count` -- Count of newly shared lists you haven't opened
 - `GET /lists/{id}` -- Get list with gifts (owner view or viewer view)
 - `PUT /lists/{id}` -- Update a list
@@ -176,16 +178,16 @@ Creates five `@example.com` users with the list-visibility states a single accou
 - `POST /families/invites/{token}/accept` -- Join the family
 - `POST /families/invites/{token}/decline` -- Decline
 
-### Collections (`/collections`)
-- `POST /collections` -- Create a collection
-- `GET /collections` -- List your collections
-- `GET /collections/for-list/{list_id}` -- Collections containing a given list
-- `GET /collections/{id}` -- Get collection with its lists
-- `PUT /collections/{id}` -- Update a collection
-- `DELETE /collections/{id}` -- Delete a collection
-- `POST /collections/{id}/items` -- Add a list to a collection
-- `DELETE /collections/{id}/items/{list_id}` -- Remove a list from a collection
-- `GET /collections/{id}/shopping-list` -- Everything you've claimed across the collection
+### Occasions (`/occasions`)
+- `POST /occasions` -- Create an occasion
+- `GET /occasions` -- List your occasions
+- `GET /occasions/for-list/{list_id}` -- Occasions containing a given list
+- `GET /occasions/{id}` -- Get occasion with its lists
+- `PUT /occasions/{id}` -- Update an occasion
+- `DELETE /occasions/{id}` -- Delete an occasion
+- `POST /occasions/{id}/items` -- Add a list to an occasion
+- `DELETE /occasions/{id}/items/{list_id}` -- Remove a list from an occasion
+- `GET /occasions/{id}/shopping-list` -- Everything you've claimed across the occasion
 
 ### Meta (`/meta`)
 - `GET /meta` -- Fetch URL metadata (title, description, price, image)

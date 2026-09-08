@@ -1,27 +1,47 @@
 from sqlalchemy.orm import Session
 
+from app.account import service as account_service
 from app.list_families import service as list_family_service
 from app.lists import repository as repo
 from app.models.gift_list import GiftList
 from app.models.user import User
-from app.schemas.family import FamilyRef
-from app.schemas.gift_list import GiftListDetailOwner, GiftListDetailViewer
-from app.services.exceptions import ConflictError
+from app.schemas.gift_list import (
+    GiftListDetailOwner,
+    GiftListDetailViewer,
+    SharedVia,
+)
+from app.services.exceptions import BadRequestError, ConflictError
+
+RECIPIENT_EXCLUSIVE_MESSAGE = (
+    "A list is for an account person or for someone with no account, not both."
+)
+
+
+def _reject_person_with_recipient(
+    account_person_id: int | None, recipient_name: str | None
+) -> None:
+    """§4.1, checked against the *resulting* row. The schema validator catches
+    both fields arriving in one payload; only the service can see a partial
+    update landing on a row that already carries the other one."""
+    if account_person_id is not None and recipient_name is not None:
+        raise BadRequestError(RECIPIENT_EXCLUSIVE_MESSAGE)
 
 
 def create_list(
     db: Session, name: str, description: str | None, owner: User,
     family_ids: list[int] | None = None,
     recipient_name: str | None = None,
-    recipient_has_account: bool | None = None,
+    account_person_id: int | None = None,
 ) -> GiftList:
+    _reject_person_with_recipient(account_person_id, recipient_name)
+    account_service.get_owned_person_id(db, owner.id, account_person_id)
     gift_list = repo.create_list(
         db,
         name=name,
         description=description,
         owner_id=owner.id,
         recipient_name=recipient_name,
-        recipient_has_account=recipient_has_account,
+        account_person_id=account_person_id,
     )
     list_family_service.set_grants_on_create(db, gift_list, owner, family_ids or [])
     return gift_list
@@ -31,27 +51,21 @@ def get_lists(db: Session, user_id: int, filter: str | None = None, archived: bo
     if filter == "owned":
         return repo.get_lists_by_owner(db, user_id, archived=archived)
     elif filter == "shared":
-        return repo.get_shared_lists(db, user_id, archived=archived)
-    elif filter == "family":
-        return get_family_lists(db, user_id, archived=archived)
+        return get_shared_lists(db, user_id, archived=archived)
     else:
         return repo.get_all_visible_lists(db, user_id, archived=archived)
 
 
-def get_family_lists(db: Session, user_id: int, archived: bool = False) -> list[GiftList]:
-    """Lists owned by the caller's family co-members, each annotated with the
-    family/families granting visibility. Co-members sharing multiple families
-    collapse to one list carrying all granting families (order preserved)."""
-    rows = repo.get_family_visible_lists_with_grants(db, user_id, archived=archived)
-    by_id: dict[int, GiftList] = {}
-    for gift_list, family_id, family_name in rows:
-        existing = by_id.get(gift_list.id)
-        if existing is None:
-            gift_list.families = []
-            by_id[gift_list.id] = gift_list
-            existing = gift_list
-        existing.families.append(FamilyRef(id=family_id, name=family_name))
-    return list(by_id.values())
+def get_shared_lists(db: Session, user_id: int, archived: bool = False) -> list[GiftList]:
+    """Every list someone else has made visible to the caller — directly or through
+    a family — each annotated with the `shared_via` source that explains it. This is
+    the one shared scope; there is no separate family view."""
+    rows = repo.get_shared_lists_with_source(db, user_id, archived=archived)
+    lists: list[GiftList] = []
+    for gift_list, kind, source_id, source_name in rows:
+        gift_list.shared_via = SharedVia(kind=kind, id=source_id, name=source_name)
+        lists.append(gift_list)
+    return lists
 
 
 def get_list(
@@ -63,6 +77,16 @@ def get_list(
 
 
 def update_list(db: Session, gift_list: GiftList, updates: dict) -> GiftList:
+    # `updates` is model_dump(exclude_unset=True), so an absent key means "leave
+    # it alone" and an explicit null means "clear it". Resolve both fields to
+    # what the row will actually hold before judging the pair.
+    resulting_person_id = updates.get("account_person_id", gift_list.account_person_id)
+    resulting_recipient = updates.get("recipient_name", gift_list.recipient_name)
+    _reject_person_with_recipient(resulting_person_id, resulting_recipient)
+    if "account_person_id" in updates:
+        account_service.get_owned_person_id(
+            db, gift_list.owner_id, updates["account_person_id"]
+        )
     return repo.update_list(db, gift_list, updates)
 
 

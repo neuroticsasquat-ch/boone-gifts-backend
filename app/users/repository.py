@@ -1,8 +1,8 @@
 from sqlalchemy import delete, or_, select, update
 from sqlalchemy.orm import Session
 
-from app.models.collection import Collection
-from app.models.collection_item import CollectionItem
+from app.models.occasion import Occasion
+from app.models.occasion_item import OccasionItem
 from app.models.connection import Connection
 from app.models.gift import Gift
 from app.models.gift_list import GiftList
@@ -63,7 +63,7 @@ def cascade_delete_user(db: Session, user: User) -> None:
         .values(claimed_by_id=None, claimed_at=None, purchased_at=None)
     )
 
-    # Remove shares granted TO this user (and collection items referencing those shares)
+    # Remove shares granted TO this user (and occasion items referencing those shares)
     shared_list_ids = list(
         db.execute(
             select(ListShare.list_id).where(ListShare.user_id == uid)
@@ -71,8 +71,8 @@ def cascade_delete_user(db: Session, user: User) -> None:
     )
     if shared_list_ids:
         db.execute(
-            delete(CollectionItem).where(
-                CollectionItem.list_id.in_(shared_list_ids)
+            delete(OccasionItem).where(
+                OccasionItem.list_id.in_(shared_list_ids)
             )
         )
     db.execute(delete(ListShare).where(ListShare.user_id == uid))
@@ -93,29 +93,29 @@ def cascade_delete_user(db: Session, user: User) -> None:
         db.execute(
             delete(ListShare).where(ListShare.list_id.in_(owned_list_ids))
         )
-        # Remove collection items referencing this user's lists
+        # Remove occasion items referencing this user's lists
         db.execute(
-            delete(CollectionItem).where(
-                CollectionItem.list_id.in_(owned_list_ids)
+            delete(OccasionItem).where(
+                OccasionItem.list_id.in_(owned_list_ids)
             )
         )
         # Delete gifts then lists
         db.execute(delete(Gift).where(Gift.list_id.in_(owned_list_ids)))
         db.execute(delete(GiftList).where(GiftList.owner_id == uid))
 
-    # Delete collections (items cascade via relationship)
-    owned_collection_ids = list(
+    # Delete occasions (items cascade via relationship)
+    owned_occasion_ids = list(
         db.execute(
-            select(Collection.id).where(Collection.owner_id == uid)
+            select(Occasion.id).where(Occasion.owner_id == uid)
         ).scalars().all()
     )
-    if owned_collection_ids:
+    if owned_occasion_ids:
         db.execute(
-            delete(CollectionItem).where(
-                CollectionItem.collection_id.in_(owned_collection_ids)
+            delete(OccasionItem).where(
+                OccasionItem.occasion_id.in_(owned_occasion_ids)
             )
         )
-        db.execute(delete(Collection).where(Collection.owner_id == uid))
+        db.execute(delete(Occasion).where(Occasion.owner_id == uid))
 
     # Delete connections (both directions)
     db.execute(

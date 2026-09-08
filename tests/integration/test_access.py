@@ -125,7 +125,7 @@ def test_owner_sees_no_claim_info_after_family_claim(client, matrix):
 
 def test_users_share_access_unchanged_by_grants(db, matrix):
     """Criterion 21: two people in a family still share access for claim and
-    collection cleanup even when no list is shared between them. `can_view_list`
+    occasion cleanup even when no list is shared between them. `can_view_list`
     moved onto grants; `users_share_access` deliberately did not."""
     from app.access import can_view_list, users_share_access
 

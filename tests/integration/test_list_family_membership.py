@@ -90,9 +90,9 @@ def test_simple_mode_joiner_gets_existing_lists_granted(client, db, invite_world
     assert resp.status_code == 200
     assert _granted(db, existing.id) == {invite_world.family.id}
 
-    # And the organizer now sees it in the family view.
+    # And the organizer now sees it in their shared scope.
     fam = client.get(
-        "/lists?filter=family", headers=_auth(invite_world.organizer)
+        "/lists?filter=shared", headers=_auth(invite_world.organizer)
     ).json()
     assert "Joiner's List" in {l["name"] for l in fam}
 
@@ -115,7 +115,7 @@ def test_full_mode_joiner_shares_nothing_until_they_opt_in(client, db, invite_wo
     assert _granted(db, existing.id) == set()
 
     fam = client.get(
-        "/lists?filter=family", headers=_auth(invite_world.organizer)
+        "/lists?filter=shared", headers=_auth(invite_world.organizer)
     ).json()
     assert "Kept Private" not in {l["name"] for l in fam}
 
@@ -205,7 +205,7 @@ def test_leaving_a_family_deletes_the_departing_members_grants(
     assert resp.status_code == 204
     assert _granted(db, w.gift_list.id) == set()
 
-    fam = client.get("/lists?filter=family", headers=_auth(w.organizer)).json()
+    fam = client.get("/lists?filter=shared", headers=_auth(w.organizer)).json()
     assert "Owner's List" not in {l["name"] for l in fam}
 
 

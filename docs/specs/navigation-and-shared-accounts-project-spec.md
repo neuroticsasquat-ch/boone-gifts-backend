@@ -336,6 +336,27 @@ Every current user is a tester. **No redirects from retired routes, no compatibi
 careful backfill.** Migrations may be destructive and the data can be reset. The two repos ship
 independently; sequence backend before the frontend ticket that consumes it (§11 dependencies).
 
+### 9.1 Branching
+
+**Every ticket in this project branches from `release/v0.4.0`, and its PR targets
+`release/v0.4.0` — not `main`.** This holds in both repos, which each carry a branch of that name.
+
+The project retires routes, drops a column, and renames a table; none of it is individually
+shippable, and `main` stays deployable while it lands. `release/v0.4.0` accumulates the whole
+project and merges to `main` once when v0.4.0 ships.
+
+Practically, for each ticket:
+
+```bash
+git fetch origin
+git checkout -b <work-branch> origin/release/v0.4.0
+gh pr create --base release/v0.4.0
+```
+
+Keep the work branch current by merging `release/v0.4.0` into it, not `main`. A ticket whose
+blocker merged into `release/v0.4.0` sees that work only after such a merge — which matters most
+for the frontend tickets that consume a backend change from the same milestone.
+
 ---
 
 ## 10. Vocabulary
