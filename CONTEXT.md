@@ -17,15 +17,17 @@ the words mean and what must stay true.
 | **Family** | A named group of accounts, with organizers and members | `families`, `family_members` |
 | **Family grant** | A grant of one list to one family. Not implied by co-membership | `list_family_shares` |
 | **Folder** | An account's private grouping of lists it can see — "Christmas 2026". Was called an *occasion*, and before that a *collection* | `folders`, `folder_items` |
+| **Occasion** | A family's shared gifting occasion — "Boone Family · Christmas 2026". Owned by a family, carries **no dates** | `occasions` |
+| **Active occasion** | An occasion with `is_archived = false` | `occasions.is_archived` |
 | **Recipient** | A person with **no account** for whom an account keeps a list | `lists.recipient_name` |
 | **Shared account** | An account used by more than one person, e.g. a couple sharing one login | `users.is_shared_account` |
 | **Account person** | A named person on a shared account. **A label, never an identity** | `account_people` |
 
-Deliberately *not* in the vocabulary: "collection" and "occasion" (both renamed, in turn, to
-folder), "family list" (a list reached through a family grant is just a shared list), and
-"simple mode" (retired entirely — see `docs/adr/0004-simple-mode-is-retired.md`). The name
-`occasions` is deliberately left vacant for the family-owned gifting occasion the shopping-lists
-project introduces.
+Deliberately *not* in the vocabulary: "collection" (renamed to occasion, then to folder),
+"family list" (a list reached through a family grant is just a shared list), and "simple mode"
+(retired entirely — see `docs/adr/0004-simple-mode-is-retired.md`). **"Occasion" now means the
+family's, never the user's** — the user's curated set is a *folder*, and the name `occasions` was
+vacated by the rename precisely so the family concept could claim it.
 
 ## Invariants
 
@@ -60,3 +62,10 @@ project introduces.
 
 8. **A recipient has no account.** `recipient_name is not None` means the list is kept on behalf of
    someone who will never log in, so its keeper cannot see claims on it and cannot claim from it.
+
+9. **An occasion belongs to exactly one family, and has no dates.** Any member may read and create
+   one; only an organizer may rename or archive one. Creating a second *active* occasion is allowed
+   and flagged (`has_other_active`), never refused — a family with no active occasion cannot be
+   shared to at all, so nobody may be blocked waiting on an absent organizer.
+   Deleting the family deletes its occasions.
+   See [ADR 0002](docs/adr/0002-family-shares-target-an-occasion.md).

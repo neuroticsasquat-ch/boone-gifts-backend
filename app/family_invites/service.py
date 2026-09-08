@@ -20,7 +20,18 @@ logger = logging.getLogger(__name__)
 INVITE_EXPIRY_DAYS = 7
 
 
-def _require_organizer(db: Session, family_id: int, actor: User) -> tuple[Family, FamilyMember]:
+def _require_organizer(
+    db: Session,
+    family_id: int,
+    actor: User,
+    *,
+    message: str = "Only organizers can manage invites.",
+) -> tuple[Family, FamilyMember]:
+    """Load a family and assert the actor organizes it.
+
+    Shared with `app/occasions/service.py`, which passes its own `message`; the
+    membership and role lookup is identical, only the refusal differs.
+    """
     family = families_repo.get_family(db, family_id)
     if family is None:
         raise NotFoundError("Family not found.")
@@ -28,7 +39,7 @@ def _require_organizer(db: Session, family_id: int, actor: User) -> tuple[Family
     if membership is None:
         raise ForbiddenError("Not a member of this family.")
     if membership.role != "organizer":
-        raise ForbiddenError("Only organizers can manage invites.")
+        raise ForbiddenError(message)
     return family, membership
 
 

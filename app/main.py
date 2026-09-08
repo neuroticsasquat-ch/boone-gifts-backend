@@ -22,6 +22,7 @@ from app.folders import router as folders_
 from app.meta import router as meta
 from app.families import router as families
 from app.family_invites import router as family_invites
+from app.occasions import router as occasions
 
 
 def create_app() -> FastAPI:
@@ -64,6 +65,7 @@ def create_app() -> FastAPI:
     application.include_router(meta.router)
     application.include_router(family_invites.router)
     application.include_router(families.router)
+    application.include_router(occasions.router)
 
     @application.get("/health")
     def health():

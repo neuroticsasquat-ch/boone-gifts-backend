@@ -61,7 +61,8 @@ app/
   access.py            # Visibility predicates: can_view_list, users_share_access
   models/              # user, account_person, invite, gift_list, gift, list_share,
                        # list_family_share, connection, folder, folder_item,
-                       # password_reset_token, family, family_member, family_invite
+                       # password_reset_token, family, family_member, family_invite,
+                       # occasion
   schemas/             # Pydantic request/response models, one module per domain
   services/exceptions.py   # NotFoundError, ForbiddenError, ConflictError, BadRequestError
   account/             # GET/PUT /account — the shared-account flag and its people
@@ -76,6 +77,7 @@ app/
   folders/             # /folders CRUD + items with access checks
   families/            # /families CRUD, membership, cascade cleanup
   family_invites/      # Family invite create/accept/decline/revoke
+  occasions/           # /families/{id}/occasions + /occasions/{id} — the family occasion
   meta/                # GET /meta — URL metadata with SSRF protection
   cli/create_admin.py  # Interactive first-admin creation
 alembic/versions/      # Migrations
@@ -143,6 +145,25 @@ Family visibility is an explicit per-(list, family) `ListFamilyShare` grant, not
 
 **A grant row implies the owner is still a member of that family.** Read queries rely on that and don't re-check, so every membership departure (`remove_member`, `delete_family`) deletes the affected grants.
 
+### Family occasions
+A family's shared gifting occasion — "Boone Family · Christmas 2026". The unit a list is shared
+*to*, and the unit a budget hangs off. See `docs/adr/0002-family-shares-target-an-occasion.md`.
+- **Table**: `occasions` (family_id indexed, name, is_archived, created_by_id). **No dates** — the
+  name bounds the period, and dates only existed to support an attribution rule that no longer exists
+- `GET /families/{family_id}/occasions?archived=false` and `GET /occasions/{id}` — **any member**
+- `POST /families/{family_id}/occasions` — **any member**, so nobody waits on an absent organizer
+  while the family cannot be shared to at all. A second active occasion is **not refused**: the
+  response carries `has_other_active` so the client can warn without a second call
+- `PUT /occasions/{id}` (name, `is_archived`) — **organizer only**, 403 otherwise. This is the first
+  place role gates something a member can *see*; renaming changes a label everyone's budgets are
+  filed under. It reuses `_require_organizer` from `app/family_invites/service.py`, passing its own
+  refusal message
+- **Deleting a family deletes its occasions**, alongside the grants and members — `delete_family`
+  clears everything pointing at the family so the row itself can go, and `occasions.family_id` has
+  no `ondelete`, so an uncleaned occasion makes the delete fail outright under `PRAGMA foreign_keys=ON`
+- `OccasionUpdate` treats `None` as "leave it alone", so an explicit `null` in the body is a **422**,
+  never a write: neither column is nullable
+
 ## Data model notes
 - **Lists carry a recipient**: `recipient_name` alone, meaning one thing — a person with no account. Read `GiftList.kept_for_absent_person` rather than testing the column. The co-resident case that `recipient_has_account = true` used to cover is an account person now (dropped in `e2b7d4a91c53`)
 - **Lists may instead carry an account person**: `account_person_id`, mutually exclusive with `recipient_name` (both null is a legal household list). See "Shared accounts" below
@@ -165,6 +186,7 @@ Family visibility is an explicit per-(list, family) `ListFamilyShare` grant, not
 | `e2b7d4a91c53` | Drop `lists.recipient_has_account` |
 | `c9d4e7a2f180` | `occasions` → `folders`, `occasion_items` → `folder_items` |
 | `f1a6b3c80d27` | Drop `users.simple_mode` and `family_invites.simple_mode` |
+| `a3f8c1e70b52` | `occasions` table — the family-owned gifting occasion |
 
 ## Testing
 - ~744 test functions across 56 files

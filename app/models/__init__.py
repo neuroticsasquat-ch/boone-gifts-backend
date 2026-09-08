@@ -12,6 +12,7 @@ from app.models.password_reset_token import PasswordResetToken
 from app.models.family import Family
 from app.models.family_member import FamilyMember
 from app.models.family_invite import FamilyInvite
+from app.models.occasion import Occasion
 
 __all__ = [
     "User",
@@ -28,4 +29,5 @@ __all__ = [
     "Family",
     "FamilyMember",
     "FamilyInvite",
+    "Occasion",
 ]

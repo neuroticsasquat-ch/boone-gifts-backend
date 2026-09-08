@@ -8,6 +8,7 @@ from app.connections.repository import (
 from app.families import repository as repo
 from app.list_families import repository as list_family_repo
 from app.models.user import User
+from app.occasions import repository as occasions_repo
 from app.services.exceptions import ConflictError, ForbiddenError, NotFoundError
 
 
@@ -98,6 +99,9 @@ def delete_family(db: Session, family_id: int, user_id: int) -> None:
 
     member_ids = repo.get_member_user_ids(db, family_id)
     list_family_repo.delete_grants_for_family(db, family_id)
+    # Occasions point at the family, so they go the same way the grants do —
+    # nothing else references them yet, and the FK would otherwise refuse.
+    occasions_repo.delete_occasions_for_family(db, family_id)
     repo.delete_all_members(db, family_id)
     for i in range(len(member_ids)):
         for j in range(i + 1, len(member_ids)):
