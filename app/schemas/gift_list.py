@@ -5,13 +5,35 @@ from typing import Literal
 from pydantic import BaseModel, field_validator, model_validator
 
 
-class SharedVia(BaseModel):
-    """How a shared list reached the viewer: the owner who shared it directly, or
-    the family it was granted to. Absent on a list the viewer owns."""
+class SharedViaFamily(BaseModel):
+    """The family behind an occasion the list reached the viewer through. Derived
+    from `occasions.family_id`, never stored on the share row (ADR 0002)."""
 
-    kind: Literal["user", "family"]
     id: int
     name: str
+
+
+class SharedVia(BaseModel):
+    """How a shared list reached the viewer: the owner who shared it directly, or
+    the occasion it was shared to. Absent on a list the viewer owns.
+
+    `family` rides along on the occasion arm only — the viewer needs to know
+    which family an occasion belongs to, and it is one join away from a fact the
+    query already has.
+    """
+
+    kind: Literal["user", "occasion"]
+    id: int
+    name: str
+    family: SharedViaFamily | None = None
+
+    @model_validator(mode="after")
+    def _family_belongs_to_the_occasion_arm(self) -> "SharedVia":
+        if self.kind == "occasion" and self.family is None:
+            raise ValueError("An occasion share must carry its family.")
+        if self.kind == "user" and self.family is not None:
+            raise ValueError("A direct share has no family behind it.")
+        return self
 
 
 class RecipientFields(BaseModel):
@@ -41,9 +63,10 @@ class RecipientFields(BaseModel):
 class GiftListCreate(RecipientFields):
     name: str
     description: str | None = None
-    # Families to share the new list with. Ignored for simple-mode owners, who
-    # share with every family they belong to (see app/list_families/service.py).
-    family_ids: list[int] = []
+    # Occasions to share the new list with, each on a family the owner belongs
+    # to. Empty shares with nobody — there is no auto-grant (ADR 0002 §5.2 puts
+    # the pre-checking in the client). See app/list_occasions/service.py.
+    occasion_ids: list[int] = []
 
 
 class GiftListUpdate(RecipientFields):

@@ -15,7 +15,7 @@ the words mean and what must stay true.
 | **Connection** | An accepted relationship between two accounts. A prerequisite for a direct share — **not** itself a grant of visibility | `connections` |
 | **Direct share** | A grant of one list to one account | `list_shares` |
 | **Family** | A named group of accounts, with organizers and members | `families`, `family_members` |
-| **Family grant** | A grant of one list to one family. Not implied by co-membership | `list_family_shares` |
+| **Occasion share** | A grant of one list to one family occasion. Not implied by co-membership. Was a *family grant*, pointed at the family itself | `list_occasion_shares` |
 | **Folder** | An account's private grouping of lists it can see — "Christmas 2026". Was called an *occasion*, and before that a *collection* | `folders`, `folder_items` |
 | **Occasion** | A family's shared gifting occasion — "Boone Family · Christmas 2026". Owned by a family, carries **no dates** | `occasions` |
 | **Active occasion** | An occasion with `is_archived = false` | `occasions.is_archived` |
@@ -24,7 +24,7 @@ the words mean and what must stay true.
 | **Account person** | A named person on a shared account. **A label, never an identity** | `account_people` |
 
 Deliberately *not* in the vocabulary: "collection" (renamed to occasion, then to folder),
-"family list" (a list reached through a family grant is just a shared list), and "simple mode"
+"family list" (a list reached through an occasion share is just a shared list), and "simple mode"
 (retired entirely — see `docs/adr/0004-simple-mode-is-retired.md`). **"Occasion" now means the
 family's, never the user's** — the user's curated set is a *folder*, and the name `occasions` was
 vacated by the rename precisely so the family concept could claim it.
@@ -32,20 +32,22 @@ vacated by the rename precisely so the family concept could claim it.
 ## Invariants
 
 1. **The owner never sees claims on their own list.** `GiftOwnerRead` omits the claim fields;
-   every surface that could leak claim state to an owner — including the 409 on revoking a family
-   grant — reveals only *that* claims exist, never counts, gift names, or claimer names.
+   every surface that could leak claim state to an owner — including the 409 on revoking an occasion
+   share — reveals only *that* claims exist, never counts, gift names, or claimer names.
 
 2. **Visibility has exactly one predicate.** `can_view_list` in `app/access.py`: owner, OR a
-   `ListShare` row, OR the owner granted the list to a family the viewer belongs to. Claims and
-   folder membership both route through it. A connection alone grants nothing; bare family
-   co-membership grants nothing.
+   `ListShare` row, OR the list is shared to an occasion of a family the viewer belongs to. Claims
+   and folder membership both route through it. A connection alone grants nothing; bare family
+   co-membership grants nothing. It does **not** consult `occasions.is_archived` — archiving blocks
+   new shares and nothing else, so it never withdraws visibility.
 
-3. **A family grant row implies the owner is still a member of that family.** Read queries rely on
-   this and do not re-check it, so every membership departure deletes the affected grants.
+3. **An occasion share row implies the owner is still a member of the occasion's family.** Read
+   queries rely on this and do not re-check it, so every membership departure deletes the affected
+   share rows — on every occasion of that family, not just one.
 
 4. **`users_share_access` is not `can_view_list`.** It answers "is there a standing relationship"
    — used to decide cascade cleanup when a relationship ends — and is deliberately not gated on
-   grants.
+   shares.
 
 5. **A shared account is one identity.** Its people are labels on its lists. They are not members,
    not connections, not claimers, and they never receive their own visibility. It follows that
@@ -67,5 +69,7 @@ vacated by the rename precisely so the family concept could claim it.
    one; only an organizer may rename or archive one. Creating a second *active* occasion is allowed
    and flagged (`has_other_active`), never refused — a family with no active occasion cannot be
    shared to at all, so nobody may be blocked waiting on an absent organizer.
-   Deleting the family deletes its occasions.
+   Deleting the family deletes its occasions, and the shares pointing at them first.
+   **A list is shared to an occasion, never to a family**, and archiving one refuses new shares
+   (409) without withdrawing the shares already made.
    See [ADR 0002](docs/adr/0002-family-shares-target-an-occasion.md).

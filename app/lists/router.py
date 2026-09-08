@@ -26,7 +26,7 @@ def create_list(request: GiftListCreate, user: CurrentUser, db: DbSession):
             name=request.name,
             description=request.description,
             owner=user,
-            family_ids=request.family_ids,
+            occasion_ids=request.occasion_ids,
             recipient_name=request.recipient_name,
             account_person_id=request.account_person_id,
         )
@@ -34,6 +34,8 @@ def create_list(request: GiftListCreate, user: CurrentUser, db: DbSession):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
     except NotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except ConflictError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
     except BadRequestError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 

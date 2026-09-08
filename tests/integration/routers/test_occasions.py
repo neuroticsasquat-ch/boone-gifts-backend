@@ -10,6 +10,8 @@ import sqlalchemy
 from app.dependencies import create_access_token
 from app.models.family import Family
 from app.models.family_member import FamilyMember
+from app.models.gift_list import GiftList
+from app.models.list_occasion_share import ListOccasionShare
 from app.models.occasion import Occasion
 from app.models.user import User
 
@@ -479,3 +481,108 @@ def test_deleting_a_family_that_has_occasions_succeeds(
         ).first()
         is None
     )
+
+
+# ---------------------------------------------------------------------------
+# GET /occasions/{id}/lists  (NEU-1265)
+# ---------------------------------------------------------------------------
+
+
+def _seed_list(db, owner, name):
+    gift_list = GiftList(name=name, owner_id=owner.id)
+    db.add(gift_list)
+    db.flush()
+    return gift_list
+
+
+def test_lists_returns_the_lists_shared_to_the_occasion(
+    client, db, family, member_user, plain_member, plain_member_headers
+):
+    occasion = _seed_occasion(db, family, member_user)
+    shared = _seed_list(db, member_user, "Organizer's List")
+    unshared = _seed_list(db, member_user, "Kept Private")
+    db.add(ListOccasionShare(list_id=shared.id, occasion_id=occasion.id))
+    db.flush()
+
+    response = client.get(
+        f"/occasions/{occasion.id}/lists", headers=plain_member_headers
+    )
+
+    assert response.status_code == 200
+    names = {row["name"] for row in response.json()}
+    assert names == {"Organizer's List"}
+    assert unshared.name not in names
+
+
+def test_lists_includes_the_callers_own_list(
+    client, db, family, member_user, member_headers
+):
+    """The viewer owns it, so `can_view_list` passes and it belongs on the page
+    like any other list shared to the occasion."""
+    occasion = _seed_occasion(db, family, member_user)
+    own = _seed_list(db, member_user, "My Own List")
+    db.add(ListOccasionShare(list_id=own.id, occasion_id=occasion.id))
+    db.flush()
+
+    response = client.get(f"/occasions/{occasion.id}/lists", headers=member_headers)
+
+    assert {row["name"] for row in response.json()} == {"My Own List"}
+
+
+def test_lists_serves_a_list_owned_by_a_co_member(
+    client, db, family, member_user, plain_member, plain_member_headers
+):
+    """Every row on the page passes `can_view_list` by construction: the share
+    puts the list on an occasion of a family the caller belongs to, which is the
+    predicate's third arm. The filter is the single-predicate discipline, not a
+    second gate."""
+    occasion = _seed_occasion(db, family, member_user)
+    co_member = _make_user(db, "occasion_cousin@test.com", "Cousin")
+    db.add(FamilyMember(family_id=family.id, user_id=co_member.id, role="member"))
+    cousins_list = _seed_list(db, co_member, "Cousin's List")
+    db.add(ListOccasionShare(list_id=cousins_list.id, occasion_id=occasion.id))
+    db.flush()
+
+    response = client.get(
+        f"/occasions/{occasion.id}/lists", headers=plain_member_headers
+    )
+
+    assert {row["name"] for row in response.json()} == {"Cousin's List"}
+
+
+def test_lists_still_served_for_an_archived_occasion(
+    client, db, family, member_user, plain_member, plain_member_headers
+):
+    """Archiving blocks new shares, and only that — its lists stay viewable."""
+    occasion = _seed_occasion(db, family, member_user, is_archived=True)
+    shared = _seed_list(db, member_user, "Organizer's List")
+    db.add(ListOccasionShare(list_id=shared.id, occasion_id=occasion.id))
+    db.flush()
+
+    response = client.get(
+        f"/occasions/{occasion.id}/lists", headers=plain_member_headers
+    )
+
+    assert {row["name"] for row in response.json()} == {"Organizer's List"}
+
+
+def test_lists_forbidden_for_a_non_member(client, db, family, member_user, outsider_headers):
+    occasion = _seed_occasion(db, family, member_user)
+
+    response = client.get(
+        f"/occasions/{occasion.id}/lists", headers=outsider_headers
+    )
+
+    assert response.status_code == 403
+
+
+def test_lists_not_found_for_an_occasion_that_does_not_exist(client, member_headers):
+    response = client.get("/occasions/999999/lists", headers=member_headers)
+
+    assert response.status_code == 404
+
+
+def test_lists_requires_authentication(client, db, family, member_user):
+    occasion = _seed_occasion(db, family, member_user)
+
+    assert client.get(f"/occasions/{occasion.id}/lists").status_code == 401

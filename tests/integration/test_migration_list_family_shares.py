@@ -1,8 +1,14 @@
 """The list_family_shares backfill (NEU-1202 §2.2, acceptance criterion 1).
 
 Runs the real Alembic migration against a throwaway SQLite file: seeds the schema
-at the previous head with the visibility that existed before this ticket, upgrades,
-and checks that every list is still visible to every family its owner belongs to.
+at the previous revision with the visibility that existed before that ticket,
+upgrades, and checks that every list is still visible to every family its owner
+belongs to.
+
+The table itself is gone at head — `b7e2d4f16c93` drops it when sharing re-points
+at the occasion (ADR 0002) — so this stops at the revision that does the backfill
+rather than running the chain out. The migration still runs on any deploy coming
+from a database older than it, which is what keeps this worth testing.
 """
 import subprocess
 from pathlib import Path
@@ -10,7 +16,8 @@ from pathlib import Path
 import pytest
 from sqlalchemy import create_engine, text
 
-PREVIOUS_HEAD = "13861325bacf"
+PREVIOUS_REVISION = "13861325bacf"
+BACKFILL_REVISION = "c4f2a91d7e30"
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -31,7 +38,7 @@ def _alembic(target: str, db_path: Path) -> None:
 @pytest.fixture
 def migrated(tmp_path):
     db_path = tmp_path / "migration_test.db"
-    _alembic(PREVIOUS_HEAD, db_path)
+    _alembic(PREVIOUS_REVISION, db_path)
     engine = create_engine(f"sqlite:///{db_path}")
 
     with engine.begin() as conn:
@@ -65,7 +72,7 @@ def migrated(tmp_path):
             )
         )
 
-    _alembic("head", db_path)
+    _alembic(BACKFILL_REVISION, db_path)
     yield engine
     engine.dispose()
 
@@ -96,7 +103,7 @@ def test_downgrade_drops_the_table(migrated, tmp_path):
     db_path = tmp_path / "migration_test.db"
     env = dict(os.environ, APP_DATABASE_URL=f"sqlite:///{db_path}")
     result = subprocess.run(
-        ["alembic", "downgrade", PREVIOUS_HEAD],
+        ["alembic", "downgrade", PREVIOUS_REVISION],
         cwd=REPO_ROOT,
         env=env,
         capture_output=True,

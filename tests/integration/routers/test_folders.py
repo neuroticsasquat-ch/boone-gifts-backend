@@ -305,17 +305,18 @@ def test_shopping_list_not_owner_403(client, admin_headers, folder):
     assert response.status_code == 403
 
 
-def test_add_family_visible_list(
+def test_add_occasion_visible_list(
     client, member_user, member_headers, admin_user, folder, db
 ):
     from app.models.family import Family
     from app.models.family_member import FamilyMember
     from app.models.gift_list import GiftList
-    from app.models.list_family_share import ListFamilyShare
+    from app.models.list_occasion_share import ListOccasionShare
+    from app.models.occasion import Occasion
 
     # member_user (folder owner) and admin_user share a family, and admin_user
-    # granted the list to it. No connection, no direct ListShare — visibility comes
-    # only from that family grant.
+    # shared the list to its occasion. No connection, no direct ListShare —
+    # visibility comes only from that occasion share.
     family = Family(name="The Boones", created_by_id=admin_user.id)
     db.add(family)
     db.flush()
@@ -327,10 +328,16 @@ def test_add_family_visible_list(
     )
     db.flush()
 
+    occasion = Occasion(
+        family_id=family.id, name="Christmas 2026", created_by_id=admin_user.id
+    )
+    db.add(occasion)
+    db.flush()
+
     admin_list = GiftList(name="Admin's Family List", owner_id=admin_user.id)
     db.add(admin_list)
     db.flush()
-    db.add(ListFamilyShare(list_id=admin_list.id, family_id=family.id))
+    db.add(ListOccasionShare(list_id=admin_list.id, occasion_id=occasion.id))
     db.flush()
 
     response = client.post(

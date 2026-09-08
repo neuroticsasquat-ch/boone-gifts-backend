@@ -8,8 +8,9 @@ from app.models.family import Family
 from app.models.family_member import FamilyMember
 from app.models.gift import Gift
 from app.models.gift_list import GiftList
-from app.models.list_family_share import ListFamilyShare
+from app.models.list_occasion_share import ListOccasionShare
 from app.models.list_share import ListShare
+from app.models.occasion import Occasion
 from app.models.user import User
 
 
@@ -20,9 +21,9 @@ def _headers(user):
 @pytest.fixture
 def matrix(db):
     """Owner A with a one-gift list, plus five users in distinct relationships:
-    B = co-member of a family A granted the list to, C = connection only,
-    D = direct share, E = stranger, F = co-member of a family A did NOT grant
-    the list to."""
+    B = co-member of a family whose occasion A shared the list to, C = connection
+    only, D = direct share, E = stranger, F = co-member of a family whose
+    occasion A did NOT share the list to."""
 
     def mkuser(email, name):
         u = User(email=email, name=name, role="member", password_hash="x")
@@ -45,9 +46,9 @@ def matrix(db):
     db.add(gift)
     db.flush()
 
-    # B shares a family with A, and A granted the list to it.
+    # B shares a family with A, and A shared the list to its occasion.
     family = Family(name="A & B Family", created_by_id=a.id)
-    # F shares a different family with A, which A never granted the list to.
+    # F shares a different family with A, whose occasion A never shared to.
     ungranted = Family(name="A & F Family", created_by_id=a.id)
     db.add_all([family, ungranted])
     db.flush()
@@ -55,7 +56,15 @@ def matrix(db):
     db.add(FamilyMember(family_id=family.id, user_id=b.id, role="member"))
     db.add(FamilyMember(family_id=ungranted.id, user_id=a.id, role="organizer"))
     db.add(FamilyMember(family_id=ungranted.id, user_id=f.id, role="member"))
-    db.add(ListFamilyShare(list_id=gift_list.id, family_id=family.id))
+    occasion = Occasion(
+        family_id=family.id, name="Christmas 2026", created_by_id=a.id
+    )
+    ungranted_occasion = Occasion(
+        family_id=ungranted.id, name="Christmas 2026", created_by_id=a.id
+    )
+    db.add_all([occasion, ungranted_occasion])
+    db.flush()
+    db.add(ListOccasionShare(list_id=gift_list.id, occasion_id=occasion.id))
 
     # C has an accepted connection with A but no share.
     db.add(Connection(requester_id=a.id, addressee_id=c.id, status="accepted"))
@@ -70,6 +79,8 @@ def matrix(db):
         a=a, b=b, c=c, d=d, e=e, f=f,
         family=family,
         ungranted=ungranted,
+        occasion=occasion,
+        ungranted_occasion=ungranted_occasion,
     )
 
 
@@ -131,3 +142,15 @@ def test_users_share_access_unchanged_by_grants(db, matrix):
 
     assert users_share_access(db, matrix.a.id, matrix.f.id) is True
     assert can_view_list(db, matrix.f, db.get(GiftList, matrix.list_id)) is False
+
+
+def test_archived_occasion_still_grants_visibility(client, db, matrix):
+    """Archiving is not unsharing: `can_view_list` deliberately does not consult
+    `is_archived`, so a list shared before the archive stays visible (ADR 0002
+    §5.4)."""
+    matrix.occasion.is_archived = True
+    db.flush()
+
+    assert client.get(
+        f"/lists/{matrix.list_id}", headers=_headers(matrix.b)
+    ).status_code == 200

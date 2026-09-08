@@ -6,8 +6,9 @@ from app.dependencies import create_access_token
 from app.models.family import Family
 from app.models.family_member import FamilyMember
 from app.models.gift_list import GiftList
-from app.models.list_family_share import ListFamilyShare
+from app.models.list_occasion_share import ListOccasionShare
 from app.models.list_share import ListShare
+from app.models.occasion import Occasion
 from app.models.user import User
 
 
@@ -53,21 +54,28 @@ def family_world(db):
     db.add_all([l_u, l_p, l_p_arch, l_q])
     db.flush()
 
+    o1 = Occasion(family_id=f1.id, name="F1 Christmas", created_by_id=u.id)
+    o2 = Occasion(family_id=f2.id, name="F2 Christmas", created_by_id=u.id)
+    db.add_all([o1, o2])
+    db.flush()
+
     db.add(ListShare(list_id=l_p.id, user_id=u.id))  # L_p also manually shared with U
-    # Family visibility is an explicit per-(list, family) grant. These mirror what
-    # the owners would have opted into: P shares with both families, Q with F2.
+    # Family visibility is an explicit per-(list, occasion) share. These mirror
+    # what the owners would have opted into: P shares to both families'
+    # occasions, Q to F2's.
     db.add_all(
         [
-            ListFamilyShare(list_id=l_p.id, family_id=f1.id),
-            ListFamilyShare(list_id=l_p.id, family_id=f2.id),
-            ListFamilyShare(list_id=l_p_arch.id, family_id=f1.id),
-            ListFamilyShare(list_id=l_q.id, family_id=f2.id),
+            ListOccasionShare(list_id=l_p.id, occasion_id=o1.id),
+            ListOccasionShare(list_id=l_p.id, occasion_id=o2.id),
+            ListOccasionShare(list_id=l_p_arch.id, occasion_id=o1.id),
+            ListOccasionShare(list_id=l_q.id, occasion_id=o2.id),
         ]
     )
     db.flush()
 
     return SimpleNamespace(
-        u=u, p=p, q=q, f1=f1, f2=f2, l_u=l_u, l_p=l_p, l_p_arch=l_p_arch, l_q=l_q
+        u=u, p=p, q=q, f1=f1, f2=f2, o1=o1, o2=o2,
+        l_u=l_u, l_p=l_p, l_p_arch=l_p_arch, l_q=l_q,
     )
 
 
@@ -238,17 +246,26 @@ def test_filter_shared_returns_both_paths(client, family_world):
     assert "P's Archived" not in names  # archived excluded by default
 
 
-def test_filter_shared_labels_a_family_only_list_with_its_family(client, family_world):
+def test_filter_shared_labels_an_occasion_only_list_with_its_occasion(
+    client, family_world
+):
+    """The occasion arm carries its family alongside it — the viewer needs both
+    to make sense of the label."""
     w = family_world
     row = next(
         l for l in client.get("/lists?filter=shared", headers=_auth(w.u)).json()
         if l["name"] == "Q's List"
     )
-    assert row["shared_via"] == {"kind": "family", "id": w.f2.id, "name": "F2 Family"}
+    assert row["shared_via"] == {
+        "kind": "occasion",
+        "id": w.o2.id,
+        "name": "F2 Christmas",
+        "family": {"id": w.f2.id, "name": "F2 Family"},
+    }
 
 
 def test_filter_shared_dedupes_both_paths_to_the_direct_share(client, family_world):
-    """L_p is shared directly with U *and* granted to two of U's families: one row,
+    """L_p is shared directly with U *and* to two occasions U can reach: one row,
     labelled with the owner, because the direct share is the more specific fact."""
     w = family_world
     rows = [
@@ -256,12 +273,17 @@ def test_filter_shared_dedupes_both_paths_to_the_direct_share(client, family_wor
         if l["name"] == "P's List"
     ]
     assert len(rows) == 1
-    assert rows[0]["shared_via"] == {"kind": "user", "id": w.p.id, "name": "Owner P"}
+    assert rows[0]["shared_via"] == {
+        "kind": "user",
+        "id": w.p.id,
+        "name": "Owner P",
+        "family": None,
+    }
 
 
-def test_filter_shared_dedupes_a_list_granted_to_two_families(client, family_world, db):
-    """P's List is granted to both of U's families. Without the direct share it is
-    still one row, carrying one of them."""
+def test_filter_shared_dedupes_a_list_shared_to_two_occasions(client, family_world, db):
+    """P's List is shared to an occasion in each of U's families. Without the
+    direct share it is still one row, carrying one of them."""
     w = family_world
     db.query(ListShare).filter(ListShare.list_id == w.l_p.id).delete()
     db.flush()
@@ -271,8 +293,10 @@ def test_filter_shared_dedupes_a_list_granted_to_two_families(client, family_wor
         if l["name"] == "P's List"
     ]
     assert len(rows) == 1
-    assert rows[0]["shared_via"]["kind"] == "family"
-    assert rows[0]["shared_via"]["id"] in {w.f1.id, w.f2.id}
+    assert rows[0]["shared_via"]["kind"] == "occasion"
+    # The lower occasion id wins — arbitrary, but stable, so the label does not
+    # flicker between requests.
+    assert rows[0]["shared_via"]["id"] == min(w.o1.id, w.o2.id)
 
 
 def test_filter_shared_direct_only_list_is_labelled_with_its_owner(
@@ -284,13 +308,17 @@ def test_filter_shared_direct_only_list_is_labelled_with_its_owner(
         "kind": "user",
         "id": member_user.id,
         "name": member_user.name,
+        "family": None,
     }
 
 
-def test_filter_shared_excludes_own_list_granted_to_own_family(client, family_world, db):
-    """U grants their own list to a family U belongs to: still not shared *with* U."""
+def test_filter_shared_excludes_own_list_shared_to_own_occasion(
+    client, family_world, db
+):
+    """U shares their own list to an occasion U can reach: still not shared
+    *with* U."""
     w = family_world
-    db.add(ListFamilyShare(list_id=w.l_u.id, family_id=w.f1.id))
+    db.add(ListOccasionShare(list_id=w.l_u.id, occasion_id=w.o1.id))
     db.flush()
 
     names = {
@@ -305,20 +333,43 @@ def test_filter_shared_archived_returns_archived_only(client, family_world):
     assert resp.status_code == 200
     data = resp.json()
     assert {l["name"] for l in data} == {"P's Archived"}
-    assert data[0]["shared_via"] == {"kind": "family", "id": w.f1.id, "name": "F1 Family"}
+    assert data[0]["shared_via"] == {
+        "kind": "occasion",
+        "id": w.o1.id,
+        "name": "F1 Christmas",
+        "family": {"id": w.f1.id, "name": "F1 Family"},
+    }
 
 
-def test_filter_shared_drops_a_list_whose_family_grant_was_revoked(
+def test_filter_shared_drops_a_list_whose_occasion_share_was_revoked(
     client, family_world, db
 ):
     w = family_world
-    db.query(ListFamilyShare).filter(ListFamilyShare.list_id == w.l_q.id).delete()
+    db.query(ListOccasionShare).filter(
+        ListOccasionShare.list_id == w.l_q.id
+    ).delete()
     db.flush()
 
     names = {
         l["name"] for l in client.get("/lists?filter=shared", headers=_auth(w.u)).json()
     }
     assert "Q's List" not in names
+
+
+def test_filter_shared_keeps_a_list_whose_occasion_was_archived(
+    client, family_world, db
+):
+    """Archiving blocks new shares and nothing else, so the list stays in the
+    shared scope, still labelled with the occasion it arrived through."""
+    w = family_world
+    w.o2.is_archived = True
+    db.flush()
+
+    row = next(
+        l for l in client.get("/lists?filter=shared", headers=_auth(w.u)).json()
+        if l["name"] == "Q's List"
+    )
+    assert row["shared_via"]["id"] == w.o2.id
 
 
 def test_filter_shared_orders_most_recently_updated_first(client, family_world):
