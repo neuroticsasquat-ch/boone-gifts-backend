@@ -1,4 +1,4 @@
-from sqlalchemy import delete, func, literal, or_, select
+from sqlalchemy import Integer, String, cast, delete, func, literal, null, or_, select
 from sqlalchemy.orm import Session, aliased
 
 from app.models.folder_item import FolderItem
@@ -6,8 +6,9 @@ from app.models.family import Family
 from app.models.family_member import FamilyMember
 from app.models.gift import Gift
 from app.models.gift_list import GiftList
-from app.models.list_family_share import ListFamilyShare
+from app.models.list_occasion_share import ListOccasionShare
 from app.models.list_share import ListShare
+from app.models.occasion import Occasion
 from app.models.user import User
 
 
@@ -41,18 +42,22 @@ def get_lists_by_owner(db: Session, owner_id: int, archived: bool = False) -> li
 
 def get_shared_lists_with_source(
     db: Session, user_id: int, archived: bool = False
-) -> list[tuple[GiftList, str, int, str]]:
+) -> list[tuple[GiftList, str, int, str, int | None, str | None]]:
     """Every list (matching the `archived` flag) someone else has made visible to
-    the caller, by either path: a direct `ListShare`, or a family grant on a family
-    the caller belongs to. One row per list, carrying the source that explains it —
-    `("user", owner id, owner name)` or `("family", family id, family name)`.
+    the caller, by either path: a direct `ListShare`, or a share to an occasion of
+    a family the caller belongs to. One row per list, carrying the source that
+    explains it — `("user", owner id, owner name, None, None)` or
+    `("occasion", occasion id, occasion name, family id, family name)`.
 
     A list reachable both ways reports the direct share: it is the more specific
-    fact, and the one the viewer can act on. A list granted through two of the
-    caller's families reports the lower family id — arbitrary but stable, so the
+    fact, and the one the viewer can act on. A list shared to two occasions the
+    caller can reach reports the lower occasion id — arbitrary but stable, so the
     label does not flicker between requests.
 
-    The caller's own lists are never in scope, however they were granted.
+    An archived occasion still appears: archiving blocks new shares and nothing
+    else, so it never withdraws visibility (ADR 0002 §5.4).
+
+    The caller's own lists are never in scope, however they were shared.
     """
     owner = aliased(User)
     direct = (
@@ -61,6 +66,8 @@ def get_shared_lists_with_source(
             literal("user").label("kind"),
             owner.id.label("source_id"),
             owner.name.label("source_name"),
+            cast(null(), Integer).label("family_id"),
+            cast(null(), String).label("family_name"),
             literal(0).label("priority"),
         )
         .join(GiftList, GiftList.id == ListShare.list_id)
@@ -71,31 +78,36 @@ def get_shared_lists_with_source(
             GiftList.is_archived == archived,
         )
     )
-    via_family = (
+    via_occasion = (
         select(
-            ListFamilyShare.list_id.label("list_id"),
-            literal("family").label("kind"),
-            Family.id.label("source_id"),
-            Family.name.label("source_name"),
+            ListOccasionShare.list_id.label("list_id"),
+            literal("occasion").label("kind"),
+            Occasion.id.label("source_id"),
+            Occasion.name.label("source_name"),
+            Family.id.label("family_id"),
+            Family.name.label("family_name"),
             literal(1).label("priority"),
         )
-        .join(GiftList, GiftList.id == ListFamilyShare.list_id)
-        .join(Family, Family.id == ListFamilyShare.family_id)
-        .join(FamilyMember, FamilyMember.family_id == ListFamilyShare.family_id)
+        .join(GiftList, GiftList.id == ListOccasionShare.list_id)
+        .join(Occasion, Occasion.id == ListOccasionShare.occasion_id)
+        .join(Family, Family.id == Occasion.family_id)
+        .join(FamilyMember, FamilyMember.family_id == Occasion.family_id)
         .where(
             FamilyMember.user_id == user_id,
             GiftList.owner_id != user_id,
             GiftList.is_archived == archived,
         )
     )
-    sources = direct.union_all(via_family).subquery()
+    sources = direct.union_all(via_occasion).subquery()
     # Rank the sources of each list so the dedupe stays in the query: a direct
-    # share outranks any family grant, and family grants break ties by id.
+    # share outranks any occasion share, and occasion shares break ties by id.
     ranked = select(
         sources.c.list_id,
         sources.c.kind,
         sources.c.source_id,
         sources.c.source_name,
+        sources.c.family_id,
+        sources.c.family_name,
         func.row_number()
         .over(
             partition_by=sources.c.list_id,
@@ -104,14 +116,21 @@ def get_shared_lists_with_source(
         .label("rank"),
     ).subquery()
     query = (
-        select(GiftList, ranked.c.kind, ranked.c.source_id, ranked.c.source_name)
+        select(
+            GiftList,
+            ranked.c.kind,
+            ranked.c.source_id,
+            ranked.c.source_name,
+            ranked.c.family_id,
+            ranked.c.family_name,
+        )
         .join(ranked, ranked.c.list_id == GiftList.id)
         .where(ranked.c.rank == 1)
         # `updated_at` is second-resolution, so lists touched in the same second
         # tie; id breaks it, keeping the order stable across requests.
         .order_by(GiftList.updated_at.desc(), GiftList.id.desc())
     )
-    return [(row[0], row[1], row[2], row[3]) for row in db.execute(query).all()]
+    return [tuple(row) for row in db.execute(query).all()]
 
 
 def get_all_visible_lists(db: Session, user_id: int, archived: bool = False) -> list[GiftList]:
@@ -151,7 +170,7 @@ def delete_list(db: Session, gift_list: GiftList) -> None:
     list_id = gift_list.id
     db.execute(delete(FolderItem).where(FolderItem.list_id == list_id))
     db.execute(delete(ListShare).where(ListShare.list_id == list_id))
-    db.execute(delete(ListFamilyShare).where(ListFamilyShare.list_id == list_id))
+    db.execute(delete(ListOccasionShare).where(ListOccasionShare.list_id == list_id))
     db.execute(delete(Gift).where(Gift.list_id == list_id))
     db.delete(gift_list)
     db.flush()

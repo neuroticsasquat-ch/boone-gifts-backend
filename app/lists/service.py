@@ -1,7 +1,7 @@
 from sqlalchemy.orm import Session
 
 from app.account import service as account_service
-from app.list_families import service as list_family_service
+from app.list_occasions import service as list_occasion_service
 from app.lists import repository as repo
 from app.models.gift_list import GiftList
 from app.models.user import User
@@ -9,6 +9,7 @@ from app.schemas.gift_list import (
     GiftListDetailOwner,
     GiftListDetailViewer,
     SharedVia,
+    SharedViaFamily,
 )
 from app.services.exceptions import BadRequestError, ConflictError
 
@@ -29,7 +30,7 @@ def _reject_person_with_recipient(
 
 def create_list(
     db: Session, name: str, description: str | None, owner: User,
-    family_ids: list[int] | None = None,
+    occasion_ids: list[int] | None = None,
     recipient_name: str | None = None,
     account_person_id: int | None = None,
 ) -> GiftList:
@@ -43,7 +44,7 @@ def create_list(
         recipient_name=recipient_name,
         account_person_id=account_person_id,
     )
-    list_family_service.set_grants_on_create(db, gift_list, owner, family_ids or [])
+    list_occasion_service.set_shares_on_create(db, gift_list, owner, occasion_ids or [])
     return gift_list
 
 
@@ -58,12 +59,19 @@ def get_lists(db: Session, user_id: int, filter: str | None = None, archived: bo
 
 def get_shared_lists(db: Session, user_id: int, archived: bool = False) -> list[GiftList]:
     """Every list someone else has made visible to the caller — directly or through
-    a family — each annotated with the `shared_via` source that explains it. This is
-    the one shared scope; there is no separate family view."""
+    an occasion — each annotated with the `shared_via` source that explains it. This
+    is the one shared scope; there is no separate family view."""
     rows = repo.get_shared_lists_with_source(db, user_id, archived=archived)
     lists: list[GiftList] = []
-    for gift_list, kind, source_id, source_name in rows:
-        gift_list.shared_via = SharedVia(kind=kind, id=source_id, name=source_name)
+    for gift_list, kind, source_id, source_name, family_id, family_name in rows:
+        family = (
+            SharedViaFamily(id=family_id, name=family_name)
+            if family_id is not None
+            else None
+        )
+        gift_list.shared_via = SharedVia(
+            kind=kind, id=source_id, name=source_name, family=family
+        )
         lists.append(gift_list)
     return lists
 

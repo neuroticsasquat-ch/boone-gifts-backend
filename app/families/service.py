@@ -6,7 +6,7 @@ from app.connections.repository import (
     unclaim_gifts_between,
 )
 from app.families import repository as repo
-from app.list_families import repository as list_family_repo
+from app.list_occasions import repository as list_occasion_repo
 from app.models.user import User
 from app.occasions import repository as occasions_repo
 from app.services.exceptions import ConflictError, ForbiddenError, NotFoundError
@@ -98,9 +98,9 @@ def delete_family(db: Session, family_id: int, user_id: int) -> None:
         raise ForbiddenError("Only organizers can delete the family.")
 
     member_ids = repo.get_member_user_ids(db, family_id)
-    list_family_repo.delete_grants_for_family(db, family_id)
-    # Occasions point at the family, so they go the same way the grants do —
-    # nothing else references them yet, and the FK would otherwise refuse.
+    # Shares point at the occasions, which point at the family, so they unwind
+    # in that order — the FK would otherwise refuse the delete.
+    list_occasion_repo.delete_shares_for_family(db, family_id)
     occasions_repo.delete_occasions_for_family(db, family_id)
     repo.delete_all_members(db, family_id)
     for i in range(len(member_ids)):
@@ -133,7 +133,7 @@ def remove_member(db: Session, family_id: int, actor_id: int, target_user_id: in
     co_member_ids = [
         uid for uid in repo.get_member_user_ids(db, family_id) if uid != target_user_id
     ]
-    list_family_repo.delete_grants_for_owner_in_family(
+    list_occasion_repo.delete_shares_for_owner_in_family(
         db, owner_id=target_user_id, family_id=family_id
     )
     repo.delete_family_member(db, target)

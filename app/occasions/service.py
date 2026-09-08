@@ -1,8 +1,11 @@
 from sqlalchemy.orm import Session
 
+from app.access import can_view_list
 from app.families import repository as families_repo
 from app.family_invites.service import _require_organizer
+from app.list_occasions import repository as list_occasions_repo
 from app.models.family_member import FamilyMember
+from app.models.gift_list import GiftList
 from app.models.occasion import Occasion
 from app.models.user import User
 from app.occasions import repository as repo
@@ -73,3 +76,22 @@ def update_occasion(
         raise NotFoundError("Occasion not found.")
     _require_organizer(db, occasion.family_id, actor, message=ORGANIZER_ONLY)
     return repo.update_occasion(db, occasion, update_data)
+
+
+def list_lists(db: Session, occasion_id: int, actor: User) -> list[GiftList]:
+    """The occasion's lists, as this member can see them.
+
+    Every row goes through `can_view_list` even though membership of the
+    occasion's family already implies it — that is the codebase's one visibility
+    predicate (`CONTEXT.md` invariant 2), and routing through it means a term
+    added there is inherited here instead of being quietly missed. The cost is
+    one query per list on the occasion.
+    """
+    _load_for_member(db, occasion_id, actor)
+    return [
+        gift_list
+        for gift_list in list_occasions_repo.get_lists_shared_to_occasion(
+            db, occasion_id
+        )
+        if can_view_list(db, actor, gift_list)
+    ]

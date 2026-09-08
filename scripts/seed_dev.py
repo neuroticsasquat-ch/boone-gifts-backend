@@ -36,8 +36,9 @@ from app.models.family_invite import FamilyInvite
 from app.models.family_member import FamilyMember
 from app.models.gift import Gift
 from app.models.gift_list import GiftList
-from app.models.list_family_share import ListFamilyShare
+from app.models.list_occasion_share import ListOccasionShare
 from app.models.list_share import ListShare
+from app.models.occasion import Occasion
 from app.models.user import User
 
 DEFAULT_PASSWORD = "devpass123"
@@ -91,11 +92,20 @@ def purge(db) -> int:
         db.query(ListShare).filter(
             ListShare.list_id.in_(list_ids) | ListShare.user_id.in_(user_ids)
         ).delete(synchronize_session=False)
-    if list_ids or family_ids:
-        db.query(ListFamilyShare).filter(
-            ListFamilyShare.list_id.in_(list_ids)
-            | ListFamilyShare.family_id.in_(family_ids)
+    occasion_ids = set(
+        db.execute(
+            select(Occasion.id).where(Occasion.family_id.in_(family_ids))
+        ).scalars()
+    ) if family_ids else set()
+    if list_ids or occasion_ids:
+        db.query(ListOccasionShare).filter(
+            ListOccasionShare.list_id.in_(list_ids)
+            | ListOccasionShare.occasion_id.in_(occasion_ids)
         ).delete(synchronize_session=False)
+    if occasion_ids:
+        db.query(Occasion).filter(Occasion.id.in_(occasion_ids)).delete(
+            synchronize_session=False
+        )
     if folder_ids or list_ids:
         db.query(FolderItem).filter(
             FolderItem.folder_id.in_(folder_ids)
@@ -225,7 +235,10 @@ def seed(db, password: str) -> None:
 
     boones = Family(name="Boone Family", created_by_id=tom.id)
     extended = Family(name="Extended Family", created_by_id=carol.id)
-    db.add_all([boones, extended])
+    # Work Friends deliberately never gets an occasion: it is the family the
+    # sharing control has to render disabled, with the reason given.
+    work_friends = Family(name="Work Friends", created_by_id=tom.id)
+    db.add_all([boones, extended, work_friends])
     db.flush()
     # Tom is organizer of one family and a plain member of the other, and belongs
     # to both — so "which family did this list come from?" has a real answer, and
@@ -236,6 +249,8 @@ def seed(db, password: str) -> None:
         db.add(FamilyMember(family_id=boones.id, user_id=user.id, role=role))
     for user, role in [(carol, "organizer"), (tom, "member"), (dave, "member")]:
         db.add(FamilyMember(family_id=extended.id, user_id=user.id, role=role))
+    for user, role in [(tom, "organizer"), (dave, "member")]:
+        db.add(FamilyMember(family_id=work_friends.id, user_id=user.id, role=role))
 
     # Direct shares both ways, so "shared with me" and "shared by me" are both
     # populated for Tom.
@@ -246,15 +261,40 @@ def seed(db, password: str) -> None:
     # rule: one row in the shared scope, labelled with Carol, not the family.
     db.add(ListShare(list_id=carol_wishlist.id, user_id=tom.id))
 
-    # Family shares. Gran's and Dave's lists reach Tom *only* this way — they are
-    # the lists that prove the family/direct split.
-    db.add(ListFamilyShare(list_id=carol_wishlist.id, family_id=boones.id))
-    db.add(ListFamilyShare(list_id=gran_list.id, family_id=boones.id))
-    db.add(ListFamilyShare(list_id=grandpa_list.id, family_id=boones.id))
-    db.add(ListFamilyShare(list_id=kitchen_list.id, family_id=boones.id))
-    db.add(ListFamilyShare(list_id=tom_christmas.id, family_id=boones.id))
-    db.add(ListFamilyShare(list_id=tom_christmas.id, family_id=extended.id))
-    db.add(ListFamilyShare(list_id=dave_wishlist.id, family_id=extended.id))
+    # Occasions, in the three states the sharing control has to render: one
+    # active (the single-click case), several active (the select case), and none
+    # at all (the disabled row). The archived one exists to prove that archiving
+    # blocks new shares without withdrawing the shares already made.
+    boones_christmas = Occasion(
+        family_id=boones.id, name="Christmas 2026", created_by_id=tom.id
+    )
+    boones_last_year = Occasion(
+        family_id=boones.id,
+        name="Christmas 2025",
+        created_by_id=tom.id,
+        is_archived=True,
+    )
+    extended_christmas = Occasion(
+        family_id=extended.id, name="Christmas 2026", created_by_id=carol.id
+    )
+    extended_birthday = Occasion(
+        family_id=extended.id, name="Gran's 80th", created_by_id=carol.id
+    )
+    db.add_all(
+        [boones_christmas, boones_last_year, extended_christmas, extended_birthday]
+    )
+    db.flush()
+
+    # Occasion shares. Gran's and Dave's lists reach Tom *only* this way — they
+    # are the lists that prove the occasion/direct split. Grandpa's reaches him
+    # only through an archived occasion, which must not change that.
+    db.add(ListOccasionShare(list_id=carol_wishlist.id, occasion_id=boones_christmas.id))
+    db.add(ListOccasionShare(list_id=gran_list.id, occasion_id=boones_christmas.id))
+    db.add(ListOccasionShare(list_id=grandpa_list.id, occasion_id=boones_last_year.id))
+    db.add(ListOccasionShare(list_id=kitchen_list.id, occasion_id=boones_christmas.id))
+    db.add(ListOccasionShare(list_id=tom_christmas.id, occasion_id=boones_christmas.id))
+    db.add(ListOccasionShare(list_id=tom_christmas.id, occasion_id=extended_christmas.id))
+    db.add(ListOccasionShare(list_id=dave_wishlist.id, occasion_id=extended_christmas.id))
 
     christmas = Folder(owner_id=tom.id, name="Christmas 2026 Shopping",
                            description="Everyone I'm buying for")
@@ -295,7 +335,7 @@ def main() -> None:
             sys.exit(1)
 
         seed(db, args.password)
-        print("Seeded 5 users, 10 lists, 2 families, 2 folders.")
+        print("Seeded 5 users, 10 lists, 3 families, 4 occasions, 2 folders.")
         print(f"Log in as any of: {', '.join(SEED_EMAILS)}")
         print(f"Password: {args.password}")
     finally:

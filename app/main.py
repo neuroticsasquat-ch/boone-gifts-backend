@@ -16,7 +16,7 @@ from app.invites import router as invites
 from app.lists import router as lists
 from app.gifts import router as gifts
 from app.shares import router as shares
-from app.list_families import router as list_families
+from app.list_occasions import router as list_occasions
 from app.connections import router as connections
 from app.folders import router as folders_
 from app.meta import router as meta
@@ -59,7 +59,7 @@ def create_app() -> FastAPI:
     application.include_router(lists.router)
     application.include_router(gifts.router)
     application.include_router(shares.router)
-    application.include_router(list_families.router)
+    application.include_router(list_occasions.router)
     application.include_router(connections.router)
     application.include_router(folders_.router)
     application.include_router(meta.router)

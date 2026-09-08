@@ -60,7 +60,7 @@ app/
   dependencies.py      # get_db, token creation, get_current_user, require_admin, access deps
   access.py            # Visibility predicates: can_view_list, users_share_access
   models/              # user, account_person, invite, gift_list, gift, list_share,
-                       # list_family_share, connection, folder, folder_item,
+                       # list_occasion_share, connection, folder, folder_item,
                        # password_reset_token, family, family_member, family_invite,
                        # occasion
   schemas/             # Pydantic request/response models, one module per domain
@@ -72,7 +72,7 @@ app/
   lists/               # /lists CRUD, filter logic, owner vs viewer responses
   gifts/               # /lists/{id}/gifts CRUD + claim/unclaim
   shares/              # /lists/{id}/shares — direct shares, cascade on unshare
-  list_families/       # /lists/{id}/families — per-family grants, claim handling on revoke
+  list_occasions/      # /lists/{id}/occasions — occasion shares, claim handling on revoke
   connections/         # /connections lifecycle + cascade disconnect
   folders/             # /folders CRUD + items with access checks
   families/            # /families CRUD, membership, cascade cleanup
@@ -97,9 +97,9 @@ tests/
 
 ## Visibility model
 
-`can_view_list` in `app/access.py` is the single predicate: **owner OR a `ListShare` row OR the owner granted the list to a family the viewer belongs to.** A connection alone does not grant visibility, and neither does bare family co-membership. Claims and folder-item gating both route through it, so family-visible lists work for those operations without special cases.
+`can_view_list` in `app/access.py` is the single predicate: **owner OR a `ListShare` row OR the list is shared to an occasion of a family the viewer belongs to.** A connection alone does not grant visibility, and neither does bare family co-membership. Claims and folder-item gating both route through it, so occasion-visible lists work for those operations without special cases. It deliberately does **not** consult `occasions.is_archived` — archiving is not unsharing.
 
-`users_share_access` answers a different question — "is there a standing relationship" — and is deliberately **not** gated on grants.
+`users_share_access` answers a different question — "is there a standing relationship" — and is deliberately **not** gated on shares.
 
 ### Families
 - **Tables**: `families` (name, created_by_id); `family_members` (family_id, user_id, role `organizer|member`, unique per pair); `family_invites` (family_id, email, token UUID, role, invited_by_id, accepted_at, declined_at)
@@ -132,18 +132,20 @@ hidden on every list the account owns, so a couple cannot coordinate shopping th
   a request-body validator; the same applies to the person/recipient exclusivity rule, which only
   `app/lists/service.py` can judge against the *stored* row on a partial update
 
-### Per-family list sharing
-Family visibility is an explicit per-(list, family) `ListFamilyShare` grant, not implied by co-membership.
-- `GET /lists/{id}/families` — every family the **owner** belongs to, each with a `shared` flag
-- `PUT /lists/{id}/families/{family_id}` — grant; 204, idempotent
-- `DELETE /lists/{id}/families/{family_id}?claims=release|keep` — revoke; 204, or **409** when a member who would lose access holds a claim and no `claims` choice was given
-- `POST /lists` accepts `family_ids` — each must be the caller's family, else 403. Omitted or empty shares with no family; there is no auto-grant
+### Share-to-an-occasion
+Family visibility is an explicit per-(list, occasion) `ListOccasionShare` row, not implied by co-membership. The family is derived through `occasions.family_id` and is **not** stored twice. See `docs/adr/0002-family-shares-target-an-occasion.md`.
+- `GET /lists/{id}/families` — the sharing control's families half: every family the **owner** belongs to, each carrying its shareable `occasions` (`id`, `name`, `is_archived`, `shared`). An empty `occasions` is the "no active occasion" state the control renders **disabled**; an archived occasion appears only when the list is already shared to it, so its name stays displayable
+- `PUT /lists/{id}/occasions/{occasion_id}` — share; 204, idempotent. **409** if the occasion is archived, **403** if the caller is not a member of its family, **404** if it does not exist. Membership is checked first, so a non-member learns nothing about the occasion — not even that it is archived
+- `DELETE /lists/{id}/occasions/{occasion_id}?claims=release|keep` — unshare; 204, or **409** when a member who would lose access holds a claim and no `claims` choice was given. Works on an archived occasion: archiving blocks new shares, not the withdrawal of old ones
+- `POST /lists` accepts `occasion_ids` — each must be on one of the caller's families and unarchived, else 403/409. Omitted or empty shares with nobody; there is no auto-grant, and the §5.2 pre-checking is a client concern
+- `GET /occasions/{id}/lists` — the occasion's lists, for any member of its family, each still routed through `can_view_list`
 - `GET /lists?filter=shared` — **the one shared scope**: every list another account has made
-  visible to the caller, by a direct `ListShare` **or** a family grant. Each row carries
-  `shared_via` (`{kind: user|family, id, name}`); a list reachable both ways appears once, as
-  `kind: user`. The caller's own lists are never in it. There is no `?filter=family`
+  visible to the caller, by a direct `ListShare` **or** an occasion share. Each row carries
+  `shared_via` — `{kind: "user", id, name}` or `{kind: "occasion", id, name, family: {id, name}}`;
+  a list reachable both ways appears once, as `kind: user`. An archived occasion still appears. The
+  caller's own lists are never in it. There is no `?filter=family`
 
-**A grant row implies the owner is still a member of that family.** Read queries rely on that and don't re-check, so every membership departure (`remove_member`, `delete_family`) deletes the affected grants.
+**A share row implies the owner is still a member of the occasion's family.** Read queries rely on that and don't re-check, so every membership departure (`remove_member`, `delete_family`) deletes the affected shares — across *every* occasion of that family.
 
 ### Family occasions
 A family's shared gifting occasion — "Boone Family · Christmas 2026". The unit a list is shared
@@ -158,9 +160,10 @@ A family's shared gifting occasion — "Boone Family · Christmas 2026". The uni
   place role gates something a member can *see*; renaming changes a label everyone's budgets are
   filed under. It reuses `_require_organizer` from `app/family_invites/service.py`, passing its own
   refusal message
-- **Deleting a family deletes its occasions**, alongside the grants and members — `delete_family`
-  clears everything pointing at the family so the row itself can go, and `occasions.family_id` has
-  no `ondelete`, so an uncleaned occasion makes the delete fail outright under `PRAGMA foreign_keys=ON`
+- **Deleting a family deletes its occasions**, alongside the members — `delete_family` clears
+  everything pointing at the family so the row itself can go. The unwind order matters: the shares
+  point at the occasions, which point at the family, and neither FK has an `ondelete`, so anything
+  left behind makes the delete fail outright under `PRAGMA foreign_keys=ON`
 - `OccasionUpdate` treats `None` as "leave it alone", so an explicit `null` in the body is a **422**,
   never a write: neither column is nullable
 
@@ -187,6 +190,7 @@ A family's shared gifting occasion — "Boone Family · Christmas 2026". The uni
 | `c9d4e7a2f180` | `occasions` → `folders`, `occasion_items` → `folder_items` |
 | `f1a6b3c80d27` | Drop `users.simple_mode` and `family_invites.simple_mode` |
 | `a3f8c1e70b52` | `occasions` table — the family-owned gifting occasion |
+| `b7e2d4f16c93` | `list_occasion_shares` table; drop `list_family_shares` with **no backfill** |
 
 ## Testing
 - ~744 test functions across 56 files
@@ -198,14 +202,14 @@ A family's shared gifting occasion — "Boone Family · Christmas 2026". The uni
 - CI runs `uv sync --frozen && pytest tests/ -v` with `APP_JWT_SECRET=ci-test-secret`
 
 ## Dev fixtures
-`python -m scripts.seed_dev` (add `--reset` to re-seed, `--purge` to remove) builds the visibility states a single account can't produce: a directly shared list, a list reaching you only through a family, a list kept for someone with no account, an archived list, a claimed gift, a pending connection request, and a shared account with two people. All fixture users are `@example.com`, and purge only deletes rows reachable from them. Run it with `-m` — executing the file directly puts `scripts/` on `sys.path` instead of `/app`.
+`python -m scripts.seed_dev` (add `--reset` to re-seed, `--purge` to remove) builds the visibility states a single account can't produce: a directly shared list, a list reaching you only through an occasion, a list kept for someone with no account, an archived list, a claimed gift, a pending connection request, and a shared account with two people. All fixture users are `@example.com`, and purge only deletes rows reachable from them. Run it with `-m` — executing the file directly puts `scripts/` on `sys.path` instead of `/app`.
 
 ## Critical conventions
 - **Router endpoints use `db.flush()`, never `db.commit()`** — the `get_db` dependency commits on success and rolls back on exception. In tests the fixture rolls back. New endpoints must follow this.
 - **SQLite FK enforcement**: `PRAGMA foreign_keys=ON` is set by a SQLAlchemy event listener on every connection — SQLite disables FK enforcement by default.
 - **Alembic uses `render_as_batch=True`** — SQLite can't do most `ALTER TABLE`, so batch mode recreates tables.
 - **Packages install to `/opt/venv`** (`UV_PROJECT_ENVIRONMENT=/opt/venv`) so the bind mount can't shadow them; `/opt/venv/bin` is on `PATH`. After `task add`, rebuild the image so the dep survives container recreation.
-- **Revoking a family grant is claim-aware but claim-blind**: owners never see claim state on their own lists, so a 409 reveals only *that* claims exist — no counts, no gift or claimer names. `claims=release` unclaims for the members losing access; `claims=keep` leaves them standing. Folder items are deleted either way, matching `delete_share`.
+- **Revoking an occasion share is claim-aware but claim-blind**: owners never see claim state on their own lists, so a 409 reveals only *that* claims exist — no counts, no gift or claimer names. `claims=release` unclaims for the members losing access; `claims=keep` leaves them standing. Folder items are deleted either way, matching `delete_share`. "Losing access" is computed per family, so a sibling occasion on the same family — or another family still sharing the list — spares everyone in it.
 - **Cascade cleanup on relationship loss**: when a member leaves, is removed, or a family is deleted, the service calls `unclaim_gifts_between` / `delete_folder_items_between` per affected pair — but only when the two users no longer share access by any remaining path (no accepted connection, no other common family). `list_shares` rows are never touched; family access doesn't create share rows.
 
 ## Debugging CI failures
