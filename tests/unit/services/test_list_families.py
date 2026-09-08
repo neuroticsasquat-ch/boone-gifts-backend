@@ -181,7 +181,7 @@ def _revoking(losing_ids, has_claims):
             delete_grant=stack.enter_context(patch(f"{REPO}.delete_grant")),
             unclaim=stack.enter_context(patch(f"{REPO}.unclaim_for_users")),
             delete_items=stack.enter_context(
-                patch(f"{REPO}.delete_occasion_items_for_users")
+                patch(f"{REPO}.delete_folder_items_for_users")
             ),
         )
 
@@ -204,7 +204,7 @@ def test_revoke_release_unclaims_for_the_members_who_lose_access(db):
         m.delete_items.assert_called_once_with(db, 5, [2, 3])
 
 
-def test_revoke_keep_leaves_claims_but_still_drops_occasion_items(db):
+def test_revoke_keep_leaves_claims_but_still_drops_folder_items(db):
     with _revoking([2], has_claims=True) as m:
         service.revoke_grant(db, _list(), 7, _user(), claims="keep")
         m.delete_grant.assert_called_once()

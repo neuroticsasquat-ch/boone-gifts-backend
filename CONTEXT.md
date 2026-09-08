@@ -16,13 +16,15 @@ the words mean and what must stay true.
 | **Direct share** | A grant of one list to one account | `list_shares` |
 | **Family** | A named group of accounts, with organizers and members | `families`, `family_members` |
 | **Family grant** | A grant of one list to one family. Not implied by co-membership | `list_family_shares` |
-| **Occasion** | An account's private grouping of lists it can see — "Christmas 2026". Was called a *collection* | `occasions`, `occasion_items` |
+| **Folder** | An account's private grouping of lists it can see — "Christmas 2026". Was called an *occasion*, and before that a *collection* | `folders`, `folder_items` |
 | **Recipient** | A person with **no account** for whom an account keeps a list | `lists.recipient_name` |
 | **Shared account** | An account used by more than one person, e.g. a couple sharing one login | `users.is_shared_account` |
 | **Account person** | A named person on a shared account. **A label, never an identity** | `account_people` |
 
-Deliberately *not* in the vocabulary: "collection" (renamed to occasion), "family list" (a list
-reached through a family grant is just a shared list).
+Deliberately *not* in the vocabulary: "collection" and "occasion" (both renamed, in turn, to
+folder), "family list" (a list reached through a family grant is just a shared list). The name
+`occasions` is deliberately left vacant for the family-owned gifting occasion the shopping-lists
+project introduces.
 
 ## Invariants
 
@@ -32,7 +34,7 @@ reached through a family grant is just a shared list).
 
 2. **Visibility has exactly one predicate.** `can_view_list` in `app/access.py`: owner, OR a
    `ListShare` row, OR the owner granted the list to a family the viewer belongs to. Claims and
-   occasion membership both route through it. A connection alone grants nothing; bare family
+   folder membership both route through it. A connection alone grants nothing; bare family
    co-membership grants nothing.
 
 3. **A family grant row implies the owner is still a member of that family.** Read queries rely on

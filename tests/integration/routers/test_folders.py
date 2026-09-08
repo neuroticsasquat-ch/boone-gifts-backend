@@ -1,6 +1,6 @@
-def test_create_occasion(client, member_user, member_headers):
+def test_create_folder(client, member_user, member_headers):
     response = client.post(
-        "/occasions",
+        "/folders",
         headers=member_headers,
         json={"name": "Christmas 2026", "description": "Holiday gifts"},
     )
@@ -11,9 +11,9 @@ def test_create_occasion(client, member_user, member_headers):
     assert data["owner_id"] == member_user.id
 
 
-def test_create_occasion_no_description(client, member_headers):
+def test_create_folder_no_description(client, member_headers):
     response = client.post(
-        "/occasions",
+        "/folders",
         headers=member_headers,
         json={"name": "Birthdays"},
     )
@@ -21,25 +21,25 @@ def test_create_occasion_no_description(client, member_headers):
     assert response.json()["description"] is None
 
 
-def test_list_occasions(client, member_headers, occasion):
-    response = client.get("/occasions", headers=member_headers)
+def test_list_folders(client, member_headers, folder):
+    response = client.get("/folders", headers=member_headers)
     assert response.status_code == 200
     data = response.json()
     assert len(data) == 1
     assert data[0]["name"] == "Christmas 2026"
 
 
-def test_list_occasions_only_own(client, admin_headers, occasion):
-    response = client.get("/occasions", headers=admin_headers)
+def test_list_folders_only_own(client, admin_headers, folder):
+    response = client.get("/folders", headers=admin_headers)
     assert response.status_code == 200
     assert len(response.json()) == 0
 
 
-def test_get_occasion_detail(
-    client, member_headers, occasion, occasion_item, sample_list
+def test_get_folder_detail(
+    client, member_headers, folder, folder_item, sample_list
 ):
     response = client.get(
-        f"/occasions/{occasion.id}", headers=member_headers
+        f"/folders/{folder.id}", headers=member_headers
     )
     assert response.status_code == 200
     data = response.json()
@@ -49,21 +49,21 @@ def test_get_occasion_detail(
     assert data["lists"][0]["name"] == "Member's Wishlist"
 
 
-def test_get_occasion_not_owner(client, admin_headers, occasion):
+def test_get_folder_not_owner(client, admin_headers, folder):
     response = client.get(
-        f"/occasions/{occasion.id}", headers=admin_headers
+        f"/folders/{folder.id}", headers=admin_headers
     )
     assert response.status_code == 403
 
 
-def test_get_occasion_not_found(client, member_headers):
-    response = client.get("/occasions/99999", headers=member_headers)
+def test_get_folder_not_found(client, member_headers):
+    response = client.get("/folders/99999", headers=member_headers)
     assert response.status_code == 404
 
 
-def test_update_occasion(client, member_headers, occasion):
+def test_update_folder(client, member_headers, folder):
     response = client.put(
-        f"/occasions/{occasion.id}",
+        f"/folders/{folder.id}",
         headers=member_headers,
         json={"name": "Christmas 2027"},
     )
@@ -71,32 +71,32 @@ def test_update_occasion(client, member_headers, occasion):
     assert response.json()["name"] == "Christmas 2027"
 
 
-def test_update_occasion_not_owner(client, admin_headers, occasion):
+def test_update_folder_not_owner(client, admin_headers, folder):
     response = client.put(
-        f"/occasions/{occasion.id}",
+        f"/folders/{folder.id}",
         headers=admin_headers,
         json={"name": "Hacked"},
     )
     assert response.status_code == 403
 
 
-def test_delete_occasion(client, member_headers, occasion):
+def test_delete_folder(client, member_headers, folder):
     response = client.delete(
-        f"/occasions/{occasion.id}", headers=member_headers
+        f"/folders/{folder.id}", headers=member_headers
     )
     assert response.status_code == 204
 
 
-def test_delete_occasion_not_owner(client, admin_headers, occasion):
+def test_delete_folder_not_owner(client, admin_headers, folder):
     response = client.delete(
-        f"/occasions/{occasion.id}", headers=admin_headers
+        f"/folders/{folder.id}", headers=admin_headers
     )
     assert response.status_code == 403
 
 
-def test_add_owned_list(client, member_headers, occasion, sample_list):
+def test_add_owned_list(client, member_headers, folder, sample_list):
     response = client.post(
-        f"/occasions/{occasion.id}/items",
+        f"/folders/{folder.id}/items",
         headers=member_headers,
         json={"list_id": sample_list.id},
     )
@@ -104,7 +104,7 @@ def test_add_owned_list(client, member_headers, occasion, sample_list):
 
 
 def test_add_shared_list(
-    client, member_headers, occasion, admin_user, connection, db
+    client, member_headers, folder, admin_user, connection, db
 ):
     from app.models.gift_list import GiftList
     from app.models.list_share import ListShare
@@ -113,12 +113,12 @@ def test_add_shared_list(
     db.add(admin_list)
     db.flush()
 
-    share = ListShare(list_id=admin_list.id, user_id=occasion.owner_id)
+    share = ListShare(list_id=admin_list.id, user_id=folder.owner_id)
     db.add(share)
     db.flush()
 
     response = client.post(
-        f"/occasions/{occasion.id}/items",
+        f"/folders/{folder.id}/items",
         headers=member_headers,
         json={"list_id": admin_list.id},
     )
@@ -126,7 +126,7 @@ def test_add_shared_list(
 
 
 def test_add_inaccessible_list(
-    client, member_headers, occasion, admin_user, db
+    client, member_headers, folder, admin_user, db
 ):
     from app.models.gift_list import GiftList
 
@@ -135,50 +135,50 @@ def test_add_inaccessible_list(
     db.flush()
 
     response = client.post(
-        f"/occasions/{occasion.id}/items",
+        f"/folders/{folder.id}/items",
         headers=member_headers,
         json={"list_id": admin_list.id},
     )
     assert response.status_code == 403
 
 
-def test_add_nonexistent_list(client, member_headers, occasion):
+def test_add_nonexistent_list(client, member_headers, folder):
     response = client.post(
-        f"/occasions/{occasion.id}/items",
+        f"/folders/{folder.id}/items",
         headers=member_headers,
         json={"list_id": 99999},
     )
     assert response.status_code == 404
 
 
-def test_add_duplicate_item(client, member_headers, occasion, occasion_item, sample_list):
+def test_add_duplicate_item(client, member_headers, folder, folder_item, sample_list):
     response = client.post(
-        f"/occasions/{occasion.id}/items",
+        f"/folders/{folder.id}/items",
         headers=member_headers,
         json={"list_id": sample_list.id},
     )
     assert response.status_code == 409
 
 
-def test_remove_item(client, member_headers, occasion, occasion_item, sample_list):
+def test_remove_item(client, member_headers, folder, folder_item, sample_list):
     response = client.delete(
-        f"/occasions/{occasion.id}/items/{sample_list.id}",
+        f"/folders/{folder.id}/items/{sample_list.id}",
         headers=member_headers,
     )
     assert response.status_code == 204
 
 
-def test_remove_item_not_found(client, member_headers, occasion):
+def test_remove_item_not_found(client, member_headers, folder):
     response = client.delete(
-        f"/occasions/{occasion.id}/items/99999",
+        f"/folders/{folder.id}/items/99999",
         headers=member_headers,
     )
     assert response.status_code == 404
 
 
-def test_archive_occasion(client, member_headers, occasion):
+def test_archive_folder(client, member_headers, folder):
     response = client.put(
-        f"/occasions/{occasion.id}",
+        f"/folders/{folder.id}",
         headers=member_headers,
         json={"is_archived": True},
     )
@@ -186,32 +186,32 @@ def test_archive_occasion(client, member_headers, occasion):
     assert response.json()["is_archived"] is True
 
 
-def test_occasions_exclude_archived_by_default(client, member_headers, occasion, db):
-    occasion.is_archived = True
+def test_folders_exclude_archived_by_default(client, member_headers, folder, db):
+    folder.is_archived = True
     db.flush()
 
-    response = client.get("/occasions", headers=member_headers)
+    response = client.get("/folders", headers=member_headers)
     assert response.status_code == 200
     assert len(response.json()) == 0
 
 
-def test_occasions_archived_filter(client, member_headers, occasion, db):
-    occasion.is_archived = True
+def test_folders_archived_filter(client, member_headers, folder, db):
+    folder.is_archived = True
     db.flush()
 
-    response = client.get("/occasions?archived=true", headers=member_headers)
+    response = client.get("/folders?archived=true", headers=member_headers)
     assert response.status_code == 200
     assert len(response.json()) == 1
 
 
-def test_occasions_for_list(client, member_headers, occasion, occasion_item, sample_list):
-    response = client.get(f"/occasions/for-list/{sample_list.id}", headers=member_headers)
+def test_folders_for_list(client, member_headers, folder, folder_item, sample_list):
+    response = client.get(f"/folders/for-list/{sample_list.id}", headers=member_headers)
     assert response.status_code == 200
-    assert occasion.id in response.json()
+    assert folder.id in response.json()
 
 
-def test_occasions_for_list_empty(client, member_headers, sample_list):
-    response = client.get(f"/occasions/for-list/{sample_list.id}", headers=member_headers)
+def test_folders_for_list_empty(client, member_headers, sample_list):
+    response = client.get(f"/folders/for-list/{sample_list.id}", headers=member_headers)
     assert response.status_code == 200
     assert response.json() == []
 
@@ -219,7 +219,7 @@ def test_occasions_for_list_empty(client, member_headers, sample_list):
 # Shopping list endpoint tests
 
 def test_shopping_list_returns_claimed_gifts(
-    client, member_user, member_headers, admin_user, occasion, occasion_item, shared_list, db
+    client, member_user, member_headers, admin_user, folder, folder_item, shared_list, db
 ):
     from app.models.gift import Gift
 
@@ -229,7 +229,7 @@ def test_shopping_list_returns_claimed_gifts(
     db.flush()
 
     response = client.get(
-        f"/occasions/{occasion.id}/shopping-list",
+        f"/folders/{folder.id}/shopping-list",
         headers=member_headers,
     )
     assert response.status_code == 200
@@ -241,7 +241,7 @@ def test_shopping_list_returns_claimed_gifts(
 
 
 def test_shopping_list_excludes_unclaimed(
-    client, member_headers, occasion, occasion_item, shared_list, db
+    client, member_headers, folder, folder_item, shared_list, db
 ):
     from app.models.gift import Gift
 
@@ -250,7 +250,7 @@ def test_shopping_list_excludes_unclaimed(
     db.flush()
 
     response = client.get(
-        f"/occasions/{occasion.id}/shopping-list",
+        f"/folders/{folder.id}/shopping-list",
         headers=member_headers,
     )
     assert response.status_code == 200
@@ -258,7 +258,7 @@ def test_shopping_list_excludes_unclaimed(
 
 
 def test_shopping_list_excludes_other_claimer(
-    client, member_headers, admin_user, occasion, occasion_item, shared_list, db
+    client, member_headers, admin_user, folder, folder_item, shared_list, db
 ):
     from app.models.gift import Gift
 
@@ -268,7 +268,7 @@ def test_shopping_list_excludes_other_claimer(
     db.flush()
 
     response = client.get(
-        f"/occasions/{occasion.id}/shopping-list",
+        f"/folders/{folder.id}/shopping-list",
         headers=member_headers,
     )
     assert response.status_code == 200
@@ -276,7 +276,7 @@ def test_shopping_list_excludes_other_claimer(
 
 
 def test_shopping_list_shows_purchased_at(
-    client, member_user, member_headers, occasion, occasion_item, shared_list, db
+    client, member_user, member_headers, folder, folder_item, shared_list, db
 ):
     from datetime import datetime, timezone
     from app.models.gift import Gift
@@ -288,7 +288,7 @@ def test_shopping_list_shows_purchased_at(
     db.flush()
 
     response = client.get(
-        f"/occasions/{occasion.id}/shopping-list",
+        f"/folders/{folder.id}/shopping-list",
         headers=member_headers,
     )
     assert response.status_code == 200
@@ -297,23 +297,23 @@ def test_shopping_list_shows_purchased_at(
     assert data[0]["purchased_at"] is not None
 
 
-def test_shopping_list_not_owner_403(client, admin_headers, occasion):
+def test_shopping_list_not_owner_403(client, admin_headers, folder):
     response = client.get(
-        f"/occasions/{occasion.id}/shopping-list",
+        f"/folders/{folder.id}/shopping-list",
         headers=admin_headers,
     )
     assert response.status_code == 403
 
 
 def test_add_family_visible_list(
-    client, member_user, member_headers, admin_user, occasion, db
+    client, member_user, member_headers, admin_user, folder, db
 ):
     from app.models.family import Family
     from app.models.family_member import FamilyMember
     from app.models.gift_list import GiftList
     from app.models.list_family_share import ListFamilyShare
 
-    # member_user (occasion owner) and admin_user share a family, and admin_user
+    # member_user (folder owner) and admin_user share a family, and admin_user
     # granted the list to it. No connection, no direct ListShare — visibility comes
     # only from that family grant.
     family = Family(name="The Boones", created_by_id=admin_user.id)
@@ -334,11 +334,11 @@ def test_add_family_visible_list(
     db.flush()
 
     response = client.post(
-        f"/occasions/{occasion.id}/items",
+        f"/folders/{folder.id}/items",
         headers=member_headers,
         json={"list_id": admin_list.id},
     )
     assert response.status_code == 201
 
-    detail = client.get(f"/occasions/{occasion.id}", headers=member_headers)
+    detail = client.get(f"/folders/{folder.id}", headers=member_headers)
     assert admin_list.id in {item["id"] for item in detail.json()["lists"]}

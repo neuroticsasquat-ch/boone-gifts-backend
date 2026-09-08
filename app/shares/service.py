@@ -64,6 +64,6 @@ def delete_share(db: Session, list_id: int, user_id: int) -> None:
 
     repo.delete_share(db, share)
 
-    items = repo.find_occasion_items_for_unshare(db, list_id, user_id)
+    items = repo.find_folder_items_for_unshare(db, list_id, user_id)
     for item in items:
-        repo.delete_occasion_item(db, item)
+        repo.delete_folder_item(db, item)

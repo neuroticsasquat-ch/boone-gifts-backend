@@ -432,7 +432,7 @@ def test_update_list_name_only_leaves_recipient_untouched(
     assert data["recipient_name"] == "Beth"
 
 
-def test_list_occasion_endpoint_returns_recipient_fields(
+def test_list_folder_endpoint_returns_recipient_fields(
     client, member_headers, sample_list, db
 ):
     # compute_counts builds an explicit dict; a missing key silently nulls the field.

@@ -28,8 +28,8 @@ from sqlalchemy import select
 
 from app.database import Base, SessionLocal, engine
 from app.models.account_person import AccountPerson
-from app.models.occasion import Occasion
-from app.models.occasion_item import OccasionItem
+from app.models.folder import Folder
+from app.models.folder_item import FolderItem
 from app.models.connection import Connection
 from app.models.family import Family
 from app.models.family_invite import FamilyInvite
@@ -75,9 +75,9 @@ def purge(db) -> int:
             select(Family.id).where(Family.created_by_id.in_(user_ids))
         ).scalars()
     )
-    occasion_ids = set(
+    folder_ids = set(
         db.execute(
-            select(Occasion.id).where(Occasion.owner_id.in_(user_ids))
+            select(Folder.id).where(Folder.owner_id.in_(user_ids))
         ).scalars()
     )
 
@@ -96,13 +96,13 @@ def purge(db) -> int:
             ListFamilyShare.list_id.in_(list_ids)
             | ListFamilyShare.family_id.in_(family_ids)
         ).delete(synchronize_session=False)
-    if occasion_ids or list_ids:
-        db.query(OccasionItem).filter(
-            OccasionItem.occasion_id.in_(occasion_ids)
-            | OccasionItem.list_id.in_(list_ids)
+    if folder_ids or list_ids:
+        db.query(FolderItem).filter(
+            FolderItem.folder_id.in_(folder_ids)
+            | FolderItem.list_id.in_(list_ids)
         ).delete(synchronize_session=False)
-    if occasion_ids:
-        db.query(Occasion).filter(Occasion.id.in_(occasion_ids)).delete(
+    if folder_ids:
+        db.query(Folder).filter(Folder.id.in_(folder_ids)).delete(
             synchronize_session=False
         )
     if family_ids or user_ids:
@@ -258,14 +258,14 @@ def seed(db, password: str) -> None:
     db.add(ListFamilyShare(list_id=tom_christmas.id, family_id=extended.id))
     db.add(ListFamilyShare(list_id=dave_wishlist.id, family_id=extended.id))
 
-    christmas = Occasion(owner_id=tom.id, name="Christmas 2026 Shopping",
+    christmas = Folder(owner_id=tom.id, name="Christmas 2026 Shopping",
                            description="Everyone I'm buying for")
-    birthdays = Occasion(owner_id=tom.id, name="Kids' Birthdays")
+    birthdays = Folder(owner_id=tom.id, name="Kids' Birthdays")
     db.add_all([christmas, birthdays])
     db.flush()
     for gift_list in (jane_wishlist, carol_wishlist, gran_list):
-        db.add(OccasionItem(occasion_id=christmas.id, list_id=gift_list.id))
-    db.add(OccasionItem(occasion_id=birthdays.id, list_id=beths_list.id))
+        db.add(FolderItem(folder_id=christmas.id, list_id=gift_list.id))
+    db.add(FolderItem(folder_id=birthdays.id, list_id=beths_list.id))
 
     db.commit()
 
@@ -297,7 +297,7 @@ def main() -> None:
             sys.exit(1)
 
         seed(db, args.password)
-        print("Seeded 5 users, 10 lists, 2 families, 2 occasions.")
+        print("Seeded 5 users, 10 lists, 2 families, 2 folders.")
         print(f"Log in as any of: {', '.join(SEED_EMAILS)}")
         print(f"Password: {args.password}")
     finally:

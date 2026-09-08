@@ -1,8 +1,8 @@
 from sqlalchemy import delete, exists, select
 from sqlalchemy.orm import Session
 
-from app.models.occasion import Occasion
-from app.models.occasion_item import OccasionItem
+from app.models.folder import Folder
+from app.models.folder_item import FolderItem
 from app.models.family import Family
 from app.models.family_member import FamilyMember
 from app.models.gift import Gift
@@ -173,16 +173,16 @@ def unclaim_for_users(db: Session, list_id: int, user_ids: list[int]) -> None:
     db.flush()
 
 
-def delete_occasion_items_for_users(
+def delete_folder_items_for_users(
     db: Session, list_id: int, user_ids: list[int]
 ) -> None:
     if not user_ids:
         return
-    occasion_ids = select(Occasion.id).where(Occasion.owner_id.in_(user_ids))
+    folder_ids = select(Folder.id).where(Folder.owner_id.in_(user_ids))
     db.execute(
-        delete(OccasionItem).where(
-            OccasionItem.list_id == list_id,
-            OccasionItem.occasion_id.in_(occasion_ids),
+        delete(FolderItem).where(
+            FolderItem.list_id == list_id,
+            FolderItem.folder_id.in_(folder_ids),
         )
     )
     db.flush()

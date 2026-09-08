@@ -178,16 +178,16 @@ Creates five `@example.com` users with the list-visibility states a single accou
 - `POST /families/invites/{token}/accept` -- Join the family
 - `POST /families/invites/{token}/decline` -- Decline
 
-### Occasions (`/occasions`)
-- `POST /occasions` -- Create an occasion
-- `GET /occasions` -- List your occasions
-- `GET /occasions/for-list/{list_id}` -- Occasions containing a given list
-- `GET /occasions/{id}` -- Get occasion with its lists
-- `PUT /occasions/{id}` -- Update an occasion
-- `DELETE /occasions/{id}` -- Delete an occasion
-- `POST /occasions/{id}/items` -- Add a list to an occasion
-- `DELETE /occasions/{id}/items/{list_id}` -- Remove a list from an occasion
-- `GET /occasions/{id}/shopping-list` -- Everything you've claimed across the occasion
+### Folders (`/folders`)
+- `POST /folders` -- Create a folder
+- `GET /folders` -- List your folders
+- `GET /folders/for-list/{list_id}` -- Folders containing a given list
+- `GET /folders/{id}` -- Get folder with its lists
+- `PUT /folders/{id}` -- Update a folder
+- `DELETE /folders/{id}` -- Delete a folder
+- `POST /folders/{id}/items` -- Add a list to a folder
+- `DELETE /folders/{id}/items/{list_id}` -- Remove a list from a folder
+- `GET /folders/{id}/shopping-list` -- Everything you've claimed across the folder
 
 ### Meta (`/meta`)
 - `GET /meta` -- Fetch URL metadata (title, description, price, image)

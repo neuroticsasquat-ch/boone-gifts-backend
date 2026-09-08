@@ -675,7 +675,7 @@ def test_users_share_family_no_memberships_returns_false():
 # ---------------------------------------------------------------------------
 
 
-@patch(f"{SVC}.delete_occasion_items_between")
+@patch(f"{SVC}.delete_folder_items_between")
 @patch(f"{SVC}.unclaim_gifts_between")
 @patch(f"{SVC}.users_share_access", return_value=False)
 def test_cleanup_if_dropped_runs_when_no_shared_access(
@@ -687,7 +687,7 @@ def test_cleanup_if_dropped_runs_when_no_shared_access(
     mock_items.assert_called_once_with(db, 10, 20)
 
 
-@patch(f"{SVC}.delete_occasion_items_between")
+@patch(f"{SVC}.delete_folder_items_between")
 @patch(f"{SVC}.unclaim_gifts_between")
 @patch(f"{SVC}.users_share_access", return_value=True)
 def test_cleanup_if_dropped_skips_when_access_remains(

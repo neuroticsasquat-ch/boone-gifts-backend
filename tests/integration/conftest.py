@@ -136,20 +136,20 @@ def connection(db, admin_user, member_user):
 
 
 @pytest.fixture
-def occasion(db, member_user):
-    from app.models.occasion import Occasion
+def folder(db, member_user):
+    from app.models.folder import Folder
 
-    coll = Occasion(name="Christmas 2026", owner_id=member_user.id)
+    coll = Folder(name="Christmas 2026", owner_id=member_user.id)
     db.add(coll)
     db.flush()
     return coll
 
 
 @pytest.fixture
-def occasion_item(db, occasion, sample_list):
-    from app.models.occasion_item import OccasionItem
+def folder_item(db, folder, sample_list):
+    from app.models.folder_item import FolderItem
 
-    item = OccasionItem(occasion_id=occasion.id, list_id=sample_list.id)
+    item = FolderItem(folder_id=folder.id, list_id=sample_list.id)
     db.add(item)
     db.flush()
     return item

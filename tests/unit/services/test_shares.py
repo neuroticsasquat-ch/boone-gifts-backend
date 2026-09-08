@@ -2,7 +2,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.models.occasion_item import OccasionItem
+from app.models.folder_item import FolderItem
 from app.models.gift_list import GiftList
 from app.models.list_share import ListShare
 from app.models.user import User
@@ -143,7 +143,7 @@ def test_list_shares(mock_get):
 # --- delete_share ---
 
 
-@patch(f"{REPO}.find_occasion_items_for_unshare", return_value=[])
+@patch(f"{REPO}.find_folder_items_for_unshare", return_value=[])
 @patch(f"{REPO}.delete_share")
 @patch(f"{REPO}.find_share")
 def test_delete_share_success(mock_find, mock_delete, mock_items):
@@ -165,16 +165,16 @@ def test_delete_share_not_found(mock_find):
         service.delete_share(db, list_id=1, user_id=2)
 
 
-@patch(f"{REPO}.delete_occasion_item")
-@patch(f"{REPO}.find_occasion_items_for_unshare")
+@patch(f"{REPO}.delete_folder_item")
+@patch(f"{REPO}.find_folder_items_for_unshare")
 @patch(f"{REPO}.delete_share")
 @patch(f"{REPO}.find_share")
-def test_delete_share_cascades_occasion_items(mock_find, mock_delete, mock_items, mock_del_item):
+def test_delete_share_cascades_folder_items(mock_find, mock_delete, mock_items, mock_del_item):
     db = MagicMock()
     share = MagicMock(spec=ListShare)
     mock_find.return_value = share
-    item1 = MagicMock(spec=OccasionItem)
-    item2 = MagicMock(spec=OccasionItem)
+    item1 = MagicMock(spec=FolderItem)
+    item2 = MagicMock(spec=FolderItem)
     mock_items.return_value = [item1, item2]
 
     service.delete_share(db, list_id=1, user_id=2)
