@@ -7,11 +7,11 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
 if TYPE_CHECKING:
-    from app.models.occasion_item import OccasionItem
+    from app.models.folder_item import FolderItem
 
 
-class Occasion(Base):
-    __tablename__ = "occasions"
+class Folder(Base):
+    __tablename__ = "folders"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
@@ -23,6 +23,6 @@ class Occasion(Base):
         server_default=func.now(), onupdate=func.now()
     )
 
-    items: Mapped[list["OccasionItem"]] = relationship(
-        "OccasionItem", lazy="selectin", cascade="all, delete-orphan"
+    items: Mapped[list["FolderItem"]] = relationship(
+        "FolderItem", lazy="selectin", cascade="all, delete-orphan"
     )

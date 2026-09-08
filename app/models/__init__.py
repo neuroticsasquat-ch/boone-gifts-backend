@@ -6,8 +6,8 @@ from app.models.gift import Gift
 from app.models.list_share import ListShare
 from app.models.list_family_share import ListFamilyShare
 from app.models.connection import Connection
-from app.models.occasion import Occasion
-from app.models.occasion_item import OccasionItem
+from app.models.folder import Folder
+from app.models.folder_item import FolderItem
 from app.models.password_reset_token import PasswordResetToken
 from app.models.family import Family
 from app.models.family_member import FamilyMember
@@ -22,8 +22,8 @@ __all__ = [
     "ListShare",
     "ListFamilyShare",
     "Connection",
-    "Occasion",
-    "OccasionItem",
+    "Folder",
+    "FolderItem",
     "PasswordResetToken",
     "Family",
     "FamilyMember",

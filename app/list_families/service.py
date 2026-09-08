@@ -50,7 +50,7 @@ def revoke_grant(
     With no `claims` choice, a family member holding a claim they would lose
     blocks the revoke with a ConflictError and nothing changes. `release`
     unclaims for members who lose every view path; `keep` leaves those claims
-    standing. Occasion items are deleted for those members either way.
+    standing. Folder items are deleted for those members either way.
     """
     _require_full_mode(user)
     _require_membership(db, user.id, family_id)
@@ -68,7 +68,7 @@ def revoke_grant(
     repo.delete_grant(db, grant)
     if claims == "release":
         repo.unclaim_for_users(db, gift_list.id, losing_ids)
-    repo.delete_occasion_items_for_users(db, gift_list.id, losing_ids)
+    repo.delete_folder_items_for_users(db, gift_list.id, losing_ids)
 
 
 def set_grants_on_create(

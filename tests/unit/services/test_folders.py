@@ -4,20 +4,20 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.occasions import service
-from app.models.occasion import Occasion
-from app.models.occasion_item import OccasionItem
+from app.folders import service
+from app.models.folder import Folder
+from app.models.folder_item import FolderItem
 from app.models.gift_list import GiftList
 from app.services.exceptions import ConflictError, ForbiddenError, NotFoundError
 
 
-def _make_occasion(
+def _make_folder(
     id: int = 1,
-    name: str = "My Occasion",
+    name: str = "My Folder",
     description: str | None = None,
     owner_id: int = 1,
 ) -> MagicMock:
-    col = MagicMock(spec=Occasion)
+    col = MagicMock(spec=Folder)
     col.id = id
     col.name = name
     col.description = description
@@ -35,62 +35,62 @@ def _make_gift_list(id: int = 10, owner_id: int = 1) -> MagicMock:
     return gl
 
 
-def _make_occasion_item(
-    id: int = 1, occasion_id: int = 1, list_id: int = 10
+def _make_folder_item(
+    id: int = 1, folder_id: int = 1, list_id: int = 10
 ) -> MagicMock:
-    item = MagicMock(spec=OccasionItem)
+    item = MagicMock(spec=FolderItem)
     item.id = id
-    item.occasion_id = occasion_id
+    item.folder_id = folder_id
     item.list_id = list_id
     return item
 
 
-REPO = "app.occasions.service.repo"
+REPO = "app.folders.service.repo"
 
 
-# --- create_occasion ---
+# --- create_folder ---
 
 
-@patch(f"{REPO}.create_occasion")
-def test_create_occasion(mock_create):
+@patch(f"{REPO}.create_folder")
+def test_create_folder(mock_create):
     db = MagicMock()
-    col = _make_occasion()
+    col = _make_folder()
     mock_create.return_value = col
 
-    result = service.create_occasion(db, name="My Occasion", description=None, owner_id=1)
+    result = service.create_folder(db, name="My Folder", description=None, owner_id=1)
 
-    mock_create.assert_called_once_with(db, "My Occasion", None, 1)
+    mock_create.assert_called_once_with(db, "My Folder", None, 1)
     assert result.id == 1
-    assert result.name == "My Occasion"
+    assert result.name == "My Folder"
 
 
-# --- list_occasions ---
+# --- list_folders ---
 
 
-@patch(f"{REPO}.get_occasions_for_user")
-def test_list_occasions(mock_get):
+@patch(f"{REPO}.get_folders_for_user")
+def test_list_folders(mock_get):
     db = MagicMock()
-    col = _make_occasion()
+    col = _make_folder()
     mock_get.return_value = [col]
 
-    result = service.list_occasions(db, owner_id=1)
+    result = service.list_folders(db, owner_id=1)
 
     mock_get.assert_called_once_with(db, 1, archived=False)
     assert len(result) == 1
-    assert result[0].name == "My Occasion"
+    assert result[0].name == "My Folder"
 
 
-# --- get_occasion_detail ---
+# --- get_folder_detail ---
 
 
-@patch(f"{REPO}.get_lists_for_occasion")
-def test_get_occasion_detail(mock_get_lists):
+@patch(f"{REPO}.get_lists_for_folder")
+def test_get_folder_detail(mock_get_lists):
     db = MagicMock()
-    col = _make_occasion(id=1, name="Wishlist", description="Holiday", owner_id=5)
+    col = _make_folder(id=1, name="Wishlist", description="Holiday", owner_id=5)
     gift_list = _make_gift_list(id=10, owner_id=5)
     mock_get_lists.return_value = [gift_list]
 
-    result = service.get_occasion_detail(db, col)
+    result = service.get_folder_detail(db, col)
 
     mock_get_lists.assert_called_once_with(db, col)
     assert result["id"] == 1
@@ -102,42 +102,42 @@ def test_get_occasion_detail(mock_get_lists):
     assert result["updated_at"] == col.updated_at
 
 
-# --- update_occasion ---
+# --- update_folder ---
 
 
-@patch(f"{REPO}.update_occasion")
-def test_update_occasion(mock_update):
+@patch(f"{REPO}.update_folder")
+def test_update_folder(mock_update):
     db = MagicMock()
-    col = _make_occasion()
-    updated = _make_occasion(name="Updated")
+    col = _make_folder()
+    updated = _make_folder(name="Updated")
     mock_update.return_value = updated
 
-    result = service.update_occasion(db, col, {"name": "Updated"})
+    result = service.update_folder(db, col, {"name": "Updated"})
 
     mock_update.assert_called_once_with(db, col, {"name": "Updated"})
     assert result.name == "Updated"
 
 
-# --- delete_occasion ---
+# --- delete_folder ---
 
 
-@patch(f"{REPO}.delete_occasion")
-def test_delete_occasion(mock_delete):
+@patch(f"{REPO}.delete_folder")
+def test_delete_folder(mock_delete):
     db = MagicMock()
-    col = _make_occasion()
+    col = _make_folder()
 
-    service.delete_occasion(db, col)
+    service.delete_folder(db, col)
 
     mock_delete.assert_called_once_with(db, col)
 
 
 # --- add_item ---
 
-CAN_VIEW = "app.occasions.service.can_view_list"
+CAN_VIEW = "app.folders.service.can_view_list"
 
 
-@patch(f"{REPO}.create_occasion_item")
-@patch(f"{REPO}.find_occasion_item", return_value=None)
+@patch(f"{REPO}.create_folder_item")
+@patch(f"{REPO}.find_folder_item", return_value=None)
 @patch(CAN_VIEW, return_value=True)
 @patch(f"{REPO}.get_gift_list_by_id")
 def test_add_item_viewable(mock_get_list, mock_can_view, mock_find_item, mock_create_item):
@@ -146,11 +146,11 @@ def test_add_item_viewable(mock_get_list, mock_can_view, mock_find_item, mock_cr
     # so the service unit test only cares that a viewable list is added.
     db = MagicMock()
     user = SimpleNamespace(id=5)
-    col = _make_occasion(id=1, owner_id=5)
+    col = _make_folder(id=1, owner_id=5)
     gift_list = _make_gift_list(id=10, owner_id=99)
     mock_get_list.return_value = gift_list
 
-    service.add_item(db, occasion=col, list_id=10, user=user)
+    service.add_item(db, folder=col, list_id=10, user=user)
 
     mock_get_list.assert_called_once_with(db, 10)
     mock_can_view.assert_called_once_with(db, user, gift_list)
@@ -158,36 +158,36 @@ def test_add_item_viewable(mock_get_list, mock_can_view, mock_find_item, mock_cr
     mock_create_item.assert_called_once_with(db, 1, 10)
 
 
-@patch(f"{REPO}.create_occasion_item")
+@patch(f"{REPO}.create_folder_item")
 @patch(CAN_VIEW, return_value=False)
 @patch(f"{REPO}.get_gift_list_by_id")
 def test_add_item_not_viewable(mock_get_list, mock_can_view, mock_create_item):
     db = MagicMock()
     user = SimpleNamespace(id=5)
-    col = _make_occasion(id=1, owner_id=5)
+    col = _make_folder(id=1, owner_id=5)
     gift_list = _make_gift_list(id=10, owner_id=99)
     mock_get_list.return_value = gift_list
 
     with pytest.raises(ForbiddenError):
-        service.add_item(db, occasion=col, list_id=10, user=user)
+        service.add_item(db, folder=col, list_id=10, user=user)
 
     mock_can_view.assert_called_once_with(db, user, gift_list)
     mock_create_item.assert_not_called()
 
 
 @patch(CAN_VIEW, return_value=True)
-@patch(f"{REPO}.find_occasion_item")
+@patch(f"{REPO}.find_folder_item")
 @patch(f"{REPO}.get_gift_list_by_id")
 def test_add_item_duplicate(mock_get_list, mock_find_item, mock_can_view):
     db = MagicMock()
     user = SimpleNamespace(id=5)
-    col = _make_occasion(id=1, owner_id=5)
+    col = _make_folder(id=1, owner_id=5)
     gift_list = _make_gift_list(id=10, owner_id=5)
     mock_get_list.return_value = gift_list
-    mock_find_item.return_value = _make_occasion_item()
+    mock_find_item.return_value = _make_folder_item()
 
     with pytest.raises(ConflictError):
-        service.add_item(db, occasion=col, list_id=10, user=user)
+        service.add_item(db, folder=col, list_id=10, user=user)
 
 
 @patch(f"{REPO}.get_gift_list_by_id", return_value=None)
@@ -195,33 +195,33 @@ def test_add_item_list_not_found(mock_get_list):
     # List existence is checked before access, so can_view_list is never reached.
     db = MagicMock()
     user = SimpleNamespace(id=5)
-    col = _make_occasion(id=1, owner_id=5)
+    col = _make_folder(id=1, owner_id=5)
 
     with pytest.raises(NotFoundError):
-        service.add_item(db, occasion=col, list_id=999, user=user)
+        service.add_item(db, folder=col, list_id=999, user=user)
 
 
 # --- remove_item ---
 
 
-@patch(f"{REPO}.delete_occasion_item")
-@patch(f"{REPO}.find_occasion_item")
+@patch(f"{REPO}.delete_folder_item")
+@patch(f"{REPO}.find_folder_item")
 def test_remove_item(mock_find, mock_delete):
     db = MagicMock()
-    col = _make_occasion(id=1)
-    item = _make_occasion_item(occasion_id=1, list_id=10)
+    col = _make_folder(id=1)
+    item = _make_folder_item(folder_id=1, list_id=10)
     mock_find.return_value = item
 
-    service.remove_item(db, occasion=col, list_id=10)
+    service.remove_item(db, folder=col, list_id=10)
 
     mock_find.assert_called_once_with(db, 1, 10)
     mock_delete.assert_called_once_with(db, item)
 
 
-@patch(f"{REPO}.find_occasion_item", return_value=None)
+@patch(f"{REPO}.find_folder_item", return_value=None)
 def test_remove_item_not_found(mock_find):
     db = MagicMock()
-    col = _make_occasion(id=1)
+    col = _make_folder(id=1)
 
     with pytest.raises(NotFoundError):
-        service.remove_item(db, occasion=col, list_id=999)
+        service.remove_item(db, folder=col, list_id=999)
