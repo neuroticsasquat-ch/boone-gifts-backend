@@ -1,3 +1,24 @@
+# Release notes
+
+## 0.4.0 — 2026-09-08
+
+### Account
+
+- Shared accounts — schema, migrations, and API ([NEU-1228](https://linear.app/neuroticsasquatch/issue/NEU-1228)) ([#160](https://github.com/neuroticsasquat-ch/boone-gifts-backend/pull/160))
+
+### Lists
+
+- One shared scope carrying shared_via ([NEU-1227](https://linear.app/neuroticsasquatch/issue/NEU-1227)) ([#159](https://github.com/neuroticsasquat-ch/boone-gifts-backend/pull/159))
+- Drop recipient_has_account ([NEU-1230](https://linear.app/neuroticsasquatch/issue/NEU-1230)) ([#161](https://github.com/neuroticsasquat-ch/boone-gifts-backend/pull/161))
+
+### Migrations
+
+- Make families migration idempotent and drop stray temp-table op
+
+### Occasions
+
+- Rename collections to occasions ([NEU-1226](https://linear.app/neuroticsasquatch/issue/NEU-1226)) ([#158](https://github.com/neuroticsasquat-ch/boone-gifts-backend/pull/158))
+
 ## [0.3.0] - 2026-06-29
 
 ### 🚀 Features
