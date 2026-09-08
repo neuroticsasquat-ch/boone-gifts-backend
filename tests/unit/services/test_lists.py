@@ -46,7 +46,7 @@ LIST_FAMILY_SVC = "app.lists.service.list_family_service"
 @patch(f"{REPO}.create_list")
 def test_create_list(mock_create, mock_grants):
     db = MagicMock()
-    owner = SimpleNamespace(id=1, simple_mode=False)
+    owner = SimpleNamespace(id=1)
     expected = _make_gift_list()
     mock_create.return_value = expected
 
@@ -70,7 +70,7 @@ def test_create_list(mock_create, mock_grants):
 @patch(f"{REPO}.create_list")
 def test_create_list_without_family_ids_passes_empty_list(mock_create, mock_grants):
     db = MagicMock()
-    owner = SimpleNamespace(id=1, simple_mode=False)
+    owner = SimpleNamespace(id=1)
     mock_create.return_value = _make_gift_list()
 
     service.create_list(db, name="My List", description=None, owner=owner)

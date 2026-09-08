@@ -20,7 +20,6 @@ def _seed_family_invite(
     email,
     token,
     role="member",
-    simple_mode=False,
     accepted_at=None,
     declined_at=None,
     expires_in_days=7,
@@ -34,7 +33,6 @@ def _seed_family_invite(
         family_id=family.id,
         email=email,
         role=role,
-        simple_mode=simple_mode,
         token=token,
         invited_by_id=inviter.id,
         expires_at=datetime.now(timezone.utc) + timedelta(days=expires_in_days),
@@ -384,33 +382,11 @@ def test_register_accepted_family_invite(client, member_user, db):
     assert response.status_code == 400
 
 
-# --- simple_mode in PUT /auth/profile ---
+# --- simple mode is retired (ADR 0004) ---
 
 
-def test_update_profile_sets_simple_mode_in_token(client, member_user, member_headers, db):
-    response = client.put(
-        "/auth/profile",
-        json={"name": member_user.name, "simple_mode": True},
-        headers=member_headers,
-    )
-    assert response.status_code == 200
-    data = response.json()
-    assert "access_token" in data
-    payload = jwt.decode(
-        data["access_token"],
-        settings.jwt_secret,
-        algorithms=[settings.jwt_algorithm],
-        options={"verify_iat": False},
-    )
-    assert payload["simple_mode"] is True
-    db.refresh(member_user)
-    assert member_user.simple_mode is True
-
-
-def test_update_profile_name_only_preserves_simple_mode(client, member_user, member_headers, db):
-    member_user.simple_mode = True
-    db.flush()
-
+def test_access_token_carries_no_simple_mode_claim(client, member_user, member_headers):
+    """The claim is gone from the JWT and must not come back."""
     response = client.put(
         "/auth/profile",
         json={"name": "new name"},
@@ -423,117 +399,4 @@ def test_update_profile_name_only_preserves_simple_mode(client, member_user, mem
         algorithms=[settings.jwt_algorithm],
         options={"verify_iat": False},
     )
-    assert payload["simple_mode"] is True
-    db.refresh(member_user)
-    assert member_user.simple_mode is True
-
-
-def test_update_profile_simple_mode_only_preserves_name(
-    client, member_user, member_headers, db
-):
-    original_name = member_user.name
-
-    response = client.put(
-        "/auth/profile",
-        json={"simple_mode": True},
-        headers=member_headers,
-    )
-    assert response.status_code == 200
-    payload = jwt.decode(
-        response.json()["access_token"],
-        settings.jwt_secret,
-        algorithms=[settings.jwt_algorithm],
-        options={"verify_iat": False},
-    )
-    assert payload["simple_mode"] is True
-    db.refresh(member_user)
-    assert member_user.simple_mode is True
-    assert member_user.name == original_name
-
-
-def test_update_profile_clears_simple_mode_when_explicitly_false(
-    client, member_user, member_headers, db
-):
-    member_user.simple_mode = True
-    db.flush()
-
-    response = client.put(
-        "/auth/profile",
-        json={"name": member_user.name, "simple_mode": False},
-        headers=member_headers,
-    )
-    assert response.status_code == 200
-    payload = jwt.decode(
-        response.json()["access_token"],
-        settings.jwt_secret,
-        algorithms=[settings.jwt_algorithm],
-        options={"verify_iat": False},
-    )
-    assert payload["simple_mode"] is False
-    db.refresh(member_user)
-    assert member_user.simple_mode is False
-
-
-# --- register via family invite: simple_mode inheritance ---
-
-
-def test_register_family_invite_simple_mode_true_creates_user_with_simple_mode_true(
-    client, member_user, db
-):
-    _seed_family_invite(
-        db,
-        inviter=member_user,
-        email="simplemode@test.com",
-        token="fam-sm-true",
-        simple_mode=True,
-    )
-
-    response = client.post(
-        "/auth/register",
-        json={"token": "fam-sm-true", "name": "Simple User", "password": "newpass123"},
-    )
-    assert response.status_code == 200
-
-    new_user = db.query(User).filter_by(email="simplemode@test.com").one()
-    assert new_user.simple_mode is True
-
-
-def test_register_family_invite_simple_mode_false_creates_user_with_simple_mode_false(
-    client, member_user, db
-):
-    _seed_family_invite(
-        db,
-        inviter=member_user,
-        email="nosimple@test.com",
-        token="fam-sm-false",
-        simple_mode=False,
-    )
-
-    response = client.post(
-        "/auth/register",
-        json={"token": "fam-sm-false", "name": "Normal User", "password": "newpass123"},
-    )
-    assert response.status_code == 200
-
-    new_user = db.query(User).filter_by(email="nosimple@test.com").one()
-    assert new_user.simple_mode is False
-
-
-def test_register_admin_invite_simple_mode_defaults_false(client, admin_user, db):
-    invite = Invite(
-        email="adminreg@test.com",
-        role="member",
-        expires_at=datetime.now(timezone.utc) + timedelta(days=7),
-        invited_by_id=admin_user.id,
-    )
-    db.add(invite)
-    db.flush()
-
-    response = client.post(
-        "/auth/register",
-        json={"token": invite.token, "name": "Admin Invitee", "password": "newpass123"},
-    )
-    assert response.status_code == 200
-
-    new_user = db.query(User).filter_by(email="adminreg@test.com").one()
-    assert new_user.simple_mode is False
+    assert "simple_mode" not in payload

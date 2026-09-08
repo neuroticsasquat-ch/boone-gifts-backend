@@ -82,30 +82,6 @@ def delete_grants_for_owner_in_family(db: Session, owner_id: int, family_id: int
     )
 
 
-def grant_all_lists_to_family(db: Session, owner_id: int, family_id: int) -> None:
-    """Grant every non-archived list owned by `owner_id` to `family_id`, skipping
-    any grant that already exists. Used for the simple-mode auto-grant on join."""
-    list_ids = set(
-        db.execute(
-            select(GiftList.id).where(
-                GiftList.owner_id == owner_id,
-                GiftList.is_archived == False,  # noqa: E712 - SQL expression, not a bool test
-            )
-        ).scalars()
-    )
-    already = set(
-        db.execute(
-            select(ListFamilyShare.list_id).where(
-                ListFamilyShare.family_id == family_id,
-                ListFamilyShare.list_id.in_(list_ids),
-            )
-        ).scalars()
-    )
-    for list_id in sorted(list_ids - already):
-        db.add(ListFamilyShare(list_id=list_id, family_id=family_id))
-    db.flush()
-
-
 def get_member_ids_losing_access(
     db: Session, list_id: int, family_id: int, owner_id: int
 ) -> list[int]:

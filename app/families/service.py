@@ -7,7 +7,6 @@ from app.connections.repository import (
 )
 from app.families import repository as repo
 from app.list_families import repository as list_family_repo
-from app.list_families import service as list_family_service
 from app.models.user import User
 from app.services.exceptions import ConflictError, ForbiddenError, NotFoundError
 
@@ -40,7 +39,6 @@ def _build_family_detail(db: Session, family_id: int) -> dict:
 def create_family(db: Session, name: str, creator: User) -> dict:
     family = repo.create_family(db, name=name, created_by_id=creator.id)
     repo.create_family_member(db, family_id=family.id, user_id=creator.id, role="organizer")
-    list_family_service.grant_existing_lists_on_join(db, creator, family.id)
     return _build_family_detail(db, family.id)
 
 

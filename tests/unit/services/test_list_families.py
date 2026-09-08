@@ -1,8 +1,7 @@
 """Unit tests for the per-family list sharing service (NEU-1202).
 
-The repo layer is mocked throughout; these pin the branching rules — full mode
-vs simple mode on create, the full-mode gate on the mutations, and the claim
-handling on revoke.
+The repo layer is mocked throughout; these pin the sharing rules on create, the
+membership gate on the mutations, and the claim handling on revoke.
 """
 from contextlib import ExitStack, contextmanager
 from types import SimpleNamespace
@@ -17,8 +16,8 @@ REPO = "app.list_families.service.repo"
 FAMILIES_REPO = "app.list_families.service.families_repo"
 
 
-def _user(user_id=1, simple_mode=False):
-    return SimpleNamespace(id=user_id, simple_mode=simple_mode)
+def _user(user_id=1):
+    return SimpleNamespace(id=user_id)
 
 
 def _list(list_id=5, owner_id=1):
@@ -60,30 +59,8 @@ def test_list_family_states_flags_each_of_the_owners_families(
 
 
 @patch(f"{REPO}.create_grant")
-@patch(f"{FAMILIES_REPO}.family_ids_for_user")
-def test_simple_mode_create_grants_all_families_and_ignores_the_body(
-    mock_family_ids, mock_create, db
-):
-    mock_family_ids.return_value = {7, 8}
-    service.set_grants_on_create(db, _list(), _user(simple_mode=True), family_ids=[])
-
-    assert sorted(call.args[2] for call in mock_create.call_args_list) == [7, 8]
-
-
-@patch(f"{REPO}.create_grant")
-@patch(f"{FAMILIES_REPO}.family_ids_for_user")
-def test_simple_mode_create_ignores_explicit_family_ids(
-    mock_family_ids, mock_create, db
-):
-    mock_family_ids.return_value = {7}
-    service.set_grants_on_create(db, _list(), _user(simple_mode=True), family_ids=[99])
-
-    assert [call.args[2] for call in mock_create.call_args_list] == [7]
-
-
-@patch(f"{REPO}.create_grant")
 @patch(f"{FAMILIES_REPO}.get_family_member")
-def test_full_mode_create_grants_exactly_the_requested_families(
+def test_create_grants_exactly_the_requested_families(
     mock_member, mock_create, db
 ):
     mock_member.return_value = object()
@@ -94,7 +71,7 @@ def test_full_mode_create_grants_exactly_the_requested_families(
 
 @patch(f"{REPO}.create_grant")
 @patch(f"{FAMILIES_REPO}.get_family_member")
-def test_full_mode_create_deduplicates_family_ids(mock_member, mock_create, db):
+def test_create_deduplicates_family_ids(mock_member, mock_create, db):
     mock_member.return_value = object()
     service.set_grants_on_create(db, _list(), _user(), family_ids=[7, 7, 8])
 
@@ -103,19 +80,20 @@ def test_full_mode_create_deduplicates_family_ids(mock_member, mock_create, db):
 
 @patch(f"{REPO}.create_grant")
 @patch(f"{FAMILIES_REPO}.family_ids_for_user")
-def test_full_mode_create_with_no_family_ids_grants_nothing(
+def test_create_with_no_family_ids_grants_nothing(
     mock_family_ids, mock_create, db
 ):
     service.set_grants_on_create(db, _list(), _user(), family_ids=[])
 
     mock_create.assert_not_called()
-    # Full mode must never fall back to "all my families".
+    # Creation must never fall back to "all my families" — the simple-mode
+    # auto-grant is gone (ADR 0004) and nothing replaces it server-side.
     mock_family_ids.assert_not_called()
 
 
 @patch(f"{REPO}.create_grant")
 @patch(f"{FAMILIES_REPO}.get_family_member", return_value=None)
-def test_full_mode_create_with_a_foreign_family_raises_forbidden(
+def test_create_with_a_foreign_family_raises_forbidden(
     mock_member, mock_create, db
 ):
     with pytest.raises(ForbiddenError):
@@ -126,20 +104,6 @@ def test_full_mode_create_with_a_foreign_family_raises_forbidden(
 # ---------------------------------------------------------------------------
 # create_grant / revoke_grant gating  (§2.6)
 # ---------------------------------------------------------------------------
-
-
-@patch(f"{REPO}.create_grant")
-def test_create_grant_forbidden_in_simple_mode(mock_create, db):
-    with pytest.raises(ForbiddenError, match="Switch to full mode"):
-        service.create_grant(db, _list(), 7, _user(simple_mode=True))
-    mock_create.assert_not_called()
-
-
-@patch(f"{REPO}.delete_grant")
-def test_revoke_grant_forbidden_in_simple_mode(mock_delete, db):
-    with pytest.raises(ForbiddenError, match="Switch to full mode"):
-        service.revoke_grant(db, _list(), 7, _user(simple_mode=True))
-    mock_delete.assert_not_called()
 
 
 @patch(f"{REPO}.create_grant")
@@ -226,20 +190,3 @@ def test_revoke_without_a_choice_proceeds_when_no_claims_are_affected(db):
 def test_revoke_a_missing_grant_is_a_noop(mock_member, mock_find, mock_delete, db):
     service.revoke_grant(db, _list(), 7, _user())
     mock_delete.assert_not_called()
-
-
-# ---------------------------------------------------------------------------
-# grant_existing_lists_on_join  (§2.5)
-# ---------------------------------------------------------------------------
-
-
-@patch(f"{REPO}.grant_all_lists_to_family")
-def test_join_auto_grants_for_a_simple_mode_member(mock_grant_all, db):
-    service.grant_existing_lists_on_join(db, _user(user_id=4, simple_mode=True), 7)
-    mock_grant_all.assert_called_once_with(db, owner_id=4, family_id=7)
-
-
-@patch(f"{REPO}.grant_all_lists_to_family")
-def test_join_grants_nothing_for_a_full_mode_member(mock_grant_all, db):
-    service.grant_existing_lists_on_join(db, _user(user_id=4), 7)
-    mock_grant_all.assert_not_called()

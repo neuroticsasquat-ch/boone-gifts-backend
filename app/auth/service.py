@@ -9,7 +9,6 @@ from sqlalchemy.orm import Session
 from app.auth import repository as repo
 from app.families import repository as families_repo
 from app.family_invites import repository as family_invites_repo
-from app.list_families import service as list_family_service
 from app.config import settings
 from app.dependencies import create_access_token, create_refresh_token
 from app.email import send_email
@@ -112,18 +111,12 @@ def register(
             name=name,
             role="member",
             password=password,
-            simple_mode=family_invite.simple_mode,
         )
         families_repo.create_family_member(
             db,
             family_id=family_invite.family_id,
             user_id=user.id,
             role=family_invite.role,
-        )
-        # A no-op in practice (the account owns no lists yet), called so the
-        # simple-mode auto-grant rule lives in exactly one place.
-        list_family_service.grant_existing_lists_on_join(
-            db, user, family_invite.family_id
         )
         family_invite.accepted_at = datetime.now(timezone.utc)
         db.flush()
@@ -213,20 +206,14 @@ def change_password(
     }
 
 
-def update_profile(
-    db: Session, user, name: str | None = None, simple_mode: bool | None = None
-) -> dict:
-    """Update a profile name and/or simple_mode and issue fresh tokens.
+def update_profile(db: Session, user, name: str | None = None) -> dict:
+    """Update a profile name and issue fresh tokens.
 
-    Both fields are optional so the frontend can send partial updates (e.g.
-    toggling simple_mode without resubmitting the name). Returns new access +
-    refresh tokens so the frontend can decode the updated claims without
-    waiting for the next refresh cycle.
+    Returns new access + refresh tokens so the frontend can decode the updated
+    claims without waiting for the next refresh cycle.
     """
     if name is not None:
         user.name = name
-    if simple_mode is not None:
-        user.simple_mode = simple_mode
     db.flush()
 
     return {
