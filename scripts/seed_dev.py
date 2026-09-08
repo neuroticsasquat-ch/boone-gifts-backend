@@ -229,11 +229,14 @@ def seed(db, password: str) -> None:
     extended = Family(name="Extended Family", created_by_id=carol.id)
     db.add_all([boones, extended])
     db.flush()
-    # Tom is admin of one family and a plain member of the other, and belongs to
-    # both — so "which family did this list come from?" has a real answer.
-    for user, role in [(tom, "admin"), (carol, "member"), (gran, "member")]:
+    # Tom is organizer of one family and a plain member of the other, and belongs
+    # to both — so "which family did this list come from?" has a real answer, and
+    # the organizer-only surfaces (invites, rename, delete) are reachable as Tom.
+    # "organizer"/"member" are the only roles the app understands; a family whose
+    # top role is spelled anything else has no organizer at all.
+    for user, role in [(tom, "organizer"), (carol, "member"), (gran, "member")]:
         db.add(FamilyMember(family_id=boones.id, user_id=user.id, role=role))
-    for user, role in [(carol, "admin"), (tom, "member"), (dave, "member")]:
+    for user, role in [(carol, "organizer"), (tom, "member"), (dave, "member")]:
         db.add(FamilyMember(family_id=extended.id, user_id=user.id, role=role))
 
     # Direct shares both ways, so "shared with me" and "shared by me" are both
