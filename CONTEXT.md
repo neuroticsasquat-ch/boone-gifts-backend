@@ -22,7 +22,8 @@ the words mean and what must stay true.
 | **Account person** | A named person on a shared account. **A label, never an identity** | `account_people` |
 
 Deliberately *not* in the vocabulary: "collection" and "occasion" (both renamed, in turn, to
-folder), "family list" (a list reached through a family grant is just a shared list). The name
+folder), "family list" (a list reached through a family grant is just a shared list), and
+"simple mode" (retired entirely — see `docs/adr/0004-simple-mode-is-retired.md`). The name
 `occasions` is deliberately left vacant for the family-owned gifting occasion the shopping-lists
 project introduces.
 
@@ -59,7 +60,3 @@ project introduces.
 
 8. **A recipient has no account.** `recipient_name is not None` means the list is kept on behalf of
    someone who will never log in, so its keeper cannot see claims on it and cannot claim from it.
-
-9. **Simple mode is a sharing behaviour, not only a UI preference.** A simple-mode owner's lists are
-   auto-granted to all their families on creation and on joining, and the per-family toggles are
-   refused. Changing this changes who can see what.

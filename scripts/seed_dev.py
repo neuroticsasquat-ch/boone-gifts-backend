@@ -3,8 +3,8 @@
 The states that matter are the ones a single account cannot produce on its own:
 a list shared directly with you, a list that reaches you only through a family,
 a list that reaches you both ways at once, a list you keep for someone with no
-account, a pending connection request, a simple-mode user, and a shared account
-with two people and a list apiece. Reproducing those by hand through the UI takes
+account, a pending connection request, and a shared account with two people and
+a list apiece. Reproducing those by hand through the UI takes
 five logins, so this builds them in one pass.
 
     docker compose exec api python -m scripts.seed_dev            # seed
@@ -42,14 +42,14 @@ from app.models.user import User
 
 DEFAULT_PASSWORD = "devpass123"
 
-# (email, name, role, simple_mode)
+# (email, name, role)
 SEED_USERS = [
-    ("tom@example.com", "Tom Boone", "admin", False),
-    ("jane@example.com", "Jane Boone", "member", False),
-    ("mom@example.com", "Carol Boone", "member", False),
+    ("tom@example.com", "Tom Boone", "admin"),
+    ("jane@example.com", "Jane Boone", "member"),
+    ("mom@example.com", "Carol Boone", "member"),
     # Gran and Grandpa share this login — the shared-account fixture.
-    ("gran@example.com", "Gran Boone", "member", True),
-    ("cousin@example.com", "Dave Boone", "member", False),
+    ("gran@example.com", "Gran Boone", "member"),
+    ("cousin@example.com", "Dave Boone", "member"),
 ]
 SEED_EMAILS = [email for email, *_ in SEED_USERS]
 
@@ -139,10 +139,8 @@ def seed(db, password: str) -> None:
     now = datetime.now(timezone.utc)
 
     users: dict[str, User] = {}
-    for email, name, role, simple_mode in SEED_USERS:
-        user = User(
-            email=email, name=name, role=role, simple_mode=simple_mode, password_hash=""
-        )
+    for email, name, role in SEED_USERS:
+        user = User(email=email, name=name, role=role, password_hash="")
         user.set_password(password)
         db.add(user)
         users[email] = user

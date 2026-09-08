@@ -98,7 +98,7 @@ python -m scripts.seed_dev --reset   # re-seed
 python -m scripts.seed_dev --purge   # remove
 ```
 
-Creates five `@example.com` users with the list-visibility states a single account can't produce on its own: a directly shared list, a list reaching you only through a family, a list kept for someone with no account, an archived list, a claimed gift, a pending connection request, and a simple-mode user. Purge only deletes rows reachable from those users.
+Creates five `@example.com` users with the list-visibility states a single account can't produce on its own: a directly shared list, a list reaching you only through a family, a list kept for someone with no account, an archived list, a claimed gift, a pending connection request, and a shared account with two people. Purge only deletes rows reachable from those users.
 
 ## API Overview
 
@@ -111,7 +111,7 @@ Creates five `@example.com` users with the list-visibility states a single accou
 - `POST /auth/forgot-password` -- Request a password reset email
 - `POST /auth/reset-password` -- Consume a reset token and set a new password
 - `POST /auth/change-password` -- Change password while logged in
-- `PUT /auth/profile` -- Update display name and/or simple mode
+- `PUT /auth/profile` -- Update display name
 
 ### Users (`/users`)
 - `GET /users/search?q=` -- Search users by name or email (any signed-in user; used when adding a connection)

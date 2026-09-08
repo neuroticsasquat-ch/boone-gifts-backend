@@ -85,14 +85,13 @@ tests/
 ```
 
 ## Authentication & authorization
-- **Access token**: JWT HS256, 30 min, carries user id/email/role/simple_mode, returned in the JSON body
+- **Access token**: JWT HS256, 30 min, carries user id/email/role, returned in the JSON body
 - **Refresh token**: JWT HS256, 7 days, `type="refresh"`, HttpOnly cookie `boone_refresh_token` (`Secure`, `SameSite=None`, `Path=/auth`); rotated on every `/auth/refresh`; `POST /auth/logout` clears it
 - **JWT `sub` claim must be a string** — `str(user.id)` encoding, `int(payload["sub"])` decoding (PyJWT RFC 7519)
 - **Route protection**: `get_current_user` (401), `require_admin` (403). Defense in depth: `get_current_user` rejects refresh tokens and checks `is_active`, so a deactivated user cannot authenticate on a still-valid token
 - **Registration is invite-only** — the email comes from the invite record (admin or family invite), never the request body
 - **List access**: `get_list_for_owner` (403 if not owner); `get_list_for_viewer` goes through `can_view_list`
 - **Gift responses**: owners get `GiftOwnerRead` (no claim fields), shared viewers get `GiftRead` (with them)
-- **`simple_mode`**: user preference column, JWT claim, toggled via `PUT /auth/profile { name?, simple_mode? }` (returns fresh tokens). **The DB is authoritative** — `get_current_user` re-reads it rather than trusting the token
 
 ## Visibility model
 
@@ -101,9 +100,9 @@ tests/
 `users_share_access` answers a different question — "is there a standing relationship" — and is deliberately **not** gated on grants.
 
 ### Families
-- **Tables**: `families` (name, created_by_id); `family_members` (family_id, user_id, role `organizer|member`, unique per pair); `family_invites` (family_id, email, token UUID, role, simple_mode, invited_by_id, accepted_at, declined_at)
+- **Tables**: `families` (name, created_by_id); `family_members` (family_id, user_id, role `organizer|member`, unique per pair); `family_invites` (family_id, email, token UUID, role, invited_by_id, accepted_at, declined_at)
 - `POST/GET/PUT/DELETE /families`, `DELETE /families/{id}/members/{user_id}` (leave or remove), `PUT /families/{id}/members/{user_id}/role`
-- Invites: `POST/GET/DELETE /families/{id}/invites`, `GET /families/invites` (incoming), `POST /families/invites/{token}/accept|decline`. Accepting adds the member **and** sets `users.simple_mode` from the invite — including at account creation when the invitee registers through the invite token
+- Invites: `POST/GET/DELETE /families/{id}/invites`, `GET /families/invites` (incoming), `POST /families/invites/{token}/accept|decline`. Accepting adds the member. Registering through the invite token creates the account and the membership in one step
 
 ### Shared accounts
 One login used by more than one person. **Account people are labels, not identities** — the account
@@ -133,10 +132,10 @@ hidden on every list the account owns, so a couple cannot coordinate shopping th
 
 ### Per-family list sharing
 Family visibility is an explicit per-(list, family) `ListFamilyShare` grant, not implied by co-membership.
-- `GET /lists/{id}/families` — every family the **owner** belongs to, each with a `shared` flag; readable in both modes
-- `PUT /lists/{id}/families/{family_id}` — grant; 204, idempotent; 403 in simple mode
+- `GET /lists/{id}/families` — every family the **owner** belongs to, each with a `shared` flag
+- `PUT /lists/{id}/families/{family_id}` — grant; 204, idempotent
 - `DELETE /lists/{id}/families/{family_id}?claims=release|keep` — revoke; 204, or **409** when a member who would lose access holds a claim and no `claims` choice was given
-- `POST /lists` accepts `family_ids` — honoured in full mode (each must be the caller's family, else 403), ignored in simple mode, which shares with all the owner's families
+- `POST /lists` accepts `family_ids` — each must be the caller's family, else 403. Omitted or empty shares with no family; there is no auto-grant
 - `GET /lists?filter=shared` — **the one shared scope**: every list another account has made
   visible to the caller, by a direct `ListShare` **or** a family grant. Each row carries
   `shared_via` (`{kind: user|family, id, name}`); a list reachable both ways appears once, as
@@ -165,9 +164,10 @@ Family visibility is an explicit per-(list, family) `ListFamilyShare` grant, not
 | `b5e1c7d92a04` | `users.is_shared_account`, `account_people` table, `lists.account_person_id` |
 | `e2b7d4a91c53` | Drop `lists.recipient_has_account` |
 | `c9d4e7a2f180` | `occasions` → `folders`, `occasion_items` → `folder_items` |
+| `f1a6b3c80d27` | Drop `users.simple_mode` and `family_invites.simple_mode` |
 
 ## Testing
-- ~709 test functions across 53 files
+- ~744 test functions across 56 files
 - `tests/unit/` mocks the repository layer and tests service logic in isolation
 - `tests/integration/` runs against `APP_TEST_DATABASE_URL`; each test is wrapped in a transaction that rolls back, so no data persists
 - Conftest fixtures: `db`, `client`, `admin_user`, `member_user`, `admin_headers`, `member_headers`, `sample_list`, `shared_list`, `connection`, `folder`
@@ -176,7 +176,7 @@ Family visibility is an explicit per-(list, family) `ListFamilyShare` grant, not
 - CI runs `uv sync --frozen && pytest tests/ -v` with `APP_JWT_SECRET=ci-test-secret`
 
 ## Dev fixtures
-`python -m scripts.seed_dev` (add `--reset` to re-seed, `--purge` to remove) builds the visibility states a single account can't produce: a directly shared list, a list reaching you only through a family, a list kept for someone with no account, an archived list, a claimed gift, a pending connection request, a simple-mode user, and a shared account with two people. All fixture users are `@example.com`, and purge only deletes rows reachable from them. Run it with `-m` — executing the file directly puts `scripts/` on `sys.path` instead of `/app`.
+`python -m scripts.seed_dev` (add `--reset` to re-seed, `--purge` to remove) builds the visibility states a single account can't produce: a directly shared list, a list reaching you only through a family, a list kept for someone with no account, an archived list, a claimed gift, a pending connection request, and a shared account with two people. All fixture users are `@example.com`, and purge only deletes rows reachable from them. Run it with `-m` — executing the file directly puts `scripts/` on `sys.path` instead of `/app`.
 
 ## Critical conventions
 - **Router endpoints use `db.flush()`, never `db.commit()`** — the `get_db` dependency commits on success and rolls back on exception. In tests the fixture rolls back. New endpoints must follow this.

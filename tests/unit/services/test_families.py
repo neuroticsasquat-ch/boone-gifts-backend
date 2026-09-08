@@ -39,11 +39,10 @@ def _make_member(
     return member
 
 
-def _make_user(id: int = 10, name: str = "Alice", simple_mode: bool = False) -> MagicMock:
+def _make_user(id: int = 10, name: str = "Alice") -> MagicMock:
     user = MagicMock(spec=User)
     user.id = id
     user.name = name
-    user.simple_mode = simple_mode
     return user
 
 

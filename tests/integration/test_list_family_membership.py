@@ -1,7 +1,7 @@
 """Grant lifecycle across family membership changes (NEU-1202 §2.5).
 
-Simple-mode members have their existing lists auto-granted when they join,
-because the toggles are forbidden to them. Full-mode members opt in themselves.
+Joining a family grants nothing — members opt each list in themselves, and the
+simple-mode auto-grant that used to do it for them is gone (ADR 0004).
 Leaving, being removed, and family deletion all drop the affected grants.
 """
 from datetime import datetime, timedelta, timezone
@@ -23,10 +23,8 @@ def _auth(user):
     return {"Authorization": f"Bearer {create_access_token(user)}"}
 
 
-def _mkuser(db, email, name, simple_mode=False):
-    user = User(
-        email=email, name=name, role="member", password_hash="x", simple_mode=simple_mode
-    )
+def _mkuser(db, email, name):
+    user = User(email=email, name=name, role="member", password_hash="x")
     user.set_password("pw123456")
     db.add(user)
     db.flush()
@@ -55,7 +53,6 @@ def invite_world(db):
             family_id=family.id,
             email=user.email,
             role="member",
-            simple_mode=user.simple_mode,
             token=str(uuid4()),
             invited_by_id=organizer.id,
             expires_at=datetime.now(timezone.utc) + timedelta(days=7),
@@ -79,35 +76,8 @@ def _mklist(db, owner, name, archived=False):
 # ---------------------------------------------------------------------------
 
 
-def test_simple_mode_joiner_gets_existing_lists_granted(client, db, invite_world):
-    joiner = _mkuser(db, "simple@test.com", "Simple", simple_mode=True)
-    existing = _mklist(db, joiner, "Joiner's List")
-    invite = invite_world.invite_for(joiner)
-
-    resp = client.post(
-        f"/families/invites/{invite.token}/accept", headers=_auth(joiner)
-    )
-    assert resp.status_code == 200
-    assert _granted(db, existing.id) == {invite_world.family.id}
-
-    # And the organizer now sees it in their shared scope.
-    fam = client.get(
-        "/lists?filter=shared", headers=_auth(invite_world.organizer)
-    ).json()
-    assert "Joiner's List" in {l["name"] for l in fam}
-
-
-def test_simple_mode_auto_grant_skips_archived_lists(client, db, invite_world):
-    joiner = _mkuser(db, "simple@test.com", "Simple", simple_mode=True)
-    archived = _mklist(db, joiner, "Old List", archived=True)
-    invite = invite_world.invite_for(joiner)
-
-    client.post(f"/families/invites/{invite.token}/accept", headers=_auth(joiner))
-    assert _granted(db, archived.id) == set()
-
-
-def test_full_mode_joiner_shares_nothing_until_they_opt_in(client, db, invite_world):
-    joiner = _mkuser(db, "full@test.com", "Full", simple_mode=False)
+def test_joiner_shares_nothing_until_they_opt_in(client, db, invite_world):
+    joiner = _mkuser(db, "joiner@test.com", "Joiner")
     existing = _mklist(db, joiner, "Kept Private")
     invite = invite_world.invite_for(joiner)
 
@@ -127,19 +97,8 @@ def test_full_mode_joiner_shares_nothing_until_they_opt_in(client, db, invite_wo
     assert _granted(db, existing.id) == {invite_world.family.id}
 
 
-def test_simple_mode_family_creator_gets_existing_lists_granted(client, db):
-    creator = _mkuser(db, "simple@test.com", "Simple", simple_mode=True)
-    existing = _mklist(db, creator, "Creator's List")
-
-    resp = client.post(
-        "/families", headers=_auth(creator), json={"name": "New Family"}
-    )
-    assert resp.status_code == 201
-    assert _granted(db, existing.id) == {resp.json()["id"]}
-
-
-def test_full_mode_family_creator_grants_nothing(client, db):
-    creator = _mkuser(db, "full@test.com", "Full")
+def test_family_creator_grants_nothing(client, db):
+    creator = _mkuser(db, "creator@test.com", "Creator")
     existing = _mklist(db, creator, "Creator's List")
 
     client.post("/families", headers=_auth(creator), json={"name": "New Family"})
@@ -147,13 +106,11 @@ def test_full_mode_family_creator_grants_nothing(client, db):
 
 
 def test_register_via_family_invite_does_not_error(client, db, invite_world):
-    """The new account owns no lists, so the auto-grant is a no-op — but the
-    hook still runs on this path and must not break registration."""
+    """Registering through a family invite joins the family and grants nothing."""
     invite = FamilyInvite(
         family_id=invite_world.family.id,
         email="newbie@test.com",
         role="member",
-        simple_mode=True,
         token=str(uuid4()),
         invited_by_id=invite_world.organizer.id,
         expires_at=datetime.now(timezone.utc) + timedelta(days=7),

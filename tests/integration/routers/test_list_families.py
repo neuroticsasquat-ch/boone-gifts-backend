@@ -20,10 +20,8 @@ def _auth(user):
     return {"Authorization": f"Bearer {create_access_token(user)}"}
 
 
-def _mkuser(db, email, name, simple_mode=False):
-    user = User(
-        email=email, name=name, role="member", password_hash="x", simple_mode=simple_mode
-    )
+def _mkuser(db, email, name):
+    user = User(email=email, name=name, role="member", password_hash="x")
     user.set_password("pw123456")
     db.add(user)
     db.flush()
@@ -74,7 +72,7 @@ def world(db):
 # ---------------------------------------------------------------------------
 
 
-def test_full_mode_create_with_no_families_shares_with_none(client, db, world):
+def test_create_with_no_families_shares_with_none(client, db, world):
     resp = client.post(
         "/lists", headers=_auth(world.owner), json={"name": "Private"}
     )
@@ -86,7 +84,7 @@ def test_full_mode_create_with_no_families_shares_with_none(client, db, world):
     assert "Private" not in {l["name"] for l in fam}
 
 
-def test_full_mode_create_with_family_ids_shares_with_exactly_those(client, db, world):
+def test_create_with_family_ids_shares_with_exactly_those(client, db, world):
     resp = client.post(
         "/lists",
         headers=_auth(world.owner),
@@ -134,28 +132,6 @@ def test_create_with_a_foreign_family_writes_no_partial_grants(client, db, world
     assert db.query(ListFamilyShare).filter_by(family_id=world.boones.id).count() == 0
 
 
-def test_simple_mode_create_shares_with_all_families(client, db, world):
-    world.owner.simple_mode = True
-    db.flush()
-
-    resp = client.post("/lists", headers=_auth(world.owner), json={"name": "Auto"})
-    assert resp.status_code == 201
-    assert _granted(db, resp.json()["id"]) == {world.boones.id, world.smiths.id}
-
-
-def test_simple_mode_create_ignores_family_ids_in_the_body(client, db, world):
-    world.owner.simple_mode = True
-    db.flush()
-
-    resp = client.post(
-        "/lists",
-        headers=_auth(world.owner),
-        json={"name": "Auto", "family_ids": []},
-    )
-    assert resp.status_code == 201
-    assert _granted(db, resp.json()["id"]) == {world.boones.id, world.smiths.id}
-
-
 # ---------------------------------------------------------------------------
 # Grant management API (§2.6)
 # ---------------------------------------------------------------------------
@@ -183,14 +159,6 @@ def test_get_lists_every_family_the_owner_belongs_to_with_shared_flag(
         {"id": world.boones.id, "name": "The Boones", "shared": True},
         {"id": world.smiths.id, "name": "The Smiths", "shared": False},
     ]
-
-
-def test_get_is_readable_in_simple_mode(client, db, world, owned_list):
-    world.owner.simple_mode = True
-    db.flush()
-    resp = client.get(f"/lists/{owned_list.id}/families", headers=_auth(world.owner))
-    assert resp.status_code == 200
-    assert [f["shared"] for f in resp.json()] == [False, False]
 
 
 def test_get_forbidden_for_non_owner(client, world, owned_list):
@@ -242,25 +210,17 @@ def test_toggling_on_grants_visibility_immediately(client, db, world, owned_list
     ).status_code == 403
 
 
-def test_put_and_delete_forbidden_in_simple_mode(client, db, world, owned_list):
-    db.add(ListFamilyShare(list_id=owned_list.id, family_id=world.boones.id))
-    world.owner.simple_mode = True
-    db.flush()
+def test_put_and_delete_are_open_to_every_owner(client, db, world, owned_list):
+    """Simple mode's 403 on manual grant and revoke is gone (ADR 0004): every
+    owner manages their own family sharing."""
     headers = _auth(world.owner)
     url = f"/lists/{owned_list.id}/families/{world.boones.id}"
 
-    put = client.put(url, headers=headers)
-    assert put.status_code == 403
-    assert put.json()["detail"] == (
-        "Switch to full mode to manage family sharing for this list."
-    )
-
-    delete = client.delete(url, headers=headers)
-    assert delete.status_code == 403
-    assert delete.json()["detail"] == (
-        "Switch to full mode to manage family sharing for this list."
-    )
+    assert client.put(url, headers=headers).status_code == 204
     assert _granted(db, owned_list.id) == {world.boones.id}
+
+    assert client.delete(url, headers=headers).status_code == 204
+    assert _granted(db, owned_list.id) == set()
 
 
 # ---------------------------------------------------------------------------
