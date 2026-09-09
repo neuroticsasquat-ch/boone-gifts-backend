@@ -100,7 +100,7 @@ tests/
 - **Registration is invite-only** — the email comes from the invite record (admin or family invite), never the request body
 - **List access**: `get_list_for_owner` (403 if not owner); `get_list_for_viewer` goes through `can_view_list`
 - **Gift responses**: owners get `GiftOwnerRead` (no claim fields), shared viewers get `GiftRead` (with them, read through `Gift.claim`)
-- **List-row responses**: owners get `GiftListRead`, viewers get `GiftListViewerRead` (which adds `claimed_count`). `app/lists/service.py:to_summary` chooses; endpoints returning a mix declare no `response_model`
+- **List-row responses**: owners get `GiftListRead`, viewers get `GiftListViewerRead` (which adds `claimed_count` and `my_unpurchased_claim_count`). `app/lists/service.py:to_summary` chooses, and passes it the caller as `context={"viewer_id": ...}` because the second count is about that one caller; endpoints returning a mix declare no `response_model`
 
 ## Visibility model
 

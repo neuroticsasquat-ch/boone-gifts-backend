@@ -34,8 +34,8 @@ def folders_for_list(list_id: int, user: CurrentUser, db: DbSession):
 
 
 @router.get("/{folder_id}", response_model=FolderDetail)
-def get_folder(folder: OwnedFolder, db: DbSession):
-    return folder_service.get_folder_detail(db, folder)
+def get_folder(folder: OwnedFolder, user: CurrentUser, db: DbSession):
+    return folder_service.get_folder_detail(db, folder, viewer_id=user.id)
 
 
 @router.put("/{folder_id}", response_model=FolderRead)

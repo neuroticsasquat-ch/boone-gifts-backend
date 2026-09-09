@@ -2,7 +2,12 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 from app.schemas.claim import OccasionCandidate
 
@@ -182,24 +187,58 @@ class GiftListRead(BaseModel):
 
 class GiftListViewerRead(GiftListRead):
     """A list row as somebody the list was **shared with** sees it: how much of
-    it is already spoken for. Hand it only a list the caller does not own —
-    `app/lists/service.py:to_summary` is the one place that chooses."""
+    it is already spoken for, and how much of that is still theirs to buy. Hand
+    it only a list the caller does not own — `app/lists/service.py:to_summary`
+    is the one place that chooses."""
 
     claimed_count: int = 0
+    # The `• N to buy` badge on the Lists dashboard (project spec §9.1). On a
+    # directly shared list it is the *only* route back to the claim: that claim
+    # files under no occasion and, unless its list sits in a folder, appears on
+    # no shopping tab at all (§9.4). Unlike `claimed_count` it is a fact about
+    # one caller, which is why validation needs to be told who is asking.
+    #
+    # Deliberately required rather than defaulted to 0: a default would let any
+    # path that skips the validator below mint an empty badge that reads as
+    # "nothing left to buy" instead of failing. Pydantic itself is then the
+    # backstop, whatever shape the input arrives in.
+    my_unpurchased_claim_count: int
 
     @model_validator(mode="before")
     @classmethod
-    def count_claims(cls, data: object) -> object:
+    def count_claims(cls, data: object, info: ValidationInfo) -> object:
         if not hasattr(data, "gifts"):
+            # No gifts to walk, so there is nothing to count here: either an
+            # already-built row being revalidated (a folder's nested `lists`),
+            # which carries both counts already, or a mapping that has to state
+            # them itself. Neither needs a viewer, and a mapping that omits the
+            # count is refused by the required field rather than defaulted.
             return data
-        # Read every declared field off the row as usual, then add the one
-        # thing the row cannot answer for itself.
+        viewer_id = (info.context or {}).get("viewer_id")
+        if viewer_id is None:
+            raise ValueError(
+                "GiftListViewerRead needs a viewer_id in its validation "
+                "context: my_unpurchased_claim_count is a fact about one "
+                "caller, and defaulting it would empty the badge silently "
+                "rather than fail. Go through app/lists/service.py:to_summary."
+            )
+        # Read every declared field off the row as usual, then add the two
+        # things the row cannot answer for itself.
         values = {
             name: getattr(data, name)
             for name in cls.model_fields
             if hasattr(data, name)
         }
-        values["claimed_count"] = sum(1 for g in data.gifts if g.claim is not None)
+        # Both counts come off the claims already loaded with the row rather
+        # than a query per list: `GiftList.gifts` and `Gift.claim` are both
+        # selectin, so a whole shared scope costs two queries, not two per row.
+        claims = [g.claim for g in data.gifts if g.claim is not None]
+        values["claimed_count"] = len(claims)
+        values["my_unpurchased_claim_count"] = sum(
+            1
+            for claim in claims
+            if claim.user_id == viewer_id and claim.purchased_at is None
+        )
         return values
 
 
