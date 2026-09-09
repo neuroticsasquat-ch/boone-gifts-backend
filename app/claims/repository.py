@@ -6,8 +6,9 @@ teardown callers — connections, families, list occasions, users — reach for
 these instead of writing claim SQL of their own.
 """
 from datetime import datetime, timezone
+from decimal import Decimal
 
-from sqlalchemy import delete, select
+from sqlalchemy import case, delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -205,6 +206,77 @@ def get_shopping_for_folder(db: Session, folder_id: int, user_id: int) -> list[d
     return _shopping_rows(
         db,
         _shopping_select()
+        .join(FolderItem, FolderItem.list_id == GiftList.id)
+        .where(
+            FolderItem.folder_id == folder_id,
+            Claim.user_id == user_id,
+        ),
+    )
+
+
+def _spend_select():
+    """The four numbers a budget line is made of, minus the scope.
+
+    Counted over the caller's own claims and no one else's — same rule, same
+    reason as `_shopping_select`, which this deliberately mirrors so the tally
+    and the rows beneath it can never describe different sets.
+
+    `spent` sums `amount_paid` alone: a purchase with no amount recorded is
+    counted as bought and reported as unpriced, but never guessed at from the
+    owner's asking price. That is what lets a client state an understated total
+    as an understatement (project spec §7).
+    """
+    return select(
+        func.count(Claim.id).label("total_count"),
+        func.count(Claim.purchased_at).label("bought_count"),
+        func.coalesce(func.sum(Claim.amount_paid), 0).label("spent"),
+        func.coalesce(
+            func.sum(
+                case(
+                    (
+                        Claim.purchased_at.isnot(None)
+                        & Claim.amount_paid.is_(None),
+                        1,
+                    ),
+                    else_=0,
+                )
+            ),
+            0,
+        ).label("unpriced_count"),
+    ).join(Gift, Claim.gift_id == Gift.id)
+
+
+def _spend_row(db: Session, statement) -> dict:
+    row = db.execute(statement).one()
+    return {
+        "total_count": row.total_count,
+        "bought_count": row.bought_count,
+        "spent": Decimal(row.spent),
+        "unpriced_count": row.unpriced_count,
+    }
+
+
+def get_spend_for_occasion(db: Session, occasion_id: int, user_id: int) -> dict:
+    """What the caller has spent against one occasion, and on how many gifts.
+
+    Keyed on the stored filing, exactly as the occasion shopping tab is, so the
+    budget line counts the rows the tab shows and nothing else.
+    """
+    return _spend_row(
+        db,
+        _spend_select().where(
+            Claim.occasion_id == occasion_id,
+            Claim.user_id == user_id,
+        ),
+    )
+
+
+def get_spend_for_folder(db: Session, folder_id: int, user_id: int) -> dict:
+    """What the caller has spent on gifts in the lists this folder holds."""
+    return _spend_row(
+        db,
+        _spend_select()
+        .join(GiftList, Gift.list_id == GiftList.id)
         .join(FolderItem, FolderItem.list_id == GiftList.id)
         .where(
             FolderItem.folder_id == folder_id,

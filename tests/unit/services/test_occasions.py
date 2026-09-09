@@ -1,3 +1,4 @@
+from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -14,6 +15,7 @@ FAMILIES_REPO = "app.occasions.service.families_repo"
 # `_require_organizer` is reused from the invites module, so the role gate
 # resolves `families_repo` in *that* namespace, not this service's.
 ORGANIZER_GATE_REPO = "app.family_invites.service.families_repo"
+BUDGETS_SERVICE = "app.occasions.service.budgets_service"
 
 
 def _make_user(id: int = 10) -> MagicMock:
@@ -261,12 +263,14 @@ def test_update_occasion_raises_not_found_for_an_unknown_id():
             )
 
 
+@patch(BUDGETS_SERVICE)
 @patch("app.occasions.service.claims_repo.get_shopping_for_occasion")
-def test_shopping_is_scoped_to_the_caller(mock_shopping):
-    """The actor's own id is what bounds the query — there is no parameter
-    that could widen it to another member's claims."""
+def test_shopping_is_scoped_to_the_caller(mock_shopping, budgets_service):
+    """The actor's own id is what bounds both halves of the payload — there is
+    no parameter that could widen either to another member's claims."""
     db = MagicMock()
     mock_shopping.return_value = [{"name": "Skillet"}]
+    budgets_service.get_rollup.return_value = {"amount": None}
     actor = _make_user(id=10)
 
     with patch(REPO) as repo, patch(FAMILIES_REPO) as families_repo:
@@ -277,7 +281,61 @@ def test_shopping_is_scoped_to_the_caller(mock_shopping):
         result = service.list_shopping(db, occasion_id=5, actor=actor)
 
     mock_shopping.assert_called_once_with(db, 5, 10)
-    assert result == [{"name": "Skillet"}]
+    budgets_service.get_rollup.assert_called_once_with(db, user_id=10, occasion_id=5)
+    assert result == {"budget": {"amount": None}, "items": [{"name": "Skillet"}]}
+
+
+@patch(BUDGETS_SERVICE)
+def test_set_budget_is_the_callers_own_and_needs_only_membership(budgets_service):
+    """An organizer has no more say over money than any other member: the gate
+    is membership, and the budget written is always the caller's own."""
+    db = MagicMock()
+    budgets_service.set_budget.return_value = {"amount": Decimal("200.00")}
+    actor = _make_user(id=10)
+
+    with patch(REPO) as repo, patch(FAMILIES_REPO) as families_repo:
+        repo.get_occasion.return_value = _make_occasion()
+        families_repo.get_family.return_value = _make_family()
+        families_repo.get_family_member.return_value = _make_member("member")
+
+        result = service.set_budget(
+            db, occasion_id=5, actor=actor, amount=Decimal("200.00")
+        )
+
+    budgets_service.set_budget.assert_called_once_with(
+        db, user_id=10, occasion_id=5, amount=Decimal("200.00")
+    )
+    assert result == {"amount": Decimal("200.00")}
+
+
+@patch(BUDGETS_SERVICE)
+def test_set_budget_refuses_a_non_member(budgets_service):
+    db = MagicMock()
+    with patch(REPO) as repo, patch(FAMILIES_REPO) as families_repo:
+        repo.get_occasion.return_value = _make_occasion()
+        families_repo.get_family.return_value = _make_family()
+        families_repo.get_family_member.return_value = None
+
+        with pytest.raises(ForbiddenError):
+            service.set_budget(
+                db, occasion_id=5, actor=_make_user(), amount=Decimal("200.00")
+            )
+
+    budgets_service.set_budget.assert_not_called()
+
+
+@patch(BUDGETS_SERVICE)
+def test_clear_budget_refuses_a_non_member(budgets_service):
+    db = MagicMock()
+    with patch(REPO) as repo, patch(FAMILIES_REPO) as families_repo:
+        repo.get_occasion.return_value = _make_occasion()
+        families_repo.get_family.return_value = _make_family()
+        families_repo.get_family_member.return_value = None
+
+        with pytest.raises(ForbiddenError):
+            service.clear_budget(db, occasion_id=5, actor=_make_user())
+
+    budgets_service.clear_budget.assert_not_called()
 
 
 def test_shopping_refuses_a_non_member():

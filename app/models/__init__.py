@@ -14,6 +14,7 @@ from app.models.family import Family
 from app.models.family_member import FamilyMember
 from app.models.family_invite import FamilyInvite
 from app.models.occasion import Occasion
+from app.models.budget import Budget
 
 __all__ = [
     "User",
@@ -32,4 +33,5 @@ __all__ = [
     "FamilyMember",
     "FamilyInvite",
     "Occasion",
+    "Budget",
 ]

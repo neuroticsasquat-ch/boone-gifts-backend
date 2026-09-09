@@ -1,6 +1,7 @@
 from sqlalchemy import delete, or_, select
 from sqlalchemy.orm import Session
 
+from app.budgets import repository as budgets_repo
 from app.claims import repository as claims_repo
 from app.models.folder import Folder
 from app.models.folder_item import FolderItem
@@ -60,6 +61,12 @@ def cascade_delete_user(db: Session, user: User) -> None:
     # Release every claim this user holds on other people's lists. The rows go,
     # taking the purchase state and the amount paid with them.
     claims_repo.delete_claims_by_user(db, uid)
+
+    # Every budget this user set, on their own folders and on other people's
+    # occasions alike — budgets are per-user, so nobody else's are touched.
+    # Before the folders below, which `budgets.folder_id` points at; a folder
+    # budget is always its owner's, so this clears every one of them.
+    budgets_repo.delete_budgets_by_user(db, uid)
 
     # Remove shares granted TO this user (and folder items referencing those shares)
     shared_list_ids = list(

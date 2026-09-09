@@ -30,6 +30,7 @@ from decimal import Decimal
 from sqlalchemy import select
 
 from app.database import Base, SessionLocal, engine
+from app.models.budget import Budget
 from app.models.claim import Claim
 from app.models.account_person import AccountPerson
 from app.models.folder import Folder
@@ -115,6 +116,16 @@ def purge(db) -> int:
             select(Occasion.id).where(Occasion.family_id.in_(family_ids))
         ).scalars()
     ) if family_ids else set()
+    # Budgets point at the occasions and folders below and at the users above,
+    # so they go before all three. By either route: a fixture user may budget a
+    # non-fixture occasion, and a non-fixture user may budget nothing of ours,
+    # but a fixture folder they somehow reached would still block its delete.
+    if occasion_ids or folder_ids or user_ids:
+        db.query(Budget).filter(
+            Budget.occasion_id.in_(occasion_ids)
+            | Budget.folder_id.in_(folder_ids)
+            | Budget.user_id.in_(user_ids)
+        ).delete(synchronize_session=False)
     if list_ids or occasion_ids:
         db.query(ListOccasionShare).filter(
             ListOccasionShare.list_id.in_(list_ids)
@@ -386,6 +397,28 @@ def seed(db, password: str) -> None:
     for gift_list in (jane_wishlist, carol_wishlist, gran_list):
         db.add(FolderItem(folder_id=christmas.id, list_id=gift_list.id))
     db.add(FolderItem(folder_id=birthdays.id, list_id=beths_list.id))
+
+    # Tom's budgets, chosen against the spends above so every state a budget
+    # line can be in is on screen somewhere: under target, exactly at it, over
+    # it, and — the one that matters most — a total that is honestly incomplete.
+    # Every one is Tom's own; no other fixture user gets a budget, because a
+    # second budget on the same occasion is only ever visible to its own owner.
+    db.add_all([
+        # Under: 64.99 of 100.00 spent, 35.01 left.
+        Budget(user_id=tom.id, occasion_id=boones_christmas.id,
+               amount=Decimal("100.00")),
+        # Exactly at target: 42.00 of 42.00, nothing left and nothing overspent.
+        Budget(user_id=tom.id, occasion_id=boones_last_year.id,
+               amount=Decimal("42.00")),
+        # Bought, but the amount was skipped: 0.00 of 25.00 spent with one
+        # unpriced purchase, so the line must read as an understatement rather
+        # than as an untouched budget.
+        Budget(user_id=tom.id, occasion_id=extended_christmas.id,
+               amount=Decimal("25.00")),
+        # Over: the folder holds Carol's list, so 64.99 lands against 50.00 and
+        # `remaining` goes negative. A budget is a target, not a limit.
+        Budget(user_id=tom.id, folder_id=christmas.id, amount=Decimal("50.00")),
+    ])
 
     db.commit()
 

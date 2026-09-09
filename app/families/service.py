@@ -1,6 +1,7 @@
 from sqlalchemy.orm import Session
 
 from app.access import users_share_access
+from app.budgets import repository as budgets_repo
 from app.claims.repository import unclaim_gifts_between
 from app.connections.repository import delete_folder_items_between
 from app.families import repository as repo
@@ -96,9 +97,14 @@ def delete_family(db: Session, family_id: int, user_id: int) -> None:
         raise ForbiddenError("Only organizers can delete the family.")
 
     member_ids = repo.get_member_user_ids(db, family_id)
-    # Shares point at the occasions, which point at the family, so they unwind
-    # in that order — the FK would otherwise refuse the delete.
+    # Shares and budgets point at the occasions, which point at the family, so
+    # they unwind in that order — the FK would otherwise refuse the delete. A
+    # budget has nothing to survive for once its occasion is gone: it is a
+    # target for shopping that can no longer be filed anywhere.
     list_occasion_repo.delete_shares_for_family(db, family_id)
+    budgets_repo.delete_budgets_for_occasions(
+        db, occasions_repo.get_occasion_ids_for_family(db, family_id)
+    )
     occasions_repo.delete_occasions_for_family(db, family_id)
     repo.delete_all_members(db, family_id)
     for i in range(len(member_ids)):

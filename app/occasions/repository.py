@@ -57,5 +57,15 @@ def update_occasion(db: Session, occasion: Occasion, update_data: dict) -> Occas
     return occasion
 
 
+def get_occasion_ids_for_family(db: Session, family_id: int) -> list[int]:
+    """Every occasion of one family, archived included — the callers that use
+    this are unwinding the family, and archiving is not deletion."""
+    return list(
+        db.execute(
+            select(Occasion.id).where(Occasion.family_id == family_id)
+        ).scalars().all()
+    )
+
+
 def delete_occasions_for_family(db: Session, family_id: int) -> None:
     db.execute(delete(Occasion).where(Occasion.family_id == family_id))

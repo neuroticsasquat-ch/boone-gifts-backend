@@ -62,7 +62,7 @@ app/
   models/              # user, account_person, invite, gift_list, gift, claim,
                        # list_share, list_occasion_share, connection, folder,
                        # folder_item, password_reset_token, family, family_member,
-                       # family_invite, occasion
+                       # family_invite, occasion, budget
   schemas/             # Pydantic request/response models, one module per domain
   services/exceptions.py   # NotFoundError, ForbiddenError, ConflictError, BadRequestError
   account/             # GET/PUT /account — the shared-account flag and its people
@@ -82,6 +82,8 @@ app/
   family_invites/      # Family invite create/accept/decline/revoke
   occasions/           # /families/{id}/occasions + /occasions/{id} — the family
                        # occasion, and its shopping tab
+  budgets/             # The budget row and the rollup. No router: the endpoints
+                       # live under the occasion and folder that gate them
   meta/                # GET /meta — URL metadata with SSRF protection
   cli/create_admin.py  # Interactive first-admin creation
 alembic/versions/      # Migrations
@@ -197,10 +199,13 @@ on the gift. See `docs/adr/0003-claims-are-their-own-table.md`.
 
 #### Shopping tabs
 `GET /occasions/{id}/shopping` (any member of the occasion's family) and
-`GET /folders/{id}/shopping` (the folder's owner) are the same payload under two scopes: the
-caller's own claims, each row carrying the gift, the owner's asking price, the list it came from,
-and the claimer's `purchased_at` and `amount_paid`. Ordered by list then gift — "grouped by list"
-is the client grouping on `list_id`, and the order is stable across reloads.
+`GET /folders/{id}/shopping` (the folder's owner) are the same payload under two scopes:
+`{ budget, items }`, where each item is one of the caller's own claims carrying the gift, the
+owner's asking price, the list it came from, and the claimer's `purchased_at` and `amount_paid`.
+Ordered by list then gift — "grouped by list" is the client grouping on `list_id`, and the order is
+stable across reloads. The `budget` half is the rollup described under "Budgets" below; it rides
+with the rows rather than sitting behind a second call, because a total fetched separately can
+render a figure the list beneath it contradicts.
 
 - **Only ever the caller's own claims.** There is no parameter, no admin path and no aggregate that
   returns anyone else's — `CONTEXT.md` invariant 1, not a preference. Both queries are keyed on the
@@ -258,6 +263,38 @@ path stops existing at all.
   from the claim endpoints, where the caller *is* the claimer. `GiftRead` — the gift row every
   viewer of a list reads — deliberately does not declare it
 
+### Budgets
+What one user means to spend on one occasion, or on one folder. **Every budget is private to the
+user who set it** — there is no family budget, and no endpoint anywhere returns another user's
+budget, spend or counts (`CONTEXT.md` invariant 1). Organizers name an occasion; they never touch
+money and never see any.
+- **Table**: `budgets` (user_id indexed, occasion_id nullable, folder_id nullable, amount
+  `Numeric(10,2)`), unique on `(user_id, occasion_id)` and on `(user_id, folder_id)`. Both
+  constraints coexist because a NULL never collides in a unique index
+- **`occasion_id` and `folder_id` are mutually exclusive and exactly one is set**, enforced in
+  `app/budgets/service.py` rather than by a check constraint: SQLite cannot gain one without
+  `render_as_batch` recreating the table, and the service raises the 400 either way
+- `PUT`/`DELETE /occasions/{id}/budget` and `PUT`/`DELETE /folders/{id}/budget`, always the
+  **caller's own** row. Both return the rollup — the `DELETE` answers **200** with the target
+  cleared rather than 204, since the counts survive it and the tab re-renders the same line.
+  `DELETE` with no budget set is a 404
+- **Rollup**: `{ amount, spent, remaining, bought_count, total_count, unpriced_count }`, returned on
+  every write and beside every shopping payload. `amount` and `remaining` are null when no budget is
+  set — the counts are worth rendering regardless, and null is what tells the client to offer *set*
+  rather than *edit*. `remaining` may go negative: a budget is a target, not a limit
+- **`spent` sums `amount_paid` alone.** A purchase with no amount recorded counts toward
+  `bought_count` and toward `unpriced_count` and **never** toward `spent`, so an understated total
+  reads as an understatement rather than as fact. It is never seeded from the owner's asking price
+- The counts live in `app/claims/repository.py` (`get_spend_for_occasion`, `get_spend_for_folder`)
+  beside the shopping queries they must agree with; `app/budgets/` holds the budget row and the
+  assembly. `app/budgets/service.py` deliberately knows nothing about who may read an occasion or a
+  folder — the scope's own service gates first and calls in afterwards, which is also what keeps the
+  imports acyclic
+- **A budget dies with its scope**: `delete_folder`, `delete_family` (through its occasions) and the
+  user purge each clear the budgets pointing at what they are about to delete, or the FK refuses
+- **No stored currency** — `amount` is a bare `Numeric(10,2)`, like `claims.amount_paid` and
+  `gifts.price`. See the project spec §14.1 for why
+
 ## Data model notes
 - **Lists carry a recipient**: `recipient_name` alone, meaning one thing — a person with no account. Read `GiftList.kept_for_absent_person` rather than testing the column. The co-resident case that `recipient_has_account = true` used to cover is an account person now (dropped in `e2b7d4a91c53`)
 - **Lists may instead carry an account person**: `account_person_id`, mutually exclusive with `recipient_name` (both null is a legal household list). See "Shared accounts" below
@@ -283,6 +320,7 @@ path stops existing at all.
 | `a3f8c1e70b52` | `occasions` table — the family-owned gifting occasion |
 | `b7e2d4f16c93` | `list_occasion_shares` table; drop `list_family_shares` with **no backfill** |
 | `d4c8a1f92b60` | `claims` table, **backfilled** from `gifts`; drop `gifts.claimed_by_id`, `claimed_at`, `purchased_at` |
+| `c1f9a7d4e260` | `budgets` table |
 
 ## Testing
 - ~744 test functions across 56 files

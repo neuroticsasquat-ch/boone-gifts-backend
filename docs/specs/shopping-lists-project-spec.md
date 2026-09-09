@@ -592,11 +592,15 @@ without amounts; budgets over, under and exactly at target. Keep it working as t
 
 Resolve these in the owning ticket's `/planit`, not by guessing:
 
-1. **Currency.** There is no currency handling in either repo: `Decimal` serializes to a JSON string
-   (Pydantic v2 default, hence `price: string | null` in the TS types) and every display site
-   hardcodes a literal `$`. Budgets make this visible. At minimum this project adds one shared
-   formatting helper used by every money site; whether it also adds a stored currency is the call to
-   make in the ticket that introduces `budgets`.
+1. ~~**Currency.**~~ **Resolved 2026-09-09** in NEU-1275, the ticket that introduced `budgets`:
+   **no stored currency.** `budgets.amount` is a bare `Numeric(10, 2)`, exactly like
+   `claims.amount_paid` and `gifts.price` beside it. A currency column that every site then
+   hardcodes `$` for anyway buys nothing, and one stored per budget would let a budget and the
+   spend counted against it disagree — the rollup subtracts them, so they cannot be allowed to be
+   in different units. Making this app multi-currency is a project of its own, spanning all three
+   money columns and every display site; it is not a column this ticket could have added honestly.
+   The shared frontend formatting helper this question also asks for is unaffected and still owed
+   by the frontend tickets.
 2. ~~**Where claim candidates are exposed.**~~ **Resolved 2026-09-08** in NEU-1269's `/planit`:
    `claim_candidates` and `claim_options` ride on the viewer list-detail payload (§10.4), and the
    `allowed`/`suggested` split is settled in §6.2. See

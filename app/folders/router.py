@@ -2,7 +2,8 @@ from fastapi import APIRouter, HTTPException, Query, status
 
 from app.folders import service as folder_service
 from app.dependencies import CurrentUser, DbSession, OwnedFolder
-from app.schemas.claim import ShoppingItem
+from app.schemas.budget import BudgetRollup, BudgetWrite
+from app.schemas.claim import ShoppingPayload
 from app.schemas.folder import (
     FolderCreate,
     FolderDetail,
@@ -85,6 +86,23 @@ def remove_item(list_id: int, folder: OwnedFolder, db: DbSession):
 
 # `OwnedFolder` is the whole access story here: a folder belongs to one user,
 # so the caller is always reading their own claims.
-@router.get("/{folder_id}/shopping", response_model=list[ShoppingItem])
+@router.get("/{folder_id}/shopping", response_model=ShoppingPayload)
 def get_shopping(folder: OwnedFolder, user: CurrentUser, db: DbSession):
     return folder_service.get_shopping(db, folder.id, user.id)
+
+
+@router.put("/{folder_id}/budget", response_model=BudgetRollup)
+def set_budget(
+    request: BudgetWrite, folder: OwnedFolder, user: CurrentUser, db: DbSession
+):
+    return folder_service.set_budget(db, folder.id, user.id, request.amount)
+
+
+# 200 with the rollup, not 204: the tab re-renders the same budget line with no
+# target on it, and the counts beneath it are unchanged by the clearing.
+@router.delete("/{folder_id}/budget", response_model=BudgetRollup)
+def clear_budget(folder: OwnedFolder, user: CurrentUser, db: DbSession):
+    try:
+        return folder_service.clear_budget(db, folder.id, user.id)
+    except NotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
