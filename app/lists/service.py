@@ -2,6 +2,7 @@ from sqlalchemy.orm import Session
 
 from app.account import service as account_service
 from app.claims import repository as claims_repo
+from app.claims import service as claim_service
 from app.list_occasions import service as list_occasion_service
 from app.lists import repository as repo
 from app.models.gift_list import GiftList
@@ -98,11 +99,24 @@ def get_shared_lists(db: Session, user_id: int, archived: bool = False) -> list[
 
 
 def get_list(
-    gift_list: GiftList, user_id: int
+    db: Session, gift_list: GiftList, user: User
 ) -> GiftListDetailOwner | GiftListDetailViewer:
-    if gift_list.owner_id == user_id:
+    """Serialize one list's detail for one caller.
+
+    The owner's schema never learns what a claim could be filed under: those two
+    sets are derived from the *viewer's* memberships, and an owner sees no claim
+    state at all. Same reasoning as `to_summary` — one place decides, so the
+    choice cannot be made wrongly per endpoint (ADR 0003).
+    """
+    if gift_list.owner_id == user.id:
         return GiftListDetailOwner.model_validate(gift_list)
-    return GiftListDetailViewer.model_validate(gift_list)
+    detail = GiftListDetailViewer.model_validate(gift_list)
+    # One query per list detail, not per gift: filing candidates are a property
+    # of the list's shares, not of any gift on it.
+    allowed, suggested = claim_service.occasion_sets(db, gift_list, user)
+    detail.claim_candidates = suggested
+    detail.claim_options = allowed
+    return detail
 
 
 def update_list(db: Session, gift_list: GiftList, updates: dict) -> GiftList:

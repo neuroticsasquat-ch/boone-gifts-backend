@@ -3,9 +3,11 @@
 The states that matter are the ones a single account cannot produce on its own:
 a list shared directly with you, a list that reaches you only through a family,
 a list that reaches you both ways at once, a list you keep for someone with no
-account, a pending connection request, and a shared account with two people and
-a list apiece. Reproducing those by hand through the UI takes
-five logins, so this builds them in one pass.
+account, a pending connection request, a shared account with two people and
+a list apiece, and a family with two archived Christmases behind it plus one
+active — the state that decides whether claiming prompts or files silently.
+Reproducing those by hand through the UI takes five logins, so this builds them
+in one pass.
 
     docker compose exec api python -m scripts.seed_dev            # seed
     docker compose exec api python -m scripts.seed_dev --reset    # re-seed
@@ -235,6 +237,13 @@ def seed(db, password: str) -> None:
     kitchen_list = new_list(gran, "Ideas for the Kitchen",
                             "For the house, not for either of us")
     dave_wishlist = new_list(dave, "Dave's Wishlist")
+    # The year-three case: a standing list shared to every Christmas the Boones
+    # have ever run, two of them archived. It is the only fixture that proves a
+    # claim files silently instead of prompting once a family has history, and
+    # it is invisible in a fresh database — every occasion there is active.
+    standing_list = new_list(
+        carol, "Carol's Standing Wishlist", "Shared to three Christmases, two past"
+    )
     db.flush()
 
     add_gifts(tom_wishlist, ["Cast iron skillet", "Running shoes", "Coffee grinder"])
@@ -254,6 +263,10 @@ def seed(db, password: str) -> None:
     # claim whose filing NEU-1269 has to resolve without a direct share.
     add_gifts(dave_wishlist, ["Board game", "Whiskey glasses"],
               claimed_by=tom, bought=SKIPPED)
+    # Left unclaimed on purpose: claiming one as Tom is how the silent filing is
+    # checked by hand, and the picker's "show past occasions" needs the two
+    # archived Christmases behind it.
+    add_gifts(standing_list, ["Umbrella", "Desk lamp", "Wool blanket"])
 
     # Dave's request stays pending so the connection-request UI has something to
     # render; the rest are accepted.
@@ -306,6 +319,14 @@ def seed(db, password: str) -> None:
         created_by_id=tom.id,
         is_archived=True,
     )
+    # A second archived Christmas, so the Boones read as a family with history
+    # rather than one that has just started: two past, one active.
+    boones_two_years_ago = Occasion(
+        family_id=boones.id,
+        name="Christmas 2024",
+        created_by_id=tom.id,
+        is_archived=True,
+    )
     extended_christmas = Occasion(
         family_id=extended.id, name="Christmas 2026", created_by_id=carol.id
     )
@@ -313,7 +334,13 @@ def seed(db, password: str) -> None:
         family_id=extended.id, name="Gran's 80th", created_by_id=carol.id
     )
     db.add_all(
-        [boones_christmas, boones_last_year, extended_christmas, extended_birthday]
+        [
+            boones_christmas,
+            boones_last_year,
+            boones_two_years_ago,
+            extended_christmas,
+            extended_birthday,
+        ]
     )
     db.flush()
 
@@ -327,6 +354,10 @@ def seed(db, password: str) -> None:
     db.add(ListOccasionShare(list_id=tom_christmas.id, occasion_id=boones_christmas.id))
     db.add(ListOccasionShare(list_id=tom_christmas.id, occasion_id=extended_christmas.id))
     db.add(ListOccasionShare(list_id=dave_wishlist.id, occasion_id=extended_christmas.id))
+    # All three Boones Christmases, which is what makes `suggested` narrow to
+    # the active one while `claim_options` still offers the two past ones.
+    for occasion in (boones_christmas, boones_last_year, boones_two_years_ago):
+        db.add(ListOccasionShare(list_id=standing_list.id, occasion_id=occasion.id))
 
     christmas = Folder(owner_id=tom.id, name="Christmas 2026 Shopping",
                            description="Everyone I'm buying for")
@@ -367,7 +398,7 @@ def main() -> None:
             sys.exit(1)
 
         seed(db, args.password)
-        print("Seeded 5 users, 10 lists, 3 families, 4 occasions, 2 folders.")
+        print("Seeded 5 users, 11 lists, 3 families, 5 occasions, 2 folders.")
         print(f"Log in as any of: {', '.join(SEED_EMAILS)}")
         print(f"Password: {args.password}")
     finally:

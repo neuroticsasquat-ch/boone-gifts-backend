@@ -16,6 +16,10 @@ from app.models.gift import Gift
 from app.models.gift_list import GiftList
 
 
+def get_claim(db: Session, claim_id: int) -> Claim | None:
+    return db.get(Claim, claim_id)
+
+
 def get_claim_for_gift(db: Session, gift_id: int) -> Claim | None:
     return db.execute(
         select(Claim).where(Claim.gift_id == gift_id)

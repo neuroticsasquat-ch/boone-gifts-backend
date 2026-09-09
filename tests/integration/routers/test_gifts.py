@@ -146,10 +146,15 @@ def test_claim_gift(client, admin_user, admin_headers, shared_list, db):
         f"/lists/{shared_list.id}/gifts/{gift.id}/claim",
         headers=admin_headers,
     )
-    assert response.status_code == 200
+    # 201: the claim is a row now, and the response states the occasion it was
+    # filed under, so a client is never left guessing (NEU-1269 §3.1).
+    assert response.status_code == 201
     data = response.json()
     assert data["claimed_by_id"] == admin_user.id
     assert data["claimed_at"] is not None
+    # A directly shared list is shared to no occasion, so there is nothing to
+    # file under.
+    assert data["occasion_id"] is None
 
 
 def test_claim_gift_already_claimed(client, admin_user, admin_headers, shared_list, db):
@@ -376,7 +381,7 @@ def test_concurrent_claims_exactly_one_wins():
     with test_engine.connect() as post_conn:
         _cleanup(post_conn)
 
-    assert codes == [200, 409], f"Expected [200, 409] but got {codes}"
+    assert codes == [201, 409], f"Expected [201, 409] but got {codes}"
 
 
 def test_claim_gift_on_archived_list(client, admin_user, admin_headers, shared_list, db):

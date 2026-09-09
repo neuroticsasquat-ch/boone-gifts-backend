@@ -103,7 +103,7 @@ def test_family_member_can_claim(client, matrix):
         f"/lists/{matrix.list_id}/gifts/{matrix.gift_id}/claim",
         headers=_headers(matrix.b),
     )
-    assert resp.status_code == 200
+    assert resp.status_code == 201
     assert resp.json()["claimed_by_id"] == matrix.b.id
 
 

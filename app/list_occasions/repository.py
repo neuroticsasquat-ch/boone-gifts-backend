@@ -201,3 +201,32 @@ def delete_folder_items_for_users(
         )
     )
     db.flush()
+
+
+def get_shared_occasions_for_member(
+    db: Session, list_id: int, user_id: int
+) -> list[tuple[Occasion, Family]]:
+    """Every occasion the list is shared to whose family `user_id` belongs to,
+    each with that family — the raw material for both claim-filing sets
+    (NEU-1269 §2).
+
+    Archived occasions are included: narrowing to active is a decision the
+    caller makes for `suggested` alone, and `allowed` has to stay wide or a
+    misfiled late claim could never be moved back.
+
+    One query per list, not per gift.
+    """
+    return list(
+        db.execute(
+            select(Occasion, Family)
+            .join(ListOccasionShare, ListOccasionShare.occasion_id == Occasion.id)
+            .join(Family, Family.id == Occasion.family_id)
+            .join(
+                FamilyMember,
+                (FamilyMember.family_id == Occasion.family_id)
+                & (FamilyMember.user_id == user_id),
+            )
+            .where(ListOccasionShare.list_id == list_id)
+            .order_by(Family.name, Occasion.name, Occasion.id)
+        ).all()
+    )
