@@ -273,6 +273,34 @@ def test_rollup_counts_bought_but_never_guesses_at_an_unrecorded_amount(
     assert budget["unpriced_count"] == 2
 
 
+def test_an_amount_survives_unticking_and_stays_in_the_spend(
+    client, db, member_user, member_headers, occasion, gift_list
+):
+    """`spent` counts recorded money; the counts describe shopping.
+
+    Unticking keeps `amount_paid` so re-ticking need not retype it
+    (`app/gifts/service.py:unpurchase_gift`), and that money stays in the
+    total: it left the claimer's pocket either way, and dropping it silently —
+    with no `unpriced_count` to disclose the gap — is the one failure a budget
+    line must not have. `bought_count` is what moves.
+    """
+    claim = _claim(
+        db, gift_list, member_user, "Shoes",
+        occasion=occasion, purchased_at=BOUGHT, amount_paid=Decimal("85.00"),
+    )
+    claim.purchased_at = None
+    db.flush()
+
+    budget = client.get(
+        f"/occasions/{occasion.id}/shopping", headers=member_headers
+    ).json()["budget"]
+
+    assert budget["spent"] == "85.00"
+    assert budget["bought_count"] == 0
+    assert budget["unpriced_count"] == 0
+    assert budget["total_count"] == 1
+
+
 def test_rollup_reports_an_overspend_rather_than_hiding_it(
     client, db, member_user, member_headers, occasion, gift_list
 ):

@@ -285,6 +285,10 @@ money and never see any.
 - **`spent` sums `amount_paid` alone.** A purchase with no amount recorded counts toward
   `bought_count` and toward `unpriced_count` and **never** toward `spent`, so an understated total
   reads as an understatement rather than as fact. It is never seeded from the owner's asking price
+- **`spent` counts recorded money; the counts describe shopping** — different columns on purpose. An
+  amount recorded on a claim that is not ticked bought (via `PATCH /claims/{id}`, or left behind by
+  unticking) still counts as spent while `bought_count` does not move. Gating the money on
+  `purchased_at` would drop it from the total silently, with no `unpriced_count` disclosing the gap
 - The counts live in `app/claims/repository.py` (`get_spend_for_occasion`, `get_spend_for_folder`)
   beside the shopping queries they must agree with; `app/budgets/` holds the budget row and the
   assembly. `app/budgets/service.py` deliberately knows nothing about who may read an occasion or a

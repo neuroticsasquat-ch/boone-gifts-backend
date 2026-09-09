@@ -225,6 +225,16 @@ def _spend_select():
     counted as bought and reported as unpriced, but never guessed at from the
     owner's asking price. That is what lets a client state an understated total
     as an understatement (project spec §7).
+
+    **`spent` counts recorded money; the two counts describe shopping.** They
+    are deliberately driven off different columns, so an amount recorded on a
+    claim that is not ticked bought — by `PATCH /claims/{id}`, or by unticking,
+    which keeps the amount so re-ticking need not retype it — still counts as
+    spent while `bought_count` does not move. Gating the money on
+    `purchased_at` instead would drop that amount out of the total silently,
+    with no `unpriced_count` to disclose it: the money left the claimer's
+    pocket either way, and a total that quietly omits it is the one failure a
+    budget line must not have.
     """
     return select(
         func.count(Claim.id).label("total_count"),
