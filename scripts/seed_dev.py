@@ -3,9 +3,11 @@
 The states that matter are the ones a single account cannot produce on its own:
 a list shared directly with you, a list that reaches you only through a family,
 a list that reaches you both ways at once, a list you keep for someone with no
-account, a pending connection request, a simple-mode user, and a shared account
-with two people and a list apiece. Reproducing those by hand through the UI takes
-five logins, so this builds them in one pass.
+account, a pending connection request, a shared account with two people and
+a list apiece, and a family with two archived Christmases behind it plus one
+active — the state that decides whether claiming prompts or files silently.
+Reproducing those by hand through the UI takes five logins, so this builds them
+in one pass.
 
     docker compose exec api python -m scripts.seed_dev            # seed
     docker compose exec api python -m scripts.seed_dev --reset    # re-seed
@@ -23,33 +25,42 @@ destructive flag to guard.
 import argparse
 import sys
 from datetime import datetime, timezone
+from decimal import Decimal
 
 from sqlalchemy import select
 
 from app.database import Base, SessionLocal, engine
+from app.models.budget import Budget
+from app.models.claim import Claim
 from app.models.account_person import AccountPerson
-from app.models.occasion import Occasion
-from app.models.occasion_item import OccasionItem
+from app.models.folder import Folder
+from app.models.folder_item import FolderItem
 from app.models.connection import Connection
 from app.models.family import Family
 from app.models.family_invite import FamilyInvite
 from app.models.family_member import FamilyMember
 from app.models.gift import Gift
 from app.models.gift_list import GiftList
-from app.models.list_family_share import ListFamilyShare
+from app.models.list_occasion_share import ListOccasionShare
 from app.models.list_share import ListShare
+from app.models.occasion import Occasion
 from app.models.user import User
 
 DEFAULT_PASSWORD = "devpass123"
 
-# (email, name, role, simple_mode)
+# "bought, but the claimer skipped the amount" — distinct from not bought at
+# all, and the case a budget has to report as an understatement rather than a
+# fact. A sentinel because None already means "not bought".
+SKIPPED = object()
+
+# (email, name, role)
 SEED_USERS = [
-    ("tom@example.com", "Tom Boone", "admin", False),
-    ("jane@example.com", "Jane Boone", "member", False),
-    ("mom@example.com", "Carol Boone", "member", False),
+    ("tom@example.com", "Tom Boone", "admin"),
+    ("jane@example.com", "Jane Boone", "member"),
+    ("mom@example.com", "Carol Boone", "member"),
     # Gran and Grandpa share this login — the shared-account fixture.
-    ("gran@example.com", "Gran Boone", "member", True),
-    ("cousin@example.com", "Dave Boone", "member", False),
+    ("gran@example.com", "Gran Boone", "member"),
+    ("cousin@example.com", "Dave Boone", "member"),
 ]
 SEED_EMAILS = [email for email, *_ in SEED_USERS]
 
@@ -75,34 +86,62 @@ def purge(db) -> int:
             select(Family.id).where(Family.created_by_id.in_(user_ids))
         ).scalars()
     )
-    occasion_ids = set(
+    folder_ids = set(
         db.execute(
-            select(Occasion.id).where(Occasion.owner_id.in_(user_ids))
+            select(Folder.id).where(Folder.owner_id.in_(user_ids))
         ).scalars()
     )
 
-    # A fixture user may have claimed a gift on a list this purge is not
-    # deleting, and a non-fixture list may be shared with them or into one of
-    # their families — so each table is cleared by both routes, not just by list.
+    # A fixture user may hold a claim on a list this purge is not deleting, and a
+    # non-fixture list may be shared with them or into one of their families — so
+    # claims and shares are cleared by both routes. Gifts go by list alone: a
+    # foreign gift is not ours to delete just because a fixture user claimed it.
     if list_ids or user_ids:
+        # Claims hold a foreign key into `gifts`, so they go first — by either
+        # route, since a fixture user's claim may sit on a non-fixture gift.
+        gift_ids = set(
+            db.execute(select(Gift.id).where(Gift.list_id.in_(list_ids))).scalars()
+        )
+        db.query(Claim).filter(
+            Claim.gift_id.in_(gift_ids) | Claim.user_id.in_(user_ids)
+        ).delete(synchronize_session=False)
         db.query(Gift).filter(
-            Gift.list_id.in_(list_ids) | Gift.claimed_by_id.in_(user_ids)
+            Gift.list_id.in_(list_ids)
         ).delete(synchronize_session=False)
         db.query(ListShare).filter(
             ListShare.list_id.in_(list_ids) | ListShare.user_id.in_(user_ids)
         ).delete(synchronize_session=False)
-    if list_ids or family_ids:
-        db.query(ListFamilyShare).filter(
-            ListFamilyShare.list_id.in_(list_ids)
-            | ListFamilyShare.family_id.in_(family_ids)
+    occasion_ids = set(
+        db.execute(
+            select(Occasion.id).where(Occasion.family_id.in_(family_ids))
+        ).scalars()
+    ) if family_ids else set()
+    # Budgets point at the occasions and folders below and at the users above,
+    # so they go before all three. By either route: a fixture user may budget a
+    # non-fixture occasion, and a non-fixture user may budget nothing of ours,
+    # but a fixture folder they somehow reached would still block its delete.
+    if occasion_ids or folder_ids or user_ids:
+        db.query(Budget).filter(
+            Budget.occasion_id.in_(occasion_ids)
+            | Budget.folder_id.in_(folder_ids)
+            | Budget.user_id.in_(user_ids)
         ).delete(synchronize_session=False)
-    if occasion_ids or list_ids:
-        db.query(OccasionItem).filter(
-            OccasionItem.occasion_id.in_(occasion_ids)
-            | OccasionItem.list_id.in_(list_ids)
+    if list_ids or occasion_ids:
+        db.query(ListOccasionShare).filter(
+            ListOccasionShare.list_id.in_(list_ids)
+            | ListOccasionShare.occasion_id.in_(occasion_ids)
         ).delete(synchronize_session=False)
     if occasion_ids:
         db.query(Occasion).filter(Occasion.id.in_(occasion_ids)).delete(
+            synchronize_session=False
+        )
+    if folder_ids or list_ids:
+        db.query(FolderItem).filter(
+            FolderItem.folder_id.in_(folder_ids)
+            | FolderItem.list_id.in_(list_ids)
+        ).delete(synchronize_session=False)
+    if folder_ids:
+        db.query(Folder).filter(Folder.id.in_(folder_ids)).delete(
             synchronize_session=False
         )
     if family_ids or user_ids:
@@ -139,10 +178,8 @@ def seed(db, password: str) -> None:
     now = datetime.now(timezone.utc)
 
     users: dict[str, User] = {}
-    for email, name, role, simple_mode in SEED_USERS:
-        user = User(
-            email=email, name=name, role=role, simple_mode=simple_mode, password_hash=""
-        )
+    for email, name, role in SEED_USERS:
+        user = User(email=email, name=name, role=role, password_hash="")
         user.set_password(password)
         db.add(user)
         users[email] = user
@@ -167,19 +204,28 @@ def seed(db, password: str) -> None:
         db.add(gift_list)
         return gift_list
 
-    def add_gifts(gift_list, names, claimed_by=None):
+    def add_gifts(gift_list, names, claimed_by=None, bought=None):
         """Claims land on the first gift only, so every list that has claims also
-        has unclaimed gifts to look at."""
+        has unclaimed gifts to look at.
+
+        `bought` is the amount the claimer recorded paying. Pass a Decimal for a
+        purchase with a price on it, `SKIPPED` for one where they skipped the
+        amount, and leave it None for a claim that has not been bought yet — the
+        three states a budget rollup has to tell apart."""
         for index, name in enumerate(names):
-            claimed = claimed_by is not None and index == 0
-            db.add(
-                Gift(
-                    list_id=gift_list.id,
-                    name=name,
-                    claimed_by_id=claimed_by.id if claimed else None,
-                    claimed_at=now if claimed else None,
+            gift = Gift(list_id=gift_list.id, name=name)
+            db.add(gift)
+            if claimed_by is not None and index == 0:
+                db.flush()
+                db.add(
+                    Claim(
+                        gift_id=gift.id,
+                        user_id=claimed_by.id,
+                        claimed_at=now,
+                        purchased_at=now if bought is not None else None,
+                        amount_paid=bought if bought is not SKIPPED else None,
+                    )
                 )
-            )
 
     tom_wishlist = new_list(tom, "Tom's Wishlist", "Ideas for me")
     tom_christmas = new_list(tom, "Christmas 2026", "What I want this year")
@@ -202,18 +248,39 @@ def seed(db, password: str) -> None:
     kitchen_list = new_list(gran, "Ideas for the Kitchen",
                             "For the house, not for either of us")
     dave_wishlist = new_list(dave, "Dave's Wishlist")
+    # The year-three case: a standing list shared to every Christmas the Boones
+    # have ever run, two of them archived. It is the only fixture that proves a
+    # claim files silently instead of prompting once a family has history, and
+    # it is invisible in a fresh database — every occasion there is active.
+    standing_list = new_list(
+        carol, "Carol's Standing Wishlist", "Shared to three Christmases, two past"
+    )
     db.flush()
 
     add_gifts(tom_wishlist, ["Cast iron skillet", "Running shoes", "Coffee grinder"])
     add_gifts(tom_christmas, ["Wool socks", "Book: Piranesi"])
     add_gifts(beths_list, ["Puzzle", "Slippers"])
+    # Tom's three claim states, so every budget case is reachable by hand: taken
+    # but not yet bought, bought with an amount, and bought with the amount
+    # skipped — the last of which a rollup must report as an understatement.
     add_gifts(jane_wishlist, ["Headphones", "Gardening gloves", "Tea sampler"],
               claimed_by=tom)
-    add_gifts(carol_wishlist, ["Scarf", "Cookbook"], claimed_by=tom)
+    add_gifts(carol_wishlist, ["Scarf", "Cookbook"],
+              claimed_by=tom, bought=Decimal("64.99"))
     add_gifts(gran_list, ["Cardigan", "Bird feeder"])
-    add_gifts(grandpa_list, ["Fishing reel", "Reading lamp"])
+    # Claimed and filed under an *archived* Christmas, which is the only way to
+    # see by hand that an archived occasion still serves its shopping tab.
+    add_gifts(grandpa_list, ["Fishing reel", "Reading lamp"],
+              claimed_by=tom, bought=Decimal("42.00"))
     add_gifts(kitchen_list, ["Stand mixer", "Knife block"])
-    add_gifts(dave_wishlist, ["Board game", "Whiskey glasses"])
+    # Reaches Tom only through the Extended family's occasion, so it is also the
+    # claim whose filing NEU-1269 has to resolve without a direct share.
+    add_gifts(dave_wishlist, ["Board game", "Whiskey glasses"],
+              claimed_by=tom, bought=SKIPPED)
+    # Left unclaimed on purpose: claiming one as Tom is how the silent filing is
+    # checked by hand, and the picker's "show past occasions" needs the two
+    # archived Christmases behind it.
+    add_gifts(standing_list, ["Umbrella", "Desk lamp", "Wool blanket"])
 
     # Dave's request stays pending so the connection-request UI has something to
     # render; the rest are accepted.
@@ -227,7 +294,10 @@ def seed(db, password: str) -> None:
 
     boones = Family(name="Boone Family", created_by_id=tom.id)
     extended = Family(name="Extended Family", created_by_id=carol.id)
-    db.add_all([boones, extended])
+    # Work Friends deliberately never gets an occasion: it is the family the
+    # sharing control has to render disabled, with the reason given.
+    work_friends = Family(name="Work Friends", created_by_id=tom.id)
+    db.add_all([boones, extended, work_friends])
     db.flush()
     # Tom is organizer of one family and a plain member of the other, and belongs
     # to both — so "which family did this list come from?" has a real answer, and
@@ -238,6 +308,8 @@ def seed(db, password: str) -> None:
         db.add(FamilyMember(family_id=boones.id, user_id=user.id, role=role))
     for user, role in [(carol, "organizer"), (tom, "member"), (dave, "member")]:
         db.add(FamilyMember(family_id=extended.id, user_id=user.id, role=role))
+    for user, role in [(tom, "organizer"), (dave, "member")]:
+        db.add(FamilyMember(family_id=work_friends.id, user_id=user.id, role=role))
 
     # Direct shares both ways, so "shared with me" and "shared by me" are both
     # populated for Tom.
@@ -248,24 +320,105 @@ def seed(db, password: str) -> None:
     # rule: one row in the shared scope, labelled with Carol, not the family.
     db.add(ListShare(list_id=carol_wishlist.id, user_id=tom.id))
 
-    # Family shares. Gran's and Dave's lists reach Tom *only* this way — they are
-    # the lists that prove the family/direct split.
-    db.add(ListFamilyShare(list_id=carol_wishlist.id, family_id=boones.id))
-    db.add(ListFamilyShare(list_id=gran_list.id, family_id=boones.id))
-    db.add(ListFamilyShare(list_id=grandpa_list.id, family_id=boones.id))
-    db.add(ListFamilyShare(list_id=kitchen_list.id, family_id=boones.id))
-    db.add(ListFamilyShare(list_id=tom_christmas.id, family_id=boones.id))
-    db.add(ListFamilyShare(list_id=tom_christmas.id, family_id=extended.id))
-    db.add(ListFamilyShare(list_id=dave_wishlist.id, family_id=extended.id))
+    # Occasions, in the three states the sharing control has to render: one
+    # active (the single-click case), several active (the select case), and none
+    # at all (the disabled row). The archived one exists to prove that archiving
+    # blocks new shares without withdrawing the shares already made.
+    boones_christmas = Occasion(
+        family_id=boones.id, name="Christmas 2026", created_by_id=tom.id
+    )
+    boones_last_year = Occasion(
+        family_id=boones.id,
+        name="Christmas 2025",
+        created_by_id=tom.id,
+        is_archived=True,
+    )
+    # A second archived Christmas, so the Boones read as a family with history
+    # rather than one that has just started: two past, one active.
+    boones_two_years_ago = Occasion(
+        family_id=boones.id,
+        name="Christmas 2024",
+        created_by_id=tom.id,
+        is_archived=True,
+    )
+    extended_christmas = Occasion(
+        family_id=extended.id, name="Christmas 2026", created_by_id=carol.id
+    )
+    extended_birthday = Occasion(
+        family_id=extended.id, name="Gran's 80th", created_by_id=carol.id
+    )
+    db.add_all(
+        [
+            boones_christmas,
+            boones_last_year,
+            boones_two_years_ago,
+            extended_christmas,
+            extended_birthday,
+        ]
+    )
+    db.flush()
 
-    christmas = Occasion(owner_id=tom.id, name="Christmas 2026 Shopping",
+    # Occasion shares. Gran's and Dave's lists reach Tom *only* this way — they
+    # are the lists that prove the occasion/direct split. Grandpa's reaches him
+    # only through an archived occasion, which must not change that.
+    db.add(ListOccasionShare(list_id=carol_wishlist.id, occasion_id=boones_christmas.id))
+    db.add(ListOccasionShare(list_id=gran_list.id, occasion_id=boones_christmas.id))
+    db.add(ListOccasionShare(list_id=grandpa_list.id, occasion_id=boones_last_year.id))
+    db.add(ListOccasionShare(list_id=kitchen_list.id, occasion_id=boones_christmas.id))
+    db.add(ListOccasionShare(list_id=tom_christmas.id, occasion_id=boones_christmas.id))
+    db.add(ListOccasionShare(list_id=tom_christmas.id, occasion_id=extended_christmas.id))
+    db.add(ListOccasionShare(list_id=dave_wishlist.id, occasion_id=extended_christmas.id))
+    # All three Boones Christmases, which is what makes `suggested` narrow to
+    # the active one while `claim_options` still offers the two past ones.
+    for occasion in (boones_christmas, boones_last_year, boones_two_years_ago):
+        db.add(ListOccasionShare(list_id=standing_list.id, occasion_id=occasion.id))
+
+    # Tom's filings, applied here because the claims above predate the occasions.
+    # Every shopping tab needs something on it: Boone Christmas gets a purchase
+    # with an amount, Extended Christmas one where he skipped it, and last
+    # year's archived Christmas one that must still be served. His claim on
+    # Jane's list is deliberately left unfiled — a directly shared list belongs
+    # to no occasion, and the folder tab is its only route (project spec §9.4).
+    def file_under(gift_list, occasion):
+        gift_ids = select(Gift.id).where(Gift.list_id == gift_list.id)
+        db.query(Claim).filter(
+            Claim.gift_id.in_(gift_ids), Claim.user_id == tom.id
+        ).update({"occasion_id": occasion.id}, synchronize_session=False)
+
+    file_under(carol_wishlist, boones_christmas)
+    file_under(grandpa_list, boones_last_year)
+    file_under(dave_wishlist, extended_christmas)
+
+    christmas = Folder(owner_id=tom.id, name="Christmas 2026 Shopping",
                            description="Everyone I'm buying for")
-    birthdays = Occasion(owner_id=tom.id, name="Kids' Birthdays")
+    birthdays = Folder(owner_id=tom.id, name="Kids' Birthdays")
     db.add_all([christmas, birthdays])
     db.flush()
     for gift_list in (jane_wishlist, carol_wishlist, gran_list):
-        db.add(OccasionItem(occasion_id=christmas.id, list_id=gift_list.id))
-    db.add(OccasionItem(occasion_id=birthdays.id, list_id=beths_list.id))
+        db.add(FolderItem(folder_id=christmas.id, list_id=gift_list.id))
+    db.add(FolderItem(folder_id=birthdays.id, list_id=beths_list.id))
+
+    # Tom's budgets, chosen against the spends above so every state a budget
+    # line can be in is on screen somewhere: under target, exactly at it, over
+    # it, and — the one that matters most — a total that is honestly incomplete.
+    # Every one is Tom's own; no other fixture user gets a budget, because a
+    # second budget on the same occasion is only ever visible to its own owner.
+    db.add_all([
+        # Under: 64.99 of 100.00 spent, 35.01 left.
+        Budget(user_id=tom.id, occasion_id=boones_christmas.id,
+               amount=Decimal("100.00")),
+        # Exactly at target: 42.00 of 42.00, nothing left and nothing overspent.
+        Budget(user_id=tom.id, occasion_id=boones_last_year.id,
+               amount=Decimal("42.00")),
+        # Bought, but the amount was skipped: 0.00 of 25.00 spent with one
+        # unpriced purchase, so the line must read as an understatement rather
+        # than as an untouched budget.
+        Budget(user_id=tom.id, occasion_id=extended_christmas.id,
+               amount=Decimal("25.00")),
+        # Over: the folder holds Carol's list, so 64.99 lands against 50.00 and
+        # `remaining` goes negative. A budget is a target, not a limit.
+        Budget(user_id=tom.id, folder_id=christmas.id, amount=Decimal("50.00")),
+    ])
 
     db.commit()
 
@@ -297,7 +450,7 @@ def main() -> None:
             sys.exit(1)
 
         seed(db, args.password)
-        print("Seeded 5 users, 10 lists, 2 families, 2 occasions.")
+        print("Seeded 5 users, 11 lists, 3 families, 5 occasions, 2 folders.")
         print(f"Log in as any of: {', '.join(SEED_EMAILS)}")
         print(f"Password: {args.password}")
     finally:

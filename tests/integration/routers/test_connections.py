@@ -270,6 +270,9 @@ def test_disconnect_revokes_shares(
 def test_disconnect_unclaims_gifts(
     client, member_user, member_headers, admin_user, connection, db
 ):
+    from datetime import datetime, timezone
+
+    from app.models.claim import Claim
     from app.models.gift_list import GiftList
     from app.models.gift import Gift
     from app.models.list_share import ListShare
@@ -282,12 +285,14 @@ def test_disconnect_unclaims_gifts(
     db.add(share)
     db.flush()
 
-    gift = Gift(
-        list_id=gift_list.id,
-        name="Claimed Gift",
-        claimed_by_id=admin_user.id,
-    )
+    gift = Gift(list_id=gift_list.id, name="Claimed Gift")
     db.add(gift)
+    db.flush()
+    db.add(
+        Claim(
+            gift_id=gift.id, user_id=admin_user.id, claimed_at=datetime.now(timezone.utc)
+        )
+    )
     db.flush()
 
     response = client.delete(
@@ -296,18 +301,18 @@ def test_disconnect_unclaims_gifts(
     )
     assert response.status_code == 204
 
+    # The claim row goes, so the purchase state and amount go with it.
     db.refresh(gift)
-    assert gift.claimed_by_id is None
-    assert gift.claimed_at is None
+    assert gift.claim is None
 
 
-def test_disconnect_removes_occasion_items(
+def test_disconnect_removes_folder_items(
     client, member_user, member_headers, admin_user, connection, db
 ):
     from app.models.gift_list import GiftList
     from app.models.list_share import ListShare
-    from app.models.occasion import Occasion
-    from app.models.occasion_item import OccasionItem
+    from app.models.folder import Folder
+    from app.models.folder_item import FolderItem
 
     admin_list = GiftList(name="Admin's List", owner_id=admin_user.id)
     db.add(admin_list)
@@ -317,14 +322,14 @@ def test_disconnect_removes_occasion_items(
     db.add(share)
     db.flush()
 
-    member_occasion = Occasion(
-        name="Member Occasion", owner_id=member_user.id
+    member_folder = Folder(
+        name="Member Folder", owner_id=member_user.id
     )
-    db.add(member_occasion)
+    db.add(member_folder)
     db.flush()
 
-    item = OccasionItem(
-        occasion_id=member_occasion.id, list_id=admin_list.id
+    item = FolderItem(
+        folder_id=member_folder.id, list_id=admin_list.id
     )
     db.add(item)
     db.flush()
@@ -338,9 +343,9 @@ def test_disconnect_removes_occasion_items(
     from sqlalchemy import select
 
     remaining = db.execute(
-        select(OccasionItem).where(
-            OccasionItem.occasion_id == member_occasion.id,
-            OccasionItem.list_id == admin_list.id,
+        select(FolderItem).where(
+            FolderItem.folder_id == member_folder.id,
+            FolderItem.list_id == admin_list.id,
         )
     ).scalar_one_or_none()
     assert remaining is None

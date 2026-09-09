@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+from pydantic import ValidationError
 
 from app.lists import service
 from app.models.gift_list import GiftList
@@ -11,6 +12,7 @@ from app.schemas.gift_list import (
     GiftListDetailViewer,
     GiftListRead,
     SharedVia,
+    SharedViaFamily,
 )
 
 
@@ -32,26 +34,33 @@ def _make_gift_list(
     # person/recipient exclusivity of the resulting row.
     gl.recipient_name = None
     gl.account_person_id = None
+    gl.account_person_name = None
+    gl.is_archived = False
+    gl.gift_count = 0
+    gl.shared_via = None
+    gl.created_at = datetime(2026, 1, 1)
+    gl.updated_at = datetime(2026, 1, 1)
     return gl
 
 
 REPO = "app.lists.service.repo"
-LIST_FAMILY_SVC = "app.lists.service.list_family_service"
+CLAIMS_REPO = "app.lists.service.claims_repo"
+LIST_OCCASION_SVC = "app.lists.service.list_occasion_service"
 
 
 # --- create_list ---
 
 
-@patch(f"{LIST_FAMILY_SVC}.set_grants_on_create")
+@patch(f"{LIST_OCCASION_SVC}.set_shares_on_create")
 @patch(f"{REPO}.create_list")
-def test_create_list(mock_create, mock_grants):
+def test_create_list(mock_create, mock_shares):
     db = MagicMock()
-    owner = SimpleNamespace(id=1, simple_mode=False)
+    owner = SimpleNamespace(id=1)
     expected = _make_gift_list()
     mock_create.return_value = expected
 
     result = service.create_list(
-        db, name="My List", description="A test list", owner=owner, family_ids=[7]
+        db, name="My List", description="A test list", owner=owner, occasion_ids=[7]
     )
 
     mock_create.assert_called_once_with(
@@ -62,20 +71,20 @@ def test_create_list(mock_create, mock_grants):
         recipient_name=None,
         account_person_id=None,
     )
-    mock_grants.assert_called_once_with(db, expected, owner, [7])
+    mock_shares.assert_called_once_with(db, expected, owner, [7])
     assert result == expected
 
 
-@patch(f"{LIST_FAMILY_SVC}.set_grants_on_create")
+@patch(f"{LIST_OCCASION_SVC}.set_shares_on_create")
 @patch(f"{REPO}.create_list")
-def test_create_list_without_family_ids_passes_empty_list(mock_create, mock_grants):
+def test_create_list_without_occasion_ids_passes_empty_list(mock_create, mock_shares):
     db = MagicMock()
-    owner = SimpleNamespace(id=1, simple_mode=False)
+    owner = SimpleNamespace(id=1)
     mock_create.return_value = _make_gift_list()
 
     service.create_list(db, name="My List", description=None, owner=owner)
 
-    mock_grants.assert_called_once_with(db, mock_create.return_value, owner, [])
+    mock_shares.assert_called_once_with(db, mock_create.return_value, owner, [])
 
 
 # --- get_lists (filter logic) ---
@@ -96,7 +105,9 @@ def test_get_lists_owned(mock_get_owned):
 @patch(f"{REPO}.get_shared_lists_with_source")
 def test_get_lists_shared(mock_get_shared):
     db = MagicMock()
-    mock_get_shared.return_value = [(_make_gift_list(id=3, owner_id=2), "user", 2, "Jane")]
+    mock_get_shared.return_value = [
+        (_make_gift_list(id=3, owner_id=2), "user", 2, "Jane", None, None)
+    ]
 
     result = service.get_lists(db, user_id=1, filter="shared")
 
@@ -119,27 +130,39 @@ def test_get_lists_all(mock_get_all):
 # --- get_list (owner vs viewer) ---
 
 
+@patch("app.lists.service.claim_service.occasion_sets")
 @patch("app.lists.service.GiftListDetailOwner.model_validate")
-def test_get_list_as_owner(mock_validate):
+def test_get_list_as_owner(mock_validate, mock_sets):
     gift_list = _make_gift_list(owner_id=5)
     expected = MagicMock(spec=GiftListDetailOwner)
     mock_validate.return_value = expected
 
-    result = service.get_list(gift_list, user_id=5)
+    result = service.get_list(MagicMock(), gift_list, SimpleNamespace(id=5))
 
     mock_validate.assert_called_once_with(gift_list)
     assert result == expected
+    # The owner's detail is never even asked what a claim could be filed under.
+    mock_sets.assert_not_called()
 
 
+@patch("app.lists.service.claim_service.occasion_sets")
 @patch("app.lists.service.GiftListDetailViewer.model_validate")
-def test_get_list_as_viewer(mock_validate):
+def test_get_list_as_viewer(mock_validate, mock_sets):
     gift_list = _make_gift_list(owner_id=5)
     expected = MagicMock(spec=GiftListDetailViewer)
     mock_validate.return_value = expected
+    allowed, suggested = ["allowed"], ["suggested"]
+    mock_sets.return_value = (allowed, suggested)
+    db, viewer = MagicMock(), SimpleNamespace(id=10)
 
-    result = service.get_list(gift_list, user_id=10)
+    result = service.get_list(db, gift_list, viewer)
 
     mock_validate.assert_called_once_with(gift_list)
+    mock_sets.assert_called_once_with(db, gift_list, viewer)
+    # candidates is `suggested`, options is `allowed` — swapping them would
+    # prompt on every claim and hide the correction path.
+    assert result.claim_candidates == suggested
+    assert result.claim_options == allowed
     assert result == expected
 
 
@@ -163,7 +186,7 @@ def test_update_list(mock_update):
 
 
 @patch(f"{REPO}.delete_list")
-@patch(f"{REPO}.has_claimed_gifts", return_value=False)
+@patch(f"{CLAIMS_REPO}.has_claimed_gifts", return_value=False)
 def test_delete_list(mock_has_claims, mock_delete):
     db = MagicMock()
     gift_list = _make_gift_list()
@@ -174,7 +197,7 @@ def test_delete_list(mock_has_claims, mock_delete):
     mock_delete.assert_called_once_with(db, gift_list)
 
 
-@patch(f"{REPO}.has_claimed_gifts", return_value=True)
+@patch(f"{CLAIMS_REPO}.has_claimed_gifts", return_value=True)
 def test_delete_list_blocked_by_claims(mock_has_claims):
     from app.services.exceptions import ConflictError
 
@@ -211,10 +234,39 @@ def _read_source(shared_via=None):
 
 
 def test_gift_list_read_includes_shared_via():
-    obj = _read_source(shared_via={"kind": "family", "id": 1, "name": "Boone Family"})
+    obj = _read_source(
+        shared_via={
+            "kind": "occasion",
+            "id": 3,
+            "name": "Christmas 2026",
+            "family": {"id": 1, "name": "Boone Family"},
+        }
+    )
     result = GiftListRead.model_validate(obj)
-    assert result.shared_via.kind == "family"
-    assert (result.shared_via.id, result.shared_via.name) == (1, "Boone Family")
+    assert result.shared_via.kind == "occasion"
+    assert (result.shared_via.id, result.shared_via.name) == (3, "Christmas 2026")
+    assert (result.shared_via.family.id, result.shared_via.family.name) == (
+        1,
+        "Boone Family",
+    )
+
+
+def test_shared_via_occasion_arm_requires_its_family():
+    """The spec's occasion arm always carries `family: {id, name}`; a null one
+    would be a shape the client cannot render."""
+    with pytest.raises(ValidationError):
+        SharedVia(kind="occasion", id=3, name="Christmas 2026")
+
+
+def test_shared_via_user_arm_refuses_a_family():
+    """There is no occasion behind a direct share, so there is no family either."""
+    with pytest.raises(ValidationError):
+        SharedVia(
+            kind="user",
+            id=2,
+            name="Jane Boone",
+            family=SharedViaFamily(id=1, name="Boone Family"),
+        )
 
 
 def test_gift_list_read_shared_via_defaults_none():
@@ -230,31 +282,41 @@ def test_gift_list_read_shared_via_defaults_none():
 def test_get_shared_lists_annotates_direct_share(mock_rows):
     db = MagicMock()
     gl = SimpleNamespace(id=10)
-    mock_rows.return_value = [(gl, "user", 2, "Jane Boone")]
+    mock_rows.return_value = [(gl, "user", 2, "Jane Boone", None, None)]
 
     result = service.get_shared_lists(db, user_id=5)
 
     mock_rows.assert_called_once_with(db, 5, archived=False)
     assert result == [gl]
+    # The direct arm carries no family — there is no occasion behind it.
     assert result[0].shared_via == SharedVia(kind="user", id=2, name="Jane Boone")
+    assert result[0].shared_via.family is None
 
 
 @patch(f"{REPO}.get_shared_lists_with_source")
-def test_get_shared_lists_annotates_family_grant(mock_rows):
+def test_get_shared_lists_annotates_occasion_share(mock_rows):
     db = MagicMock()
     gl = SimpleNamespace(id=10)
-    mock_rows.return_value = [(gl, "family", 1, "Boone Family")]
+    mock_rows.return_value = [(gl, "occasion", 3, "Christmas 2026", 1, "Boone Family")]
 
     result = service.get_shared_lists(db, user_id=5)
 
-    assert result[0].shared_via == SharedVia(kind="family", id=1, name="Boone Family")
+    assert result[0].shared_via == SharedVia(
+        kind="occasion",
+        id=3,
+        name="Christmas 2026",
+        family=SharedViaFamily(id=1, name="Boone Family"),
+    )
 
 
 @patch(f"{REPO}.get_shared_lists_with_source")
 def test_get_shared_lists_preserves_repository_order(mock_rows):
     db = MagicMock()
     gl1, gl2 = SimpleNamespace(id=10), SimpleNamespace(id=20)
-    mock_rows.return_value = [(gl1, "user", 2, "Jane"), (gl2, "family", 1, "Boones")]
+    mock_rows.return_value = [
+        (gl1, "user", 2, "Jane", None, None),
+        (gl2, "occasion", 3, "Christmas 2026", 1, "Boones"),
+    ]
 
     result = service.get_shared_lists(db, user_id=5)
 

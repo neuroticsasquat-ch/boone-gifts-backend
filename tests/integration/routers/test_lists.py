@@ -6,8 +6,9 @@ from app.dependencies import create_access_token
 from app.models.family import Family
 from app.models.family_member import FamilyMember
 from app.models.gift_list import GiftList
-from app.models.list_family_share import ListFamilyShare
+from app.models.list_occasion_share import ListOccasionShare
 from app.models.list_share import ListShare
+from app.models.occasion import Occasion
 from app.models.user import User
 
 
@@ -53,21 +54,28 @@ def family_world(db):
     db.add_all([l_u, l_p, l_p_arch, l_q])
     db.flush()
 
+    o1 = Occasion(family_id=f1.id, name="F1 Christmas", created_by_id=u.id)
+    o2 = Occasion(family_id=f2.id, name="F2 Christmas", created_by_id=u.id)
+    db.add_all([o1, o2])
+    db.flush()
+
     db.add(ListShare(list_id=l_p.id, user_id=u.id))  # L_p also manually shared with U
-    # Family visibility is an explicit per-(list, family) grant. These mirror what
-    # the owners would have opted into: P shares with both families, Q with F2.
+    # Family visibility is an explicit per-(list, occasion) share. These mirror
+    # what the owners would have opted into: P shares to both families'
+    # occasions, Q to F2's.
     db.add_all(
         [
-            ListFamilyShare(list_id=l_p.id, family_id=f1.id),
-            ListFamilyShare(list_id=l_p.id, family_id=f2.id),
-            ListFamilyShare(list_id=l_p_arch.id, family_id=f1.id),
-            ListFamilyShare(list_id=l_q.id, family_id=f2.id),
+            ListOccasionShare(list_id=l_p.id, occasion_id=o1.id),
+            ListOccasionShare(list_id=l_p.id, occasion_id=o2.id),
+            ListOccasionShare(list_id=l_p_arch.id, occasion_id=o1.id),
+            ListOccasionShare(list_id=l_q.id, occasion_id=o2.id),
         ]
     )
     db.flush()
 
     return SimpleNamespace(
-        u=u, p=p, q=q, f1=f1, f2=f2, l_u=l_u, l_p=l_p, l_p_arch=l_p_arch, l_q=l_q
+        u=u, p=p, q=q, f1=f1, f2=f2, o1=o1, o2=o2,
+        l_u=l_u, l_p=l_p, l_p_arch=l_p_arch, l_q=l_q,
     )
 
 
@@ -238,17 +246,26 @@ def test_filter_shared_returns_both_paths(client, family_world):
     assert "P's Archived" not in names  # archived excluded by default
 
 
-def test_filter_shared_labels_a_family_only_list_with_its_family(client, family_world):
+def test_filter_shared_labels_an_occasion_only_list_with_its_occasion(
+    client, family_world
+):
+    """The occasion arm carries its family alongside it — the viewer needs both
+    to make sense of the label."""
     w = family_world
     row = next(
         l for l in client.get("/lists?filter=shared", headers=_auth(w.u)).json()
         if l["name"] == "Q's List"
     )
-    assert row["shared_via"] == {"kind": "family", "id": w.f2.id, "name": "F2 Family"}
+    assert row["shared_via"] == {
+        "kind": "occasion",
+        "id": w.o2.id,
+        "name": "F2 Christmas",
+        "family": {"id": w.f2.id, "name": "F2 Family"},
+    }
 
 
 def test_filter_shared_dedupes_both_paths_to_the_direct_share(client, family_world):
-    """L_p is shared directly with U *and* granted to two of U's families: one row,
+    """L_p is shared directly with U *and* to two occasions U can reach: one row,
     labelled with the owner, because the direct share is the more specific fact."""
     w = family_world
     rows = [
@@ -256,12 +273,17 @@ def test_filter_shared_dedupes_both_paths_to_the_direct_share(client, family_wor
         if l["name"] == "P's List"
     ]
     assert len(rows) == 1
-    assert rows[0]["shared_via"] == {"kind": "user", "id": w.p.id, "name": "Owner P"}
+    assert rows[0]["shared_via"] == {
+        "kind": "user",
+        "id": w.p.id,
+        "name": "Owner P",
+        "family": None,
+    }
 
 
-def test_filter_shared_dedupes_a_list_granted_to_two_families(client, family_world, db):
-    """P's List is granted to both of U's families. Without the direct share it is
-    still one row, carrying one of them."""
+def test_filter_shared_dedupes_a_list_shared_to_two_occasions(client, family_world, db):
+    """P's List is shared to an occasion in each of U's families. Without the
+    direct share it is still one row, carrying one of them."""
     w = family_world
     db.query(ListShare).filter(ListShare.list_id == w.l_p.id).delete()
     db.flush()
@@ -271,8 +293,10 @@ def test_filter_shared_dedupes_a_list_granted_to_two_families(client, family_wor
         if l["name"] == "P's List"
     ]
     assert len(rows) == 1
-    assert rows[0]["shared_via"]["kind"] == "family"
-    assert rows[0]["shared_via"]["id"] in {w.f1.id, w.f2.id}
+    assert rows[0]["shared_via"]["kind"] == "occasion"
+    # The lower occasion id wins — arbitrary, but stable, so the label does not
+    # flicker between requests.
+    assert rows[0]["shared_via"]["id"] == min(w.o1.id, w.o2.id)
 
 
 def test_filter_shared_direct_only_list_is_labelled_with_its_owner(
@@ -284,13 +308,17 @@ def test_filter_shared_direct_only_list_is_labelled_with_its_owner(
         "kind": "user",
         "id": member_user.id,
         "name": member_user.name,
+        "family": None,
     }
 
 
-def test_filter_shared_excludes_own_list_granted_to_own_family(client, family_world, db):
-    """U grants their own list to a family U belongs to: still not shared *with* U."""
+def test_filter_shared_excludes_own_list_shared_to_own_occasion(
+    client, family_world, db
+):
+    """U shares their own list to an occasion U can reach: still not shared
+    *with* U."""
     w = family_world
-    db.add(ListFamilyShare(list_id=w.l_u.id, family_id=w.f1.id))
+    db.add(ListOccasionShare(list_id=w.l_u.id, occasion_id=w.o1.id))
     db.flush()
 
     names = {
@@ -305,20 +333,43 @@ def test_filter_shared_archived_returns_archived_only(client, family_world):
     assert resp.status_code == 200
     data = resp.json()
     assert {l["name"] for l in data} == {"P's Archived"}
-    assert data[0]["shared_via"] == {"kind": "family", "id": w.f1.id, "name": "F1 Family"}
+    assert data[0]["shared_via"] == {
+        "kind": "occasion",
+        "id": w.o1.id,
+        "name": "F1 Christmas",
+        "family": {"id": w.f1.id, "name": "F1 Family"},
+    }
 
 
-def test_filter_shared_drops_a_list_whose_family_grant_was_revoked(
+def test_filter_shared_drops_a_list_whose_occasion_share_was_revoked(
     client, family_world, db
 ):
     w = family_world
-    db.query(ListFamilyShare).filter(ListFamilyShare.list_id == w.l_q.id).delete()
+    db.query(ListOccasionShare).filter(
+        ListOccasionShare.list_id == w.l_q.id
+    ).delete()
     db.flush()
 
     names = {
         l["name"] for l in client.get("/lists?filter=shared", headers=_auth(w.u)).json()
     }
     assert "Q's List" not in names
+
+
+def test_filter_shared_keeps_a_list_whose_occasion_was_archived(
+    client, family_world, db
+):
+    """Archiving blocks new shares and nothing else, so the list stays in the
+    shared scope, still labelled with the occasion it arrived through."""
+    w = family_world
+    w.o2.is_archived = True
+    db.flush()
+
+    row = next(
+        l for l in client.get("/lists?filter=shared", headers=_auth(w.u)).json()
+        if l["name"] == "Q's List"
+    )
+    assert row["shared_via"]["id"] == w.o2.id
 
 
 def test_filter_shared_orders_most_recently_updated_first(client, family_world):
@@ -432,7 +483,7 @@ def test_update_list_name_only_leaves_recipient_untouched(
     assert data["recipient_name"] == "Beth"
 
 
-def test_list_occasion_endpoint_returns_recipient_fields(
+def test_list_folder_endpoint_returns_recipient_fields(
     client, member_headers, sample_list, db
 ):
     # compute_counts builds an explicit dict; a missing key silently nulls the field.
@@ -691,3 +742,217 @@ def test_list_without_a_person_reports_both_fields_null(
     data = client.get(f"/lists/{sample_list.id}", headers=member_headers).json()
     assert data["account_person_id"] is None
     assert data["account_person_name"] is None
+
+
+# --- unpurchased-claims count on shared rows (NEU-1279) ---
+#
+# The `• N to buy` badge on the Lists dashboard (project spec §9.1). For a
+# directly shared list it is the *only* route to the claim — that claim files
+# under no occasion and, unless the list sits in a folder, appears on no
+# shopping tab at all (§9.4) — so it is required, not decorative.
+
+
+@pytest.fixture
+def shopping_world(db, family_world):
+    """`family_world`, with claims on it: U has one gift still to buy on L_p and
+    one on L_q, has already bought a second on L_p, and Q has claimed a third
+    that is none of U's business."""
+    from datetime import datetime, timezone
+
+    from app.models.claim import Claim
+    from app.models.gift import Gift
+
+    w = family_world
+    to_buy, bought, qs, spare = (
+        Gift(list_id=w.l_p.id, name="To buy"),
+        Gift(list_id=w.l_p.id, name="Bought"),
+        Gift(list_id=w.l_p.id, name="Q's pick"),
+        Gift(list_id=w.l_p.id, name="Unclaimed"),
+    )
+    on_l_q = Gift(list_id=w.l_q.id, name="To buy on Q's list")
+    db.add_all([to_buy, bought, qs, spare, on_l_q])
+    db.flush()
+
+    now = datetime.now(timezone.utc)
+    db.add_all(
+        [
+            Claim(gift_id=to_buy.id, user_id=w.u.id, claimed_at=now),
+            Claim(gift_id=bought.id, user_id=w.u.id, claimed_at=now, purchased_at=now),
+            Claim(gift_id=qs.id, user_id=w.q.id, claimed_at=now),
+            Claim(gift_id=on_l_q.id, user_id=w.u.id, claimed_at=now),
+        ]
+    )
+    db.flush()
+    return w
+
+
+def _row(response, list_id):
+    return next(row for row in response.json() if row["id"] == list_id)
+
+
+def test_shared_row_counts_the_callers_own_unpurchased_claims(client, shopping_world):
+    w = shopping_world
+    response = client.get("/lists?filter=shared", headers=_auth(w.u))
+    assert response.status_code == 200
+    row = _row(response, w.l_p.id)
+    # Three of L_p's four gifts are claimed; one of those is U's and unbought.
+    assert row["claimed_count"] == 3
+    assert row["my_unpurchased_claim_count"] == 1
+
+
+def test_a_purchased_claim_is_not_still_to_buy(client, db, shopping_world):
+    """Ticking a gift bought is what clears it off the badge."""
+    from datetime import datetime, timezone
+
+    from app.models.claim import Claim
+    from app.models.gift import Gift
+
+    w = shopping_world
+    still_to_buy = (
+        db.query(Claim)
+        .join(Gift, Gift.id == Claim.gift_id)
+        .filter(Gift.list_id == w.l_p.id, Claim.user_id == w.u.id,
+                Claim.purchased_at.is_(None))
+        .one()
+    )
+    still_to_buy.purchased_at = datetime.now(timezone.utc)
+    db.flush()
+
+    response = client.get("/lists?filter=shared", headers=_auth(w.u))
+    assert _row(response, w.l_p.id)["my_unpurchased_claim_count"] == 0
+    # The list is no less spoken for, though — the two counts answer different
+    # questions and only one of them is about the caller.
+    assert _row(response, w.l_p.id)["claimed_count"] == 3
+
+
+def test_another_viewers_claims_are_not_mine_to_buy(client, shopping_world):
+    """Q claimed a gift on L_p; U shares F2 with Q and can see the list. The
+    badge counts what *U* has to buy, never what anyone else has taken."""
+    w = shopping_world
+    response = client.get("/lists?filter=shared", headers=_auth(w.q))
+    row = _row(response, w.l_p.id)
+    assert row["claimed_count"] == 3
+    assert row["my_unpurchased_claim_count"] == 1
+
+
+def test_the_count_is_per_row_not_per_scope(client, shopping_world):
+    """Two shared lists, one claim of U's outstanding on each: each row reports
+    its own, not the scope's total."""
+    w = shopping_world
+    response = client.get("/lists?filter=shared", headers=_auth(w.u))
+    assert _row(response, w.l_q.id)["my_unpurchased_claim_count"] == 1
+
+
+def test_a_shared_row_with_no_claims_of_mine_reports_zero(client, shopping_world):
+    w = shopping_world
+    response = client.get("/lists?filter=shared&archived=true", headers=_auth(w.u))
+    assert _row(response, w.l_p_arch.id)["my_unpurchased_claim_count"] == 0
+
+
+def test_the_unfiltered_scope_carries_the_count_on_shared_rows_only(
+    client, shopping_world
+):
+    """`GET /lists` mixes owned and shared rows. U owns L_u, which must not
+    carry the field at all — the same rule `claimed_count` broke (ADR 0003)."""
+    w = shopping_world
+    response = client.get("/lists", headers=_auth(w.u))
+    assert response.status_code == 200
+    assert "my_unpurchased_claim_count" not in _row(response, w.l_u.id)
+    shared = _row(response, w.l_p.id)
+    assert shared["my_unpurchased_claim_count"] == 1
+
+
+def test_the_count_costs_no_query_per_row(client, db, shopping_world):
+    """The badge must not reintroduce an N+1 across the shared scope: whatever
+    `GET /lists?filter=shared` costs, it costs the same for several times the
+    rows. The added lists carry claimed gifts of their own, so this pins the
+    batching of `Gift.claim` as well as of `GiftList.gifts` — a count queried
+    per gift would slip past rows that had none."""
+    from datetime import datetime, timezone
+
+    from sqlalchemy import event
+
+    from app.models.claim import Claim
+    from app.models.gift import Gift
+    from app.models.gift_list import GiftList
+    from app.models.list_occasion_share import ListOccasionShare
+
+    w = shopping_world
+    engine = db.get_bind()
+
+    def count_queries():
+        seen = []
+
+        @event.listens_for(engine, "before_cursor_execute")
+        def record(conn, cursor, statement, *args):
+            seen.append(statement)
+
+        try:
+            response = client.get("/lists?filter=shared", headers=_auth(w.u))
+            assert response.status_code == 200
+            return len(seen), len(response.json())
+        finally:
+            event.remove(engine, "before_cursor_execute", record)
+
+    before, rows_before = count_queries()
+
+    # Six more lists in the same scope, each shared to an occasion U can reach
+    # and each carrying two gifts U has claimed and not yet bought.
+    now = datetime.now(timezone.utc)
+    for n in range(6):
+        extra = GiftList(name=f"Extra {n}", owner_id=w.p.id)
+        db.add(extra)
+        db.flush()
+        db.add(ListOccasionShare(list_id=extra.id, occasion_id=w.o1.id))
+        for m in range(2):
+            gift = Gift(list_id=extra.id, name=f"Extra {n} gift {m}")
+            db.add(gift)
+            db.flush()
+            db.add(Claim(gift_id=gift.id, user_id=w.u.id, claimed_at=now))
+    db.flush()
+
+    after, rows_after = count_queries()
+    assert rows_after == rows_before + 6, "the extra lists should be in scope"
+    assert after == before, (
+        f"query count grew with the row count ({before} → {after}): "
+        "the count is being computed per row"
+    )
+
+
+def test_the_badge_reaches_a_claim_on_a_directly_shared_list(client, db, family_world):
+    """The case §9.4 makes the badge mandatory for. A claim on a list shared
+    only person-to-person files under no occasion and, with the list in no
+    folder, appears on no shopping tab at all — this row is its only route.
+
+    Deliberately not `shopping_world`'s L_p, which is *also* occasion-shared and
+    so would pass on the occasion path alone.
+    """
+    from datetime import datetime, timezone
+
+    from app.models.claim import Claim
+    from app.models.gift import Gift
+    from app.models.list_share import ListShare
+
+    w = family_world
+    direct_only = GiftList(name="Jane's Wishlist", owner_id=w.q.id)
+    db.add(direct_only)
+    db.flush()
+    db.add(ListShare(list_id=direct_only.id, user_id=w.u.id))
+    gift = Gift(list_id=direct_only.id, name="Cast iron skillet")
+    db.add(gift)
+    db.flush()
+    db.add(
+        Claim(
+            gift_id=gift.id,
+            user_id=w.u.id,
+            occasion_id=None,  # no occasion: this is the gap the badge covers
+            claimed_at=datetime.now(timezone.utc),
+        )
+    )
+    db.flush()
+
+    response = client.get("/lists?filter=shared", headers=_auth(w.u))
+    assert response.status_code == 200
+    row = _row(response, direct_only.id)
+    assert row["shared_via"]["kind"] == "user", "this list is reachable no other way"
+    assert row["my_unpurchased_claim_count"] == 1

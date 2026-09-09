@@ -1,12 +1,11 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import or_, select, update
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from app.models.occasion import Occasion
-from app.models.occasion_item import OccasionItem
+from app.models.folder import Folder
+from app.models.folder_item import FolderItem
 from app.models.connection import Connection
-from app.models.gift import Gift
 from app.models.gift_list import GiftList
 from app.models.list_share import ListShare
 from app.models.user import User
@@ -103,22 +102,6 @@ def delete_connection(db: Session, connection: Connection) -> None:
     db.flush()
 
 
-def unclaim_gifts_between(db: Session, user_a_id: int, user_b_id: int) -> None:
-    list_ids_a = select(GiftList.id).where(GiftList.owner_id == user_a_id)
-    list_ids_b = select(GiftList.id).where(GiftList.owner_id == user_b_id)
-
-    db.execute(
-        update(Gift)
-        .where(Gift.list_id.in_(list_ids_a), Gift.claimed_by_id == user_b_id)
-        .values(claimed_by_id=None, claimed_at=None)
-    )
-    db.execute(
-        update(Gift)
-        .where(Gift.list_id.in_(list_ids_b), Gift.claimed_by_id == user_a_id)
-        .values(claimed_by_id=None, claimed_at=None)
-    )
-
-
 def delete_shares_between(db: Session, user_a_id: int, user_b_id: int) -> None:
     list_ids_a = select(GiftList.id).where(GiftList.owner_id == user_a_id)
     list_ids_b = select(GiftList.id).where(GiftList.owner_id == user_b_id)
@@ -141,22 +124,22 @@ def delete_shares_between(db: Session, user_a_id: int, user_b_id: int) -> None:
         db.delete(share)
 
 
-def delete_occasion_items_between(
+def delete_folder_items_between(
     db: Session, user_a_id: int, user_b_id: int
 ) -> None:
     list_ids_a = select(GiftList.id).where(GiftList.owner_id == user_a_id)
     list_ids_b = select(GiftList.id).where(GiftList.owner_id == user_b_id)
-    occasion_ids_a = select(Occasion.id).where(Occasion.owner_id == user_a_id)
-    occasion_ids_b = select(Occasion.id).where(Occasion.owner_id == user_b_id)
+    folder_ids_a = select(Folder.id).where(Folder.owner_id == user_a_id)
+    folder_ids_b = select(Folder.id).where(Folder.owner_id == user_b_id)
 
     items = (
         db.execute(
-            select(OccasionItem).where(
+            select(FolderItem).where(
                 or_(
-                    (OccasionItem.occasion_id.in_(occasion_ids_a))
-                    & (OccasionItem.list_id.in_(list_ids_b)),
-                    (OccasionItem.occasion_id.in_(occasion_ids_b))
-                    & (OccasionItem.list_id.in_(list_ids_a)),
+                    (FolderItem.folder_id.in_(folder_ids_a))
+                    & (FolderItem.list_id.in_(list_ids_b)),
+                    (FolderItem.folder_id.in_(folder_ids_b))
+                    & (FolderItem.list_id.in_(list_ids_a)),
                 )
             )
         )

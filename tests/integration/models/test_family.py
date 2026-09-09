@@ -81,10 +81,3 @@ def test_family_member_role_values(db):
     assert organizer.role == "organizer"
     assert regular.role == "member"
 
-
-def test_user_simple_mode_default(db):
-    user = User(email="family_test5@test.com", name="User Five", password_hash="h")
-    db.add(user)
-    db.flush()
-
-    assert user.simple_mode == False

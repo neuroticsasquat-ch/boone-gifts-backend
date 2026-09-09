@@ -10,7 +10,7 @@ from app.access import can_view_list
 from app.config import settings
 from app.connections.repository import find_accepted_connection_between
 from app.database import SessionLocal
-from app.models.occasion import Occasion
+from app.models.folder import Folder
 from app.models.user import User
 from app.models.gift_list import GiftList
 
@@ -39,7 +39,6 @@ def create_access_token(user: User, *, iat: datetime | None = None) -> str:
         "email": user.email,
         "name": user.name,
         "role": user.role,
-        "simple_mode": user.simple_mode,
         "iat": issued_at,
         "exp": issued_at + timedelta(minutes=settings.access_token_expire_minutes),
     }
@@ -144,30 +143,30 @@ def require_connection(
         )
 
 
-def get_occasion_for_owner(
-    occasion_id: int,
+def get_folder_for_owner(
+    folder_id: int,
     user: Annotated[User, Depends(get_current_user)],
     db: DbSession,
-) -> Occasion:
-    """Load an occasion and verify the current user owns it.
+) -> Folder:
+    """Load a folder and verify the current user owns it.
 
     Parameters:
-        occasion_id: The occasion ID from the path.
+        folder_id: The folder ID from the path.
         user: The authenticated user.
         db: Database session.
 
     Returns:
-        The occasion if found and owned by user.
+        The folder if found and owned by user.
 
     Raises:
         HTTPException: 404 if not found, 403 if not owner.
     """
-    occasion = db.get(Occasion, occasion_id)
-    if occasion is None:
+    folder = db.get(Folder, folder_id)
+    if folder is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
-    if occasion.owner_id != user.id:
+    if folder.owner_id != user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
-    return occasion
+    return folder
 
 
-OwnedOccasion = Annotated[Occasion, Depends(get_occasion_for_owner)]
+OwnedFolder = Annotated[Folder, Depends(get_folder_for_owner)]

@@ -33,7 +33,6 @@ def create_invite(
             actor=user,
             email=request.email,
             role=request.role,
-            simple_mode=request.simple_mode,
         )
     except NotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)

@@ -26,7 +26,7 @@ def create_list(request: GiftListCreate, user: CurrentUser, db: DbSession):
             name=request.name,
             description=request.description,
             owner=user,
-            family_ids=request.family_ids,
+            occasion_ids=request.occasion_ids,
             recipient_name=request.recipient_name,
             account_person_id=request.account_person_id,
         )
@@ -34,11 +34,17 @@ def create_list(request: GiftListCreate, user: CurrentUser, db: DbSession):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
     except NotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except ConflictError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
     except BadRequestError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
-@router.get("", response_model=list[GiftListRead])
+# No `response_model`: the rows are a mix of owned and shared lists, and only
+# the shared ones may carry `claimed_count`. One declared schema would have to
+# be the wider of the two, which is exactly the leak ADR 0003 closes. Same
+# reasoning as `get_list` below.
+@router.get("")
 def list_lists(
     user: CurrentUser,
     db: DbSession,
@@ -58,7 +64,7 @@ def unseen_share_count(user: CurrentUser, db: DbSession):
 def get_list(gift_list: ViewableList, user: CurrentUser, db: DbSession):
     if gift_list.owner_id != user.id:
         list_service.mark_share_seen(db, list_id=gift_list.id, user_id=user.id)
-    return list_service.get_list(gift_list, user_id=user.id)
+    return list_service.get_list(db, gift_list, user)
 
 
 @router.put("/{list_id}", response_model=GiftListRead)

@@ -14,7 +14,6 @@ class FamilyInviteStatus(StrEnum):
 class FamilyInviteCreate(BaseModel):
     email: str
     role: str = "member"
-    simple_mode: bool = False
 
     @field_validator("email")
     @classmethod
@@ -34,7 +33,6 @@ class FamilyInviteRead(BaseModel):
     family_id: int
     email: str
     role: str
-    simple_mode: bool
     token: str
     invited_by_id: int
     expires_at: datetime

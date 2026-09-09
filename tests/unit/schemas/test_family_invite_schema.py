@@ -13,7 +13,6 @@ def _base_read_kwargs(**overrides):
         family_id=1,
         email="bob@test.com",
         role="member",
-        simple_mode=False,
         token="tok-1",
         invited_by_id=2,
         expires_at=datetime.now(timezone.utc) + timedelta(days=7),

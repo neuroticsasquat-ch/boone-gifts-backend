@@ -3,9 +3,12 @@
 Account people are labels, not identities: nothing here touches visibility,
 claims or membership. See docs/adr/0001-shared-accounts-are-one-identity.md.
 """
+from datetime import datetime, timezone
+
 import pytest
 
 from app.models.account_person import AccountPerson
+from app.models.claim import Claim
 from app.models.gift import Gift
 from app.models.gift_list import GiftList
 from app.models.list_share import ListShare
@@ -339,9 +342,15 @@ def test_deleting_a_person_leaves_the_list_and_its_gifts_intact(
 ):
     gran, grandpa = shared_account["people"]
     gift_list = _labelled_list(db, member_user, grandpa)
-    gift = Gift(list_id=gift_list.id, name="Fishing reel", claimed_by_id=admin_user.id)
+    gift = Gift(list_id=gift_list.id, name="Fishing reel")
     share = ListShare(list_id=gift_list.id, user_id=admin_user.id)
     db.add_all([gift, share])
+    db.flush()
+    db.add(
+        Claim(
+            gift_id=gift.id, user_id=admin_user.id, claimed_at=datetime.now(timezone.utc)
+        )
+    )
     db.flush()
 
     _put(
@@ -355,7 +364,8 @@ def test_deleting_a_person_leaves_the_list_and_its_gifts_intact(
     surviving = db.get(Gift, gift.id)
     assert surviving is not None
     # No claim is ever released by this ticket.
-    assert surviving.claimed_by_id == admin_user.id
+    assert surviving.claim is not None
+    assert surviving.claim.user_id == admin_user.id
     assert db.get(ListShare, share.id) is not None
 
 

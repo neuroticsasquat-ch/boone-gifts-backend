@@ -13,6 +13,9 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.exc import IntegrityError
 
 PREVIOUS_HEAD = "d8a3f1c05b64"
+# Pinned to this revision rather than "head": a later revision renames
+# `occasions` back out again, to `folders` (NEU-1258).
+REVISION = "a7c4e2b91f38"
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -70,7 +73,7 @@ def seeded(db_path):
 
 @pytest.fixture
 def migrated(seeded, db_path):
-    _alembic("upgrade", "head", db_path)
+    _alembic("upgrade", REVISION, db_path)
     return seeded
 
 
@@ -113,7 +116,7 @@ def test_timestamps_survive_the_rename(seeded, db_path):
             text("SELECT id, created_at FROM collection_items ORDER BY id")
         ).all()
 
-    _alembic("upgrade", "head", db_path)
+    _alembic("upgrade", REVISION, db_path)
 
     with seeded.connect() as conn:
         after_occasions = conn.execute(

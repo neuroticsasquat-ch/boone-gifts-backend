@@ -1,14 +1,19 @@
 from sqlalchemy.orm import Session
 
 from app.account import service as account_service
-from app.list_families import service as list_family_service
+from app.claims import repository as claims_repo
+from app.claims import service as claim_service
+from app.list_occasions import service as list_occasion_service
 from app.lists import repository as repo
 from app.models.gift_list import GiftList
 from app.models.user import User
 from app.schemas.gift_list import (
     GiftListDetailOwner,
     GiftListDetailViewer,
+    GiftListRead,
+    GiftListViewerRead,
     SharedVia,
+    SharedViaFamily,
 )
 from app.services.exceptions import BadRequestError, ConflictError
 
@@ -29,7 +34,7 @@ def _reject_person_with_recipient(
 
 def create_list(
     db: Session, name: str, description: str | None, owner: User,
-    family_ids: list[int] | None = None,
+    occasion_ids: list[int] | None = None,
     recipient_name: str | None = None,
     account_person_id: int | None = None,
 ) -> GiftList:
@@ -43,37 +48,83 @@ def create_list(
         recipient_name=recipient_name,
         account_person_id=account_person_id,
     )
-    list_family_service.set_grants_on_create(db, gift_list, owner, family_ids or [])
+    list_occasion_service.set_shares_on_create(db, gift_list, owner, occasion_ids or [])
     return gift_list
 
 
-def get_lists(db: Session, user_id: int, filter: str | None = None, archived: bool = False) -> list[GiftList]:
+def to_summary(gift_list: GiftList, user_id: int) -> GiftListRead | GiftListViewerRead:
+    """Serialize one list row for one caller.
+
+    The single place that decides whether a row may carry claim state. An owner
+    gets `GiftListRead`, which has no `claimed_count` or
+    `my_unpurchased_claim_count` to fill in; anyone else gets the viewer schema,
+    which does. Route every list-row response through here rather than naming a
+    schema at the endpoint — naming it per endpoint is how `claimed_count` came
+    to be returned on owned rows in the first place (ADR 0003).
+
+    The viewer schema is told who is asking, because
+    `my_unpurchased_claim_count` counts *this* caller's own unbought claims
+    rather than the row's total. It refuses to validate without that, so a
+    caller who reaches it another way fails loudly instead of serving everyone
+    an empty badge.
+    """
+    if gift_list.owner_id == user_id:
+        return GiftListRead.model_validate(gift_list)
+    return GiftListViewerRead.model_validate(
+        gift_list, context={"viewer_id": user_id}
+    )
+
+
+def get_lists(
+    db: Session, user_id: int, filter: str | None = None, archived: bool = False
+) -> list[GiftListRead | GiftListViewerRead]:
     if filter == "owned":
-        return repo.get_lists_by_owner(db, user_id, archived=archived)
+        rows = repo.get_lists_by_owner(db, user_id, archived=archived)
     elif filter == "shared":
-        return get_shared_lists(db, user_id, archived=archived)
+        rows = get_shared_lists(db, user_id, archived=archived)
     else:
-        return repo.get_all_visible_lists(db, user_id, archived=archived)
+        rows = repo.get_all_visible_lists(db, user_id, archived=archived)
+    return [to_summary(gift_list, user_id) for gift_list in rows]
 
 
 def get_shared_lists(db: Session, user_id: int, archived: bool = False) -> list[GiftList]:
     """Every list someone else has made visible to the caller — directly or through
-    a family — each annotated with the `shared_via` source that explains it. This is
-    the one shared scope; there is no separate family view."""
+    an occasion — each annotated with the `shared_via` source that explains it. This
+    is the one shared scope; there is no separate family view."""
     rows = repo.get_shared_lists_with_source(db, user_id, archived=archived)
     lists: list[GiftList] = []
-    for gift_list, kind, source_id, source_name in rows:
-        gift_list.shared_via = SharedVia(kind=kind, id=source_id, name=source_name)
+    for gift_list, kind, source_id, source_name, family_id, family_name in rows:
+        family = (
+            SharedViaFamily(id=family_id, name=family_name)
+            if family_id is not None
+            else None
+        )
+        gift_list.shared_via = SharedVia(
+            kind=kind, id=source_id, name=source_name, family=family
+        )
         lists.append(gift_list)
     return lists
 
 
 def get_list(
-    gift_list: GiftList, user_id: int
+    db: Session, gift_list: GiftList, user: User
 ) -> GiftListDetailOwner | GiftListDetailViewer:
-    if gift_list.owner_id == user_id:
+    """Serialize one list's detail for one caller.
+
+    The owner's schema never learns what a claim could be filed under: those two
+    sets are derived from the *viewer's* memberships, and an owner sees no claim
+    state at all. Same reasoning as `to_summary` — one place decides, so the
+    choice cannot be made wrongly per endpoint (ADR 0003).
+    """
+    if gift_list.owner_id == user.id:
         return GiftListDetailOwner.model_validate(gift_list)
-    return GiftListDetailViewer.model_validate(gift_list)
+    detail = GiftListDetailViewer.model_validate(gift_list)
+    # One query per list detail, not per gift: filing candidates are a property
+    # of the list's shares, not of any gift on it.
+    allowed, suggested = claim_service.occasion_sets(db, gift_list, user)
+    detail.claim_candidates = suggested
+    detail.claim_options = allowed
+    return detail
 
 
 def update_list(db: Session, gift_list: GiftList, updates: dict) -> GiftList:
@@ -91,7 +142,7 @@ def update_list(db: Session, gift_list: GiftList, updates: dict) -> GiftList:
 
 
 def delete_list(db: Session, gift_list: GiftList) -> None:
-    if repo.has_claimed_gifts(db, gift_list.id):
+    if claims_repo.has_claimed_gifts(db, gift_list.id):
         raise ConflictError(
             "This list has gifts that have been claimed. "
             "Remove claims first or archive the list instead."

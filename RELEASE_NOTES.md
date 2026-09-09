@@ -1,5 +1,34 @@
 # Release notes
 
+## 0.5.0 — 2026-09-09
+
+### Budgets
+
+- Give every user a private budget per occasion and folder ([NEU-1275](https://linear.app/neuroticsasquatch/issue/NEU-1275)) ([#175](https://github.com/neuroticsasquat-ch/boone-gifts-backend/pull/175))
+
+### Claims
+
+- Move the claim onto its own table with what it cost ([NEU-1268](https://linear.app/neuroticsasquatch/issue/NEU-1268)) ([#172](https://github.com/neuroticsasquat-ch/boone-gifts-backend/pull/172))
+- File each claim under one occasion ([NEU-1269](https://linear.app/neuroticsasquatch/issue/NEU-1269)) ([#173](https://github.com/neuroticsasquat-ch/boone-gifts-backend/pull/173))
+- Serve each shopping tab the caller's own claims ([NEU-1273](https://linear.app/neuroticsasquatch/issue/NEU-1273)) ([#174](https://github.com/neuroticsasquat-ch/boone-gifts-backend/pull/174))
+- Count what each viewer still has to buy on a list row ([NEU-1279](https://linear.app/neuroticsasquatch/issue/NEU-1279)) ([#176](https://github.com/neuroticsasquat-ch/boone-gifts-backend/pull/176))
+
+### Families
+
+- Retire simple mode ([NEU-1260](https://linear.app/neuroticsasquatch/issue/NEU-1260)) ([#169](https://github.com/neuroticsasquat-ch/boone-gifts-backend/pull/169))
+
+### Folders
+
+- Rename occasions to folders ([NEU-1258](https://linear.app/neuroticsasquatch/issue/NEU-1258)) ([#168](https://github.com/neuroticsasquat-ch/boone-gifts-backend/pull/168))
+
+### Occasions
+
+- Add the family occasion, its CRUD and its role gate ([NEU-1263](https://linear.app/neuroticsasquatch/issue/NEU-1263)) ([#170](https://github.com/neuroticsasquat-ch/boone-gifts-backend/pull/170))
+
+### Sharing
+
+- Share a list to an occasion, not to a family ([NEU-1265](https://linear.app/neuroticsasquatch/issue/NEU-1265)) ([#171](https://github.com/neuroticsasquat-ch/boone-gifts-backend/pull/171))
+
 ## 0.4.0 — 2026-09-08
 
 ### Account

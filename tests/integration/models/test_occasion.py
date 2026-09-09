@@ -1,88 +1,75 @@
+import pytest
 import sqlalchemy
 
-import pytest
-
+from app.models.family import Family
 from app.models.occasion import Occasion
-from app.models.occasion_item import OccasionItem
-from app.models.gift_list import GiftList
 from app.models.user import User
 
 
+def _user(db, email: str) -> User:
+    user = User(email=email, name="Occasion Tester", password_hash="h")
+    db.add(user)
+    db.flush()
+    return user
+
+
+def _family(db, creator: User) -> Family:
+    family = Family(name="The Boones", created_by_id=creator.id)
+    db.add(family)
+    db.flush()
+    return family
+
+
 def test_create_occasion(db):
-    user = User(email="collector@test.com", name="Collector", password_hash="h")
-    db.add(user)
-    db.flush()
-
-    occasion = Occasion(name="Christmas 2026", owner_id=user.id)
-    db.add(occasion)
-    db.flush()
-
-    assert occasion.id is not None
-    assert occasion.name == "Christmas 2026"
-    assert occasion.owner_id == user.id
-    assert occasion.description is None
-    assert occasion.created_at is not None
-    assert occasion.updated_at is not None
-
-
-def test_create_occasion_no_description(db):
-    user = User(email="collector2@test.com", name="Collector", password_hash="h")
-    db.add(user)
-    db.flush()
+    user = _user(db, "occasion_model1@test.com")
+    family = _family(db, user)
 
     occasion = Occasion(
-        name="Birthday Ideas",
-        description="Gift ideas for birthdays",
-        owner_id=user.id,
+        family_id=family.id, name="Christmas 2026", created_by_id=user.id
     )
     db.add(occasion)
     db.flush()
 
-    assert occasion.description == "Gift ideas for birthdays"
+    assert occasion.id is not None
+    assert occasion.family_id == family.id
+    assert occasion.name == "Christmas 2026"
+    assert occasion.created_by_id == user.id
+    assert occasion.created_at is not None
+    assert occasion.updated_at is not None
 
 
-def test_create_occasion_item(db):
-    user = User(email="collector3@test.com", name="Collector", password_hash="h")
-    db.add(user)
-    db.flush()
+def test_occasion_defaults_to_active(db):
+    user = _user(db, "occasion_model2@test.com")
+    family = _family(db, user)
 
-    occasion = Occasion(name="My Occasion", owner_id=user.id)
+    occasion = Occasion(family_id=family.id, name="Gran's 80th", created_by_id=user.id)
     db.add(occasion)
     db.flush()
 
-    gift_list = GiftList(name="Wishlist", owner_id=user.id)
-    db.add(gift_list)
-    db.flush()
-
-    item = OccasionItem(occasion_id=occasion.id, list_id=gift_list.id)
-    db.add(item)
-    db.flush()
-
-    assert item.id is not None
-    assert item.occasion_id == occasion.id
-    assert item.list_id == gift_list.id
-    assert item.created_at is not None
+    assert occasion.is_archived is False
 
 
-def test_occasion_item_unique_constraint(db):
-    user = User(email="collector4@test.com", name="Collector", password_hash="h")
-    db.add(user)
-    db.flush()
+def test_occasion_requires_an_existing_family(db):
+    user = _user(db, "occasion_model3@test.com")
 
-    occasion = Occasion(name="Dupes", owner_id=user.id)
-    db.add(occasion)
-    db.flush()
-
-    gift_list = GiftList(name="Wishlist", owner_id=user.id)
-    db.add(gift_list)
-    db.flush()
-
-    item1 = OccasionItem(occasion_id=occasion.id, list_id=gift_list.id)
-    db.add(item1)
-    db.flush()
-
-    item2 = OccasionItem(occasion_id=occasion.id, list_id=gift_list.id)
-    db.add(item2)
-
+    db.add(Occasion(family_id=99999, name="Orphan", created_by_id=user.id))
     with pytest.raises(sqlalchemy.exc.IntegrityError):
         db.flush()
+
+
+def test_a_family_may_hold_several_occasions(db):
+    user = _user(db, "occasion_model4@test.com")
+    family = _family(db, user)
+
+    for name in ("Christmas 2026", "Gran's 80th"):
+        db.add(Occasion(family_id=family.id, name=name, created_by_id=user.id))
+    db.flush()
+
+    rows = (
+        db.execute(
+            sqlalchemy.select(Occasion).where(Occasion.family_id == family.id)
+        )
+        .scalars()
+        .all()
+    )
+    assert {row.name for row in rows} == {"Christmas 2026", "Gran's 80th"}

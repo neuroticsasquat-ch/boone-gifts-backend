@@ -98,7 +98,7 @@ python -m scripts.seed_dev --reset   # re-seed
 python -m scripts.seed_dev --purge   # remove
 ```
 
-Creates five `@example.com` users with the list-visibility states a single account can't produce on its own: a directly shared list, a list reaching you only through a family, a list kept for someone with no account, an archived list, a claimed gift, a pending connection request, and a simple-mode user. Purge only deletes rows reachable from those users.
+Creates five `@example.com` users with the list-visibility states a single account can't produce on its own: a directly shared list, a list reaching you only through a family, a list kept for someone with no account, an archived list, a claimed gift, a pending connection request, and a shared account with two people. Purge only deletes rows reachable from those users.
 
 ## API Overview
 
@@ -111,7 +111,7 @@ Creates five `@example.com` users with the list-visibility states a single accou
 - `POST /auth/forgot-password` -- Request a password reset email
 - `POST /auth/reset-password` -- Consume a reset token and set a new password
 - `POST /auth/change-password` -- Change password while logged in
-- `PUT /auth/profile` -- Update display name and/or simple mode
+- `PUT /auth/profile` -- Update display name
 
 ### Users (`/users`)
 - `GET /users/search?q=` -- Search users by name or email (any signed-in user; used when adding a connection)
@@ -178,16 +178,24 @@ Creates five `@example.com` users with the list-visibility states a single accou
 - `POST /families/invites/{token}/accept` -- Join the family
 - `POST /families/invites/{token}/decline` -- Decline
 
-### Occasions (`/occasions`)
-- `POST /occasions` -- Create an occasion
-- `GET /occasions` -- List your occasions
-- `GET /occasions/for-list/{list_id}` -- Occasions containing a given list
-- `GET /occasions/{id}` -- Get occasion with its lists
-- `PUT /occasions/{id}` -- Update an occasion
-- `DELETE /occasions/{id}` -- Delete an occasion
-- `POST /occasions/{id}/items` -- Add a list to an occasion
-- `DELETE /occasions/{id}/items/{list_id}` -- Remove a list from an occasion
-- `GET /occasions/{id}/shopping-list` -- Everything you've claimed across the occasion
+### Folders (`/folders`)
+- `POST /folders` -- Create a folder
+- `GET /folders` -- List your folders
+- `GET /folders/for-list/{list_id}` -- Folders containing a given list
+- `GET /folders/{id}` -- Get folder with its lists
+- `PUT /folders/{id}` -- Update a folder
+- `DELETE /folders/{id}` -- Delete a folder
+- `POST /folders/{id}/items` -- Add a list to a folder
+- `DELETE /folders/{id}/items/{list_id}` -- Remove a list from a folder
+- `GET /folders/{id}/shopping` -- Everything you've claimed across the folder
+
+### Occasions (`/families/{family_id}/occasions`, `/occasions`)
+- `GET /families/{family_id}/occasions` -- The family's occasions; any member
+- `POST /families/{family_id}/occasions` -- Create one; any member
+- `GET /occasions/{id}` -- Get an occasion; any member of its family
+- `PUT /occasions/{id}` -- Rename or archive; organizers only
+- `GET /occasions/{id}/lists` -- The lists shared to it that you can see
+- `GET /occasions/{id}/shopping` -- Everything *you* have claimed under it
 
 ### Meta (`/meta`)
 - `GET /meta` -- Fetch URL metadata (title, description, price, image)

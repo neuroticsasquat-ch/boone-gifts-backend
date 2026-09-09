@@ -1,227 +1,357 @@
-from datetime import datetime, timezone
-from types import SimpleNamespace
+from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.occasions import service
+from app.models.family import Family
+from app.models.family_member import FamilyMember
 from app.models.occasion import Occasion
-from app.models.occasion_item import OccasionItem
-from app.models.gift_list import GiftList
-from app.services.exceptions import ConflictError, ForbiddenError, NotFoundError
-
-
-def _make_occasion(
-    id: int = 1,
-    name: str = "My Occasion",
-    description: str | None = None,
-    owner_id: int = 1,
-) -> MagicMock:
-    col = MagicMock(spec=Occasion)
-    col.id = id
-    col.name = name
-    col.description = description
-    col.owner_id = owner_id
-    col.items = []
-    col.created_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    col.updated_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    return col
-
-
-def _make_gift_list(id: int = 10, owner_id: int = 1) -> MagicMock:
-    gl = MagicMock(spec=GiftList)
-    gl.id = id
-    gl.owner_id = owner_id
-    return gl
-
-
-def _make_occasion_item(
-    id: int = 1, occasion_id: int = 1, list_id: int = 10
-) -> MagicMock:
-    item = MagicMock(spec=OccasionItem)
-    item.id = id
-    item.occasion_id = occasion_id
-    item.list_id = list_id
-    return item
-
+from app.models.user import User
+from app.occasions import service
+from app.services.exceptions import ForbiddenError, NotFoundError
 
 REPO = "app.occasions.service.repo"
+FAMILIES_REPO = "app.occasions.service.families_repo"
+# `_require_organizer` is reused from the invites module, so the role gate
+# resolves `families_repo` in *that* namespace, not this service's.
+ORGANIZER_GATE_REPO = "app.family_invites.service.families_repo"
+BUDGETS_SERVICE = "app.occasions.service.budgets_service"
 
 
-# --- create_occasion ---
+def _make_user(id: int = 10) -> MagicMock:
+    user = MagicMock(spec=User)
+    user.id = id
+    return user
 
 
-@patch(f"{REPO}.create_occasion")
-def test_create_occasion(mock_create):
+def _make_member(role: str = "organizer") -> MagicMock:
+    member = MagicMock(spec=FamilyMember)
+    member.role = role
+    return member
+
+
+def _make_family(id: int = 1) -> MagicMock:
+    family = MagicMock(spec=Family)
+    family.id = id
+    return family
+
+
+def _make_occasion(id: int = 5, family_id: int = 1) -> MagicMock:
+    occasion = MagicMock(spec=Occasion)
+    occasion.id = id
+    occasion.family_id = family_id
+    return occasion
+
+
+# ---------------------------------------------------------------------------
+# Membership gate — shared by list, create and read
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda db, actor: service.list_occasions(
+            db, family_id=1, actor=actor, archived=False
+        ),
+        lambda db, actor: service.create_occasion(
+            db, family_id=1, actor=actor, name="Christmas 2026"
+        ),
+    ],
+)
+def test_unknown_family_raises_not_found(call):
     db = MagicMock()
-    col = _make_occasion()
-    mock_create.return_value = col
-
-    result = service.create_occasion(db, name="My Occasion", description=None, owner_id=1)
-
-    mock_create.assert_called_once_with(db, "My Occasion", None, 1)
-    assert result.id == 1
-    assert result.name == "My Occasion"
+    with patch(FAMILIES_REPO) as families_repo:
+        families_repo.get_family.return_value = None
+        with pytest.raises(NotFoundError):
+            call(db, _make_user())
 
 
-# --- list_occasions ---
-
-
-@patch(f"{REPO}.get_occasions_for_user")
-def test_list_occasions(mock_get):
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda db, actor: service.list_occasions(
+            db, family_id=1, actor=actor, archived=False
+        ),
+        lambda db, actor: service.create_occasion(
+            db, family_id=1, actor=actor, name="Christmas 2026"
+        ),
+    ],
+)
+def test_a_non_member_is_forbidden(call):
     db = MagicMock()
-    col = _make_occasion()
-    mock_get.return_value = [col]
-
-    result = service.list_occasions(db, owner_id=1)
-
-    mock_get.assert_called_once_with(db, 1, archived=False)
-    assert len(result) == 1
-    assert result[0].name == "My Occasion"
+    with patch(FAMILIES_REPO) as families_repo:
+        families_repo.get_family.return_value = _make_family()
+        families_repo.get_family_member.return_value = None
+        with pytest.raises(ForbiddenError):
+            call(db, _make_user())
 
 
-# --- get_occasion_detail ---
+# ---------------------------------------------------------------------------
+# list_occasions
+# ---------------------------------------------------------------------------
 
 
-@patch(f"{REPO}.get_lists_for_occasion")
-def test_get_occasion_detail(mock_get_lists):
+def test_list_occasions_passes_the_archived_filter_through():
     db = MagicMock()
-    col = _make_occasion(id=1, name="Wishlist", description="Holiday", owner_id=5)
-    gift_list = _make_gift_list(id=10, owner_id=5)
-    mock_get_lists.return_value = [gift_list]
+    with patch(FAMILIES_REPO) as families_repo, patch(REPO) as repo:
+        families_repo.get_family.return_value = _make_family()
+        families_repo.get_family_member.return_value = _make_member("member")
+        repo.get_occasions_for_family.return_value = []
 
-    result = service.get_occasion_detail(db, col)
+        service.list_occasions(db, family_id=1, actor=_make_user(), archived=True)
 
-    mock_get_lists.assert_called_once_with(db, col)
-    assert result["id"] == 1
-    assert result["name"] == "Wishlist"
-    assert result["description"] == "Holiday"
-    assert result["owner_id"] == 5
-    assert result["lists"] == [gift_list]
-    assert result["created_at"] == col.created_at
-    assert result["updated_at"] == col.updated_at
+    repo.get_occasions_for_family.assert_called_once_with(db, 1, archived=True)
 
 
-# --- update_occasion ---
+# ---------------------------------------------------------------------------
+# create_occasion
+# ---------------------------------------------------------------------------
 
 
-@patch(f"{REPO}.update_occasion")
-def test_update_occasion(mock_update):
+def test_a_plain_member_may_create_an_occasion():
     db = MagicMock()
-    col = _make_occasion()
-    updated = _make_occasion(name="Updated")
-    mock_update.return_value = updated
+    occasion = _make_occasion()
+    with patch(FAMILIES_REPO) as families_repo, patch(REPO) as repo:
+        families_repo.get_family.return_value = _make_family()
+        families_repo.get_family_member.return_value = _make_member("member")
+        repo.has_active_occasion.return_value = False
+        repo.create_occasion.return_value = occasion
 
-    result = service.update_occasion(db, col, {"name": "Updated"})
+        created, has_other_active = service.create_occasion(
+            db, family_id=1, actor=_make_user(), name="Christmas 2026"
+        )
 
-    mock_update.assert_called_once_with(db, col, {"name": "Updated"})
-    assert result.name == "Updated"
+    assert created is occasion
+    assert has_other_active is False
+    repo.create_occasion.assert_called_once_with(
+        db, family_id=1, name="Christmas 2026", created_by_id=10
+    )
 
 
-# --- delete_occasion ---
-
-
-@patch(f"{REPO}.delete_occasion")
-def test_delete_occasion(mock_delete):
+def test_a_second_active_occasion_is_flagged_not_refused():
     db = MagicMock()
-    col = _make_occasion()
+    with patch(FAMILIES_REPO) as families_repo, patch(REPO) as repo:
+        families_repo.get_family.return_value = _make_family()
+        families_repo.get_family_member.return_value = _make_member("member")
+        repo.has_active_occasion.return_value = True
+        repo.create_occasion.return_value = _make_occasion()
 
-    service.delete_occasion(db, col)
+        _, has_other_active = service.create_occasion(
+            db, family_id=1, actor=_make_user(), name="Gran's 80th"
+        )
 
-    mock_delete.assert_called_once_with(db, col)
-
-
-# --- add_item ---
-
-CAN_VIEW = "app.occasions.service.can_view_list"
+    assert has_other_active is True
+    repo.create_occasion.assert_called_once()
 
 
-@patch(f"{REPO}.create_occasion_item")
-@patch(f"{REPO}.find_occasion_item", return_value=None)
-@patch(CAN_VIEW, return_value=True)
-@patch(f"{REPO}.get_gift_list_by_id")
-def test_add_item_viewable(mock_get_list, mock_can_view, mock_find_item, mock_create_item):
-    # Owner / direct-share / shared-family all resolve to can_view_list -> True;
-    # discriminating between them is can_view_list's job (tested in app/access),
-    # so the service unit test only cares that a viewable list is added.
+def test_has_other_active_is_read_before_the_new_row_exists():
+    """Otherwise the occasion just created would count as the "other" one."""
     db = MagicMock()
-    user = SimpleNamespace(id=5)
-    col = _make_occasion(id=1, owner_id=5)
-    gift_list = _make_gift_list(id=10, owner_id=99)
-    mock_get_list.return_value = gift_list
+    calls = []
+    with patch(FAMILIES_REPO) as families_repo, patch(REPO) as repo:
+        families_repo.get_family.return_value = _make_family()
+        families_repo.get_family_member.return_value = _make_member("member")
+        repo.has_active_occasion.side_effect = lambda *a, **k: calls.append(
+            "check"
+        ) or False
+        repo.create_occasion.side_effect = lambda *a, **k: calls.append(
+            "create"
+        ) or _make_occasion()
 
-    service.add_item(db, occasion=col, list_id=10, user=user)
+        service.create_occasion(
+            db, family_id=1, actor=_make_user(), name="Christmas 2026"
+        )
 
-    mock_get_list.assert_called_once_with(db, 10)
-    mock_can_view.assert_called_once_with(db, user, gift_list)
-    mock_find_item.assert_called_once_with(db, 1, 10)
-    mock_create_item.assert_called_once_with(db, 1, 10)
+    assert calls == ["check", "create"]
 
 
-@patch(f"{REPO}.create_occasion_item")
-@patch(CAN_VIEW, return_value=False)
-@patch(f"{REPO}.get_gift_list_by_id")
-def test_add_item_not_viewable(mock_get_list, mock_can_view, mock_create_item):
+# ---------------------------------------------------------------------------
+# get_occasion
+# ---------------------------------------------------------------------------
+
+
+def test_get_occasion_returns_it_for_a_member():
     db = MagicMock()
-    user = SimpleNamespace(id=5)
-    col = _make_occasion(id=1, owner_id=5)
-    gift_list = _make_gift_list(id=10, owner_id=99)
-    mock_get_list.return_value = gift_list
+    occasion = _make_occasion()
+    with patch(FAMILIES_REPO) as families_repo, patch(REPO) as repo:
+        repo.get_occasion.return_value = occasion
+        families_repo.get_family.return_value = _make_family()
+        families_repo.get_family_member.return_value = _make_member("member")
 
-    with pytest.raises(ForbiddenError):
-        service.add_item(db, occasion=col, list_id=10, user=user)
-
-    mock_can_view.assert_called_once_with(db, user, gift_list)
-    mock_create_item.assert_not_called()
+        assert service.get_occasion(db, occasion_id=5, actor=_make_user()) is occasion
 
 
-@patch(CAN_VIEW, return_value=True)
-@patch(f"{REPO}.find_occasion_item")
-@patch(f"{REPO}.get_gift_list_by_id")
-def test_add_item_duplicate(mock_get_list, mock_find_item, mock_can_view):
+def test_get_occasion_raises_not_found_for_an_unknown_id():
     db = MagicMock()
-    user = SimpleNamespace(id=5)
-    col = _make_occasion(id=1, owner_id=5)
-    gift_list = _make_gift_list(id=10, owner_id=5)
-    mock_get_list.return_value = gift_list
-    mock_find_item.return_value = _make_occasion_item()
-
-    with pytest.raises(ConflictError):
-        service.add_item(db, occasion=col, list_id=10, user=user)
+    with patch(REPO) as repo:
+        repo.get_occasion.return_value = None
+        with pytest.raises(NotFoundError):
+            service.get_occasion(db, occasion_id=5, actor=_make_user())
 
 
-@patch(f"{REPO}.get_gift_list_by_id", return_value=None)
-def test_add_item_list_not_found(mock_get_list):
-    # List existence is checked before access, so can_view_list is never reached.
+def test_get_occasion_is_forbidden_for_an_outsider():
     db = MagicMock()
-    user = SimpleNamespace(id=5)
-    col = _make_occasion(id=1, owner_id=5)
+    with patch(FAMILIES_REPO) as families_repo, patch(REPO) as repo:
+        repo.get_occasion.return_value = _make_occasion()
+        families_repo.get_family.return_value = _make_family()
+        families_repo.get_family_member.return_value = None
 
-    with pytest.raises(NotFoundError):
-        service.add_item(db, occasion=col, list_id=999, user=user)
+        with pytest.raises(ForbiddenError):
+            service.get_occasion(db, occasion_id=5, actor=_make_user())
 
 
-# --- remove_item ---
+# ---------------------------------------------------------------------------
+# update_occasion — organizer only
+# ---------------------------------------------------------------------------
 
 
-@patch(f"{REPO}.delete_occasion_item")
-@patch(f"{REPO}.find_occasion_item")
-def test_remove_item(mock_find, mock_delete):
+def test_an_organizer_may_update_an_occasion():
     db = MagicMock()
-    col = _make_occasion(id=1)
-    item = _make_occasion_item(occasion_id=1, list_id=10)
-    mock_find.return_value = item
+    occasion = _make_occasion()
+    with patch(ORGANIZER_GATE_REPO) as families_repo, patch(REPO) as repo:
+        repo.get_occasion.return_value = occasion
+        families_repo.get_family.return_value = _make_family()
+        families_repo.get_family_member.return_value = _make_member("organizer")
+        repo.update_occasion.return_value = occasion
 
-    service.remove_item(db, occasion=col, list_id=10)
+        result = service.update_occasion(
+            db, occasion_id=5, actor=_make_user(), update_data={"name": "Renamed"}
+        )
 
-    mock_find.assert_called_once_with(db, 1, 10)
-    mock_delete.assert_called_once_with(db, item)
+    assert result is occasion
+    repo.update_occasion.assert_called_once_with(db, occasion, {"name": "Renamed"})
 
 
-@patch(f"{REPO}.find_occasion_item", return_value=None)
-def test_remove_item_not_found(mock_find):
+def test_a_plain_member_may_not_update_an_occasion():
     db = MagicMock()
-    col = _make_occasion(id=1)
+    with patch(ORGANIZER_GATE_REPO) as families_repo, patch(REPO) as repo:
+        repo.get_occasion.return_value = _make_occasion()
+        families_repo.get_family.return_value = _make_family()
+        families_repo.get_family_member.return_value = _make_member("member")
 
-    with pytest.raises(NotFoundError):
-        service.remove_item(db, occasion=col, list_id=999)
+        with pytest.raises(ForbiddenError):
+            service.update_occasion(
+                db, occasion_id=5, actor=_make_user(), update_data={"name": "Renamed"}
+            )
+
+    repo.update_occasion.assert_not_called()
+
+
+def test_an_outsider_may_not_update_an_occasion():
+    db = MagicMock()
+    with patch(ORGANIZER_GATE_REPO) as families_repo, patch(REPO) as repo:
+        repo.get_occasion.return_value = _make_occasion()
+        families_repo.get_family.return_value = _make_family()
+        families_repo.get_family_member.return_value = None
+
+        with pytest.raises(ForbiddenError):
+            service.update_occasion(
+                db, occasion_id=5, actor=_make_user(), update_data={"name": "Renamed"}
+            )
+
+    repo.update_occasion.assert_not_called()
+
+
+def test_update_occasion_raises_not_found_for_an_unknown_id():
+    db = MagicMock()
+    with patch(REPO) as repo:
+        repo.get_occasion.return_value = None
+        with pytest.raises(NotFoundError):
+            service.update_occasion(
+                db, occasion_id=5, actor=_make_user(), update_data={"name": "Renamed"}
+            )
+
+
+@patch(BUDGETS_SERVICE)
+@patch("app.occasions.service.claims_repo.get_shopping_for_occasion")
+def test_shopping_is_scoped_to_the_caller(mock_shopping, budgets_service):
+    """The actor's own id is what bounds both halves of the payload — there is
+    no parameter that could widen either to another member's claims."""
+    db = MagicMock()
+    mock_shopping.return_value = [{"name": "Skillet"}]
+    budgets_service.get_rollup.return_value = {"amount": None}
+    actor = _make_user(id=10)
+
+    with patch(REPO) as repo, patch(FAMILIES_REPO) as families_repo:
+        repo.get_occasion.return_value = _make_occasion()
+        families_repo.get_family.return_value = _make_family()
+        families_repo.get_family_member.return_value = _make_member("member")
+
+        result = service.list_shopping(db, occasion_id=5, actor=actor)
+
+    mock_shopping.assert_called_once_with(db, 5, 10)
+    budgets_service.get_rollup.assert_called_once_with(db, user_id=10, occasion_id=5)
+    assert result == {"budget": {"amount": None}, "items": [{"name": "Skillet"}]}
+
+
+@patch(BUDGETS_SERVICE)
+def test_set_budget_is_the_callers_own_and_needs_only_membership(budgets_service):
+    """An organizer has no more say over money than any other member: the gate
+    is membership, and the budget written is always the caller's own."""
+    db = MagicMock()
+    budgets_service.set_budget.return_value = {"amount": Decimal("200.00")}
+    actor = _make_user(id=10)
+
+    with patch(REPO) as repo, patch(FAMILIES_REPO) as families_repo:
+        repo.get_occasion.return_value = _make_occasion()
+        families_repo.get_family.return_value = _make_family()
+        families_repo.get_family_member.return_value = _make_member("member")
+
+        result = service.set_budget(
+            db, occasion_id=5, actor=actor, amount=Decimal("200.00")
+        )
+
+    budgets_service.set_budget.assert_called_once_with(
+        db, user_id=10, occasion_id=5, amount=Decimal("200.00")
+    )
+    assert result == {"amount": Decimal("200.00")}
+
+
+@patch(BUDGETS_SERVICE)
+def test_set_budget_refuses_a_non_member(budgets_service):
+    db = MagicMock()
+    with patch(REPO) as repo, patch(FAMILIES_REPO) as families_repo:
+        repo.get_occasion.return_value = _make_occasion()
+        families_repo.get_family.return_value = _make_family()
+        families_repo.get_family_member.return_value = None
+
+        with pytest.raises(ForbiddenError):
+            service.set_budget(
+                db, occasion_id=5, actor=_make_user(), amount=Decimal("200.00")
+            )
+
+    budgets_service.set_budget.assert_not_called()
+
+
+@patch(BUDGETS_SERVICE)
+def test_clear_budget_refuses_a_non_member(budgets_service):
+    db = MagicMock()
+    with patch(REPO) as repo, patch(FAMILIES_REPO) as families_repo:
+        repo.get_occasion.return_value = _make_occasion()
+        families_repo.get_family.return_value = _make_family()
+        families_repo.get_family_member.return_value = None
+
+        with pytest.raises(ForbiddenError):
+            service.clear_budget(db, occasion_id=5, actor=_make_user())
+
+    budgets_service.clear_budget.assert_not_called()
+
+
+def test_shopping_refuses_a_non_member():
+    db = MagicMock()
+    with patch(REPO) as repo, patch(FAMILIES_REPO) as families_repo:
+        repo.get_occasion.return_value = _make_occasion()
+        families_repo.get_family.return_value = _make_family()
+        families_repo.get_family_member.return_value = None
+
+        with pytest.raises(ForbiddenError):
+            service.list_shopping(db, occasion_id=5, actor=_make_user())
+
+
+def test_shopping_raises_not_found_for_an_unknown_occasion():
+    db = MagicMock()
+    with patch(REPO) as repo:
+        repo.get_occasion.return_value = None
+        with pytest.raises(NotFoundError):
+            service.list_shopping(db, occasion_id=5, actor=_make_user())

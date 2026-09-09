@@ -9,7 +9,6 @@ from app.email import send_email
 from app.email.family_invite import render_family_invite_email
 from app.families import repository as families_repo
 from app.family_invites import repository as repo
-from app.list_families import service as list_family_service
 from app.models.family import Family
 from app.models.family_invite import FamilyInvite
 from app.models.family_member import FamilyMember
@@ -21,7 +20,18 @@ logger = logging.getLogger(__name__)
 INVITE_EXPIRY_DAYS = 7
 
 
-def _require_organizer(db: Session, family_id: int, actor: User) -> tuple[Family, FamilyMember]:
+def _require_organizer(
+    db: Session,
+    family_id: int,
+    actor: User,
+    *,
+    message: str = "Only organizers can manage invites.",
+) -> tuple[Family, FamilyMember]:
+    """Load a family and assert the actor organizes it.
+
+    Shared with `app/occasions/service.py`, which passes its own `message`; the
+    membership and role lookup is identical, only the refusal differs.
+    """
     family = families_repo.get_family(db, family_id)
     if family is None:
         raise NotFoundError("Family not found.")
@@ -29,7 +39,7 @@ def _require_organizer(db: Session, family_id: int, actor: User) -> tuple[Family
     if membership is None:
         raise ForbiddenError("Not a member of this family.")
     if membership.role != "organizer":
-        raise ForbiddenError("Only organizers can manage invites.")
+        raise ForbiddenError(message)
     return family, membership
 
 
@@ -60,7 +70,6 @@ def create_invite(
     actor: User,
     email: str,
     role: str,
-    simple_mode: bool,
 ) -> FamilyInvite:
     family, _ = _require_organizer(db, family_id, actor)
 
@@ -83,7 +92,6 @@ def create_invite(
         family_id=family_id,
         email=email,
         role=role,
-        simple_mode=simple_mode,
         token=str(uuid4()),
         expires_at=datetime.now(timezone.utc) + timedelta(days=INVITE_EXPIRY_DAYS),
         invited_by_id=actor.id,
@@ -173,7 +181,6 @@ def accept_invite(db: Session, token: str, actor: User) -> dict:
     families_repo.create_family_member(
         db, family_id=invite.family_id, user_id=actor.id, role=invite.role
     )
-    list_family_service.grant_existing_lists_on_join(db, actor, invite.family_id)
     invite.accepted_at = datetime.now(timezone.utc)
     db.flush()
     family = families_repo.get_family(db, invite.family_id)

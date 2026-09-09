@@ -59,9 +59,10 @@ app/
   database.py          # Engine, sessionmaker, Base
   dependencies.py      # get_db, token creation, get_current_user, require_admin, access deps
   access.py            # Visibility predicates: can_view_list, users_share_access
-  models/              # user, account_person, invite, gift_list, gift, list_share,
-                       # list_family_share, connection, occasion, occasion_item,
-                       # password_reset_token, family, family_member, family_invite
+  models/              # user, account_person, invite, gift_list, gift, claim,
+                       # list_share, list_occasion_share, connection, folder,
+                       # folder_item, password_reset_token, family, family_member,
+                       # family_invite, occasion, budget
   schemas/             # Pydantic request/response models, one module per domain
   services/exceptions.py   # NotFoundError, ForbiddenError, ConflictError, BadRequestError
   account/             # GET/PUT /account — the shared-account flag and its people
@@ -69,13 +70,20 @@ app/
   users/               # /users CRUD (admin-only)
   invites/             # /invites CRUD (admin-only)
   lists/               # /lists CRUD, filter logic, owner vs viewer responses
-  gifts/               # /lists/{id}/gifts CRUD + claim/unclaim
+  gifts/               # /lists/{id}/gifts CRUD + claim/unclaim/purchase
+  claims/              # PATCH /claims/{id} + every claim query; the claim is its own
+                       # entity (ADR 0003) and files under one occasion (NEU-1269)
   shares/              # /lists/{id}/shares — direct shares, cascade on unshare
-  list_families/       # /lists/{id}/families — per-family grants, claim handling on revoke
+  list_occasions/      # /lists/{id}/occasions — occasion shares, claim handling on revoke
   connections/         # /connections lifecycle + cascade disconnect
-  occasions/           # /occasions CRUD + items with access checks
+  folders/             # /folders CRUD + items with access checks, and the
+                       # folder shopping tab
   families/            # /families CRUD, membership, cascade cleanup
   family_invites/      # Family invite create/accept/decline/revoke
+  occasions/           # /families/{id}/occasions + /occasions/{id} — the family
+                       # occasion, and its shopping tab
+  budgets/             # The budget row and the rollup. No router: the endpoints
+                       # live under the occasion and folder that gate them
   meta/                # GET /meta — URL metadata with SSRF protection
   cli/create_admin.py  # Interactive first-admin creation
 alembic/versions/      # Migrations
@@ -85,25 +93,25 @@ tests/
 ```
 
 ## Authentication & authorization
-- **Access token**: JWT HS256, 30 min, carries user id/email/role/simple_mode, returned in the JSON body
+- **Access token**: JWT HS256, 30 min, carries user id/email/role, returned in the JSON body
 - **Refresh token**: JWT HS256, 7 days, `type="refresh"`, HttpOnly cookie `boone_refresh_token` (`Secure`, `SameSite=None`, `Path=/auth`); rotated on every `/auth/refresh`; `POST /auth/logout` clears it
 - **JWT `sub` claim must be a string** — `str(user.id)` encoding, `int(payload["sub"])` decoding (PyJWT RFC 7519)
 - **Route protection**: `get_current_user` (401), `require_admin` (403). Defense in depth: `get_current_user` rejects refresh tokens and checks `is_active`, so a deactivated user cannot authenticate on a still-valid token
 - **Registration is invite-only** — the email comes from the invite record (admin or family invite), never the request body
 - **List access**: `get_list_for_owner` (403 if not owner); `get_list_for_viewer` goes through `can_view_list`
-- **Gift responses**: owners get `GiftOwnerRead` (no claim fields), shared viewers get `GiftRead` (with them)
-- **`simple_mode`**: user preference column, JWT claim, toggled via `PUT /auth/profile { name?, simple_mode? }` (returns fresh tokens). **The DB is authoritative** — `get_current_user` re-reads it rather than trusting the token
+- **Gift responses**: owners get `GiftOwnerRead` (no claim fields), shared viewers get `GiftRead` (with them, read through `Gift.claim`)
+- **List-row responses**: owners get `GiftListRead`, viewers get `GiftListViewerRead` (which adds `claimed_count` and `my_unpurchased_claim_count`). `app/lists/service.py:to_summary` chooses, and passes it the caller as `context={"viewer_id": ...}` because the second count is about that one caller; endpoints returning a mix declare no `response_model`
 
 ## Visibility model
 
-`can_view_list` in `app/access.py` is the single predicate: **owner OR a `ListShare` row OR the owner granted the list to a family the viewer belongs to.** A connection alone does not grant visibility, and neither does bare family co-membership. Claims and occasion-item gating both route through it, so family-visible lists work for those operations without special cases.
+`can_view_list` in `app/access.py` is the single predicate: **owner OR a `ListShare` row OR the list is shared to an occasion of a family the viewer belongs to.** A connection alone does not grant visibility, and neither does bare family co-membership. Claims and folder-item gating both route through it, so occasion-visible lists work for those operations without special cases. It deliberately does **not** consult `occasions.is_archived` — archiving is not unsharing.
 
-`users_share_access` answers a different question — "is there a standing relationship" — and is deliberately **not** gated on grants.
+`users_share_access` answers a different question — "is there a standing relationship" — and is deliberately **not** gated on shares.
 
 ### Families
-- **Tables**: `families` (name, created_by_id); `family_members` (family_id, user_id, role `organizer|member`, unique per pair); `family_invites` (family_id, email, token UUID, role, simple_mode, invited_by_id, accepted_at, declined_at)
+- **Tables**: `families` (name, created_by_id); `family_members` (family_id, user_id, role `organizer|member`, unique per pair); `family_invites` (family_id, email, token UUID, role, invited_by_id, accepted_at, declined_at)
 - `POST/GET/PUT/DELETE /families`, `DELETE /families/{id}/members/{user_id}` (leave or remove), `PUT /families/{id}/members/{user_id}/role`
-- Invites: `POST/GET/DELETE /families/{id}/invites`, `GET /families/invites` (incoming), `POST /families/invites/{token}/accept|decline`. Accepting adds the member **and** sets `users.simple_mode` from the invite — including at account creation when the invitee registers through the invite token
+- Invites: `POST/GET/DELETE /families/{id}/invites`, `GET /families/invites` (incoming), `POST /families/invites/{token}/accept|decline`. Accepting adds the member. Registering through the invite token creates the account and the membership in one step
 
 ### Shared accounts
 One login used by more than one person. **Account people are labels, not identities** — the account
@@ -131,18 +139,165 @@ hidden on every list the account owns, so a couple cannot coordinate shopping th
   a request-body validator; the same applies to the person/recipient exclusivity rule, which only
   `app/lists/service.py` can judge against the *stored* row on a partial update
 
-### Per-family list sharing
-Family visibility is an explicit per-(list, family) `ListFamilyShare` grant, not implied by co-membership.
-- `GET /lists/{id}/families` — every family the **owner** belongs to, each with a `shared` flag; readable in both modes
-- `PUT /lists/{id}/families/{family_id}` — grant; 204, idempotent; 403 in simple mode
-- `DELETE /lists/{id}/families/{family_id}?claims=release|keep` — revoke; 204, or **409** when a member who would lose access holds a claim and no `claims` choice was given
-- `POST /lists` accepts `family_ids` — honoured in full mode (each must be the caller's family, else 403), ignored in simple mode, which shares with all the owner's families
+### Share-to-an-occasion
+Family visibility is an explicit per-(list, occasion) `ListOccasionShare` row, not implied by co-membership. The family is derived through `occasions.family_id` and is **not** stored twice. See `docs/adr/0002-family-shares-target-an-occasion.md`.
+- `GET /lists/{id}/families` — the sharing control's families half: every family the **owner** belongs to, each carrying its shareable `occasions` (`id`, `name`, `is_archived`, `shared`). An empty `occasions` is the "no active occasion" state the control renders **disabled**; an archived occasion appears only when the list is already shared to it, so its name stays displayable
+- `PUT /lists/{id}/occasions/{occasion_id}` — share; 204, idempotent. **409** if the occasion is archived, **403** if the caller is not a member of its family, **404** if it does not exist. Membership is checked first, so a non-member learns nothing about the occasion — not even that it is archived
+- `DELETE /lists/{id}/occasions/{occasion_id}?claims=release|keep` — unshare; 204, or **409** when a member who would lose access holds a claim and no `claims` choice was given. Works on an archived occasion: archiving blocks new shares, not the withdrawal of old ones
+- `POST /lists` accepts `occasion_ids` — each must be on one of the caller's families and unarchived, else 403/409. Omitted or empty shares with nobody; there is no auto-grant, and the §5.2 pre-checking is a client concern
+- `GET /occasions/{id}/lists` — the occasion's lists, for any member of its family, each still routed through `can_view_list`
+- `GET /occasions/{id}/shopping` — see "Shopping tabs" below
 - `GET /lists?filter=shared` — **the one shared scope**: every list another account has made
-  visible to the caller, by a direct `ListShare` **or** a family grant. Each row carries
-  `shared_via` (`{kind: user|family, id, name}`); a list reachable both ways appears once, as
-  `kind: user`. The caller's own lists are never in it. There is no `?filter=family`
+  visible to the caller, by a direct `ListShare` **or** an occasion share. Each row carries
+  `shared_via` — `{kind: "user", id, name}` or `{kind: "occasion", id, name, family: {id, name}}`;
+  a list reachable both ways appears once, as `kind: user`. An archived occasion still appears. The
+  caller's own lists are never in it. There is no `?filter=family`
 
-**A grant row implies the owner is still a member of that family.** Read queries rely on that and don't re-check, so every membership departure (`remove_member`, `delete_family`) deletes the affected grants.
+**A share row implies the owner is still a member of the occasion's family.** Read queries rely on that and don't re-check, so every membership departure (`remove_member`, `delete_family`) deletes the affected shares — across *every* occasion of that family.
+
+### Family occasions
+A family's shared gifting occasion — "Boone Family · Christmas 2026". The unit a list is shared
+*to*, and the unit a budget hangs off. See `docs/adr/0002-family-shares-target-an-occasion.md`.
+- **Table**: `occasions` (family_id indexed, name, is_archived, created_by_id). **No dates** — the
+  name bounds the period, and dates only existed to support an attribution rule that no longer exists
+- `GET /families/{family_id}/occasions?archived=false` and `GET /occasions/{id}` — **any member**
+- `POST /families/{family_id}/occasions` — **any member**, so nobody waits on an absent organizer
+  while the family cannot be shared to at all. A second active occasion is **not refused**: the
+  response carries `has_other_active` so the client can warn without a second call
+- `PUT /occasions/{id}` (name, `is_archived`) — **organizer only**, 403 otherwise. This is the first
+  place role gates something a member can *see*; renaming changes a label everyone's budgets are
+  filed under. It reuses `_require_organizer` from `app/family_invites/service.py`, passing its own
+  refusal message
+- **Deleting a family deletes its occasions**, alongside the members — `delete_family` clears
+  everything pointing at the family so the row itself can go. The unwind order matters: the shares
+  point at the occasions, which point at the family, and neither FK has an `ondelete`, so anything
+  left behind makes the delete fail outright under `PRAGMA foreign_keys=ON`
+- `OccasionUpdate` treats `None` as "leave it alone", so an explicit `null` in the body is a **422**,
+  never a write: neither column is nullable
+
+### Claims
+A claim is one account's private intent to buy a gift, and now its own row rather than three columns
+on the gift. See `docs/adr/0003-claims-are-their-own-table.md`.
+- **Table**: `claims` (gift_id **unique**, user_id indexed, occasion_id nullable+indexed, claimed_at,
+  purchased_at, amount_paid `Numeric(10,2)`). The unique `gift_id` is what makes one claimer per
+  gift a constraint rather than a convention, and what decides the winner of a claim race —
+  `create_claim` inserts inside a SAVEPOINT and returns `None` to the loser, who gets the 409
+- `POST /lists/{id}/gifts/{gift_id}/claim` — **201**, body `{ occasion_id }` optional, and the
+  response states the filing actually recorded. `DELETE` deletes the row, so the purchase state and
+  the amount go with it and there is no explicit reset to forget
+- `PATCH /claims/{id}` — the claimer's own correction: `occasion_id`, `amount_paid`, or both, read
+  with `exclude_unset` so an amount-only edit never touches the filing. **403** for anyone else
+  *and* for a claim that does not exist, so probing ids tells the list's owner nothing
+- `POST .../purchase` takes an optional `{ amount_paid }`. Omitting it leaves whatever is recorded
+  (so unticking and re-ticking is non-destructive), an explicit null clears it, and no body at all is
+  the "skip the amount" case. `DELETE .../purchase` clears `purchased_at` and **keeps**
+  `amount_paid`
+- **Every claim query lives in `app/claims/repository.py`** — including the teardown the connections,
+  families, list-occasion and users services call. Don't hand-write claim SQL in a domain repository
+- `amount_paid` is the *claimer's* spend; `gifts.price` is the *owner's* asking price and is public
+  to viewers. Never seed one from the other
+
+#### Shopping tabs
+`GET /occasions/{id}/shopping` (any member of the occasion's family) and
+`GET /folders/{id}/shopping` (the folder's owner) are the same payload under two scopes:
+`{ budget, items }`, where each item is one of the caller's own claims carrying the gift, the
+owner's asking price, the list it came from, and the claimer's `purchased_at` and `amount_paid`.
+Ordered by list then gift — "grouped by list" is the client grouping on `list_id`, and the order is
+stable across reloads. The `budget` half is the rollup described under "Budgets" below; it rides
+with the rows rather than sitting behind a second call, because a total fetched separately can
+render a figure the list beneath it contradicts.
+
+- **Only ever the caller's own claims.** There is no parameter, no admin path and no aggregate that
+  returns anyone else's — `CONTEXT.md` invariant 1, not a preference. Both queries are keyed on the
+  caller's user id, and both have a regression test that a second user's claims never appear
+- Both live in `app/claims/repository.py` (`get_shopping_for_occasion`, `get_shopping_for_folder`)
+  off one shared select, so a column added to the payload lands on both tabs. The folder query was
+  `app/folders/repository.py:get_shopping_list_items`, and `/folders/{id}/shopping-list` was
+  renamed to `/folders/{id}/shopping` outright — no shim (project spec §12)
+- The occasion tab reads `claims.occasion_id` **alone**, with no join back to the shares: filing is
+  stored, not derived, so a claim outlives the share being revoked and the occasion being archived
+- **An archived occasion still serves its shopping payload** — the January shopper is still buying
+  against December's occasion
+- Rows carry `claim_id` because correcting the filing or the amount goes through `PATCH /claims/{id}`
+- The occasion tab gates on **current** family membership, so someone who has left the family can no
+  longer read it even for claims they filed themselves and which survive the departure. That is what
+  §10.1 asks for, and it is a live instance of the §9.4 gap: those claims are then reachable only
+  through a folder
+
+#### Filing a claim under an occasion
+`claims.occasion_id` is not "which occasion this gift was claimed for". A claim is a single global
+fact — the gift is taken — while the filing is the claimer's own private record of their own spend,
+so it lands in exactly one budget. Where the two conflict, the claim wins. See
+`app/claims/service.py`.
+
+**Two derived sets, never one** (`occasion_sets`, one query per list and not per gift):
+
+| Set | Is | Decides |
+|---|---|---|
+| `allowed` | Occasions the list is shared to ∩ the claimer's families, **archived included** | Whether an explicitly supplied id is accepted, on `POST` and `PATCH` |
+| `suggested` | The active members of `allowed`; all of `allowed` when none are active | Auto-pick versus prompt, and what the client renders |
+
+Narrowing `suggested` to active is what stops every claim prompting forever once a family has three
+Christmases behind it; the `else allowed` fallback keeps the January shopper filing correctly.
+Keeping `allowed` wide is what makes a misfiled late claim fixable — narrow it and the correction
+path stops existing at all.
+
+- **`POST` with no id**: 0 suggested files under null, 1 files silently, **2+ is a 400
+  `ambiguous_occasion` and no claim row is written**. The client had `claim_candidates` and should
+  have prompted; without the 400, a frontend that silently stops prompting is indistinguishable
+  from a working one and every budget quietly reads low
+- **`POST` with an id outside `allowed`**: **201, the claim still stands**, filed by the no-id rule
+  (and under null where that rule cannot decide). Not a 403 — claiming is competitive, and a share
+  revoked between the client's read and the user's click must never cost someone the gift. It is
+  not an error and must not be logged as one
+- **`PATCH` with an id outside `allowed`**: **403**, no fallback. The user is explicitly choosing,
+  and silently recording something else would be worse than refusing
+- **Filing is stored, never derived.** Revoking the share, archiving the occasion and leaving the
+  family each leave an existing filing untouched — where a claim survives a cascade, its filing
+  survives with it. A budget whose history rewrites itself is worse than no budget
+- `GiftListDetailViewer` carries `claim_candidates` (= `suggested`) and `claim_options`
+  (= `allowed`), each entry `{id, name, is_archived, family: {id, name}}`. **`GiftListDetailOwner`
+  carries neither, ever** — they are derived from the viewer's own memberships, and this is exactly
+  the class of field that produced the `claimed_count` leak
+- The filing itself is claimer-private: `GiftClaimRead` declares `occasion_id` and is returned only
+  from the claim endpoints, where the caller *is* the claimer. `GiftRead` — the gift row every
+  viewer of a list reads — deliberately does not declare it
+
+### Budgets
+What one user means to spend on one occasion, or on one folder. **Every budget is private to the
+user who set it** — there is no family budget, and no endpoint anywhere returns another user's
+budget, spend or counts (`CONTEXT.md` invariant 1). Organizers name an occasion; they never touch
+money and never see any.
+- **Table**: `budgets` (user_id indexed, occasion_id nullable, folder_id nullable, amount
+  `Numeric(10,2)`), unique on `(user_id, occasion_id)` and on `(user_id, folder_id)`. Both
+  constraints coexist because a NULL never collides in a unique index
+- **`occasion_id` and `folder_id` are mutually exclusive and exactly one is set**, enforced in
+  `app/budgets/service.py` rather than by a check constraint: SQLite cannot gain one without
+  `render_as_batch` recreating the table, and the service raises the 400 either way
+- `PUT`/`DELETE /occasions/{id}/budget` and `PUT`/`DELETE /folders/{id}/budget`, always the
+  **caller's own** row. Both return the rollup — the `DELETE` answers **200** with the target
+  cleared rather than 204, since the counts survive it and the tab re-renders the same line.
+  `DELETE` with no budget set is a 404
+- **Rollup**: `{ amount, spent, remaining, bought_count, total_count, unpriced_count }`, returned on
+  every write and beside every shopping payload. `amount` and `remaining` are null when no budget is
+  set — the counts are worth rendering regardless, and null is what tells the client to offer *set*
+  rather than *edit*. `remaining` may go negative: a budget is a target, not a limit
+- **`spent` sums `amount_paid` alone.** A purchase with no amount recorded counts toward
+  `bought_count` and toward `unpriced_count` and **never** toward `spent`, so an understated total
+  reads as an understatement rather than as fact. It is never seeded from the owner's asking price
+- **`spent` counts recorded money; the counts describe shopping** — different columns on purpose. An
+  amount recorded on a claim that is not ticked bought (via `PATCH /claims/{id}`, or left behind by
+  unticking) still counts as spent while `bought_count` does not move. Gating the money on
+  `purchased_at` would drop it from the total silently, with no `unpriced_count` disclosing the gap
+- The counts live in `app/claims/repository.py` (`get_spend_for_occasion`, `get_spend_for_folder`)
+  beside the shopping queries they must agree with; `app/budgets/` holds the budget row and the
+  assembly. `app/budgets/service.py` deliberately knows nothing about who may read an occasion or a
+  folder — the scope's own service gates first and calls in afterwards, which is also what keeps the
+  imports acyclic
+- **A budget dies with its scope**: `delete_folder`, `delete_family` (through its occasions) and the
+  user purge each clear the budgets pointing at what they are about to delete, or the FK refuses
+- **No stored currency** — `amount` is a bare `Numeric(10,2)`, like `claims.amount_paid` and
+  `gifts.price`. See the project spec §14.1 for why
 
 ## Data model notes
 - **Lists carry a recipient**: `recipient_name` alone, meaning one thing — a person with no account. Read `GiftList.kept_for_absent_person` rather than testing the column. The co-resident case that `recipient_has_account = true` used to cover is an account person now (dropped in `e2b7d4a91c53`)
@@ -164,26 +319,32 @@ Family visibility is an explicit per-(list, family) `ListFamilyShare` grant, not
 | `a7c4e2b91f38` | `collections` → `occasions`, `collection_items` → `occasion_items` |
 | `b5e1c7d92a04` | `users.is_shared_account`, `account_people` table, `lists.account_person_id` |
 | `e2b7d4a91c53` | Drop `lists.recipient_has_account` |
+| `c9d4e7a2f180` | `occasions` → `folders`, `occasion_items` → `folder_items` |
+| `f1a6b3c80d27` | Drop `users.simple_mode` and `family_invites.simple_mode` |
+| `a3f8c1e70b52` | `occasions` table — the family-owned gifting occasion |
+| `b7e2d4f16c93` | `list_occasion_shares` table; drop `list_family_shares` with **no backfill** |
+| `d4c8a1f92b60` | `claims` table, **backfilled** from `gifts`; drop `gifts.claimed_by_id`, `claimed_at`, `purchased_at` |
+| `c1f9a7d4e260` | `budgets` table |
 
 ## Testing
-- ~709 test functions across 53 files
+- ~744 test functions across 56 files
 - `tests/unit/` mocks the repository layer and tests service logic in isolation
 - `tests/integration/` runs against `APP_TEST_DATABASE_URL`; each test is wrapped in a transaction that rolls back, so no data persists
-- Conftest fixtures: `db`, `client`, `admin_user`, `member_user`, `admin_headers`, `member_headers`, `sample_list`, `shared_list`, `connection`, `occasion`
+- Conftest fixtures: `db`, `client`, `admin_user`, `member_user`, `admin_headers`, `member_headers`, `sample_list`, `shared_list`, `connection`, `folder`
 - `tests/integration/test_migration_*.py` run the real Alembic revisions against a throwaway SQLite file — the only place schema-level behaviour (backfills, foreign keys, downgrades) is actually exercised, since the rest of the suite builds tables from the models
 - The rate limiter is reset by an autouse fixture
 - CI runs `uv sync --frozen && pytest tests/ -v` with `APP_JWT_SECRET=ci-test-secret`
 
 ## Dev fixtures
-`python -m scripts.seed_dev` (add `--reset` to re-seed, `--purge` to remove) builds the visibility states a single account can't produce: a directly shared list, a list reaching you only through a family, a list kept for someone with no account, an archived list, a claimed gift, a pending connection request, a simple-mode user, and a shared account with two people. All fixture users are `@example.com`, and purge only deletes rows reachable from them. Run it with `-m` — executing the file directly puts `scripts/` on `sys.path` instead of `/app`.
+`python -m scripts.seed_dev` (add `--reset` to re-seed, `--purge` to remove) builds the visibility states a single account can't produce: a directly shared list, a list reaching you only through an occasion, a list kept for someone with no account, an archived list, a pending connection request, a shared account with two people, one claim in each of its three money states — taken but not bought, bought with an amount, and bought with the amount skipped — and a family with two archived Christmases plus one active, shared a standing list, which is the only way to see a claim file silently instead of prompting. All fixture users are `@example.com`, and purge only deletes rows reachable from them. Run it with `-m` — executing the file directly puts `scripts/` on `sys.path` instead of `/app`.
 
 ## Critical conventions
 - **Router endpoints use `db.flush()`, never `db.commit()`** — the `get_db` dependency commits on success and rolls back on exception. In tests the fixture rolls back. New endpoints must follow this.
 - **SQLite FK enforcement**: `PRAGMA foreign_keys=ON` is set by a SQLAlchemy event listener on every connection — SQLite disables FK enforcement by default.
 - **Alembic uses `render_as_batch=True`** — SQLite can't do most `ALTER TABLE`, so batch mode recreates tables.
 - **Packages install to `/opt/venv`** (`UV_PROJECT_ENVIRONMENT=/opt/venv`) so the bind mount can't shadow them; `/opt/venv/bin` is on `PATH`. After `task add`, rebuild the image so the dep survives container recreation.
-- **Revoking a family grant is claim-aware but claim-blind**: owners never see claim state on their own lists, so a 409 reveals only *that* claims exist — no counts, no gift or claimer names. `claims=release` unclaims for the members losing access; `claims=keep` leaves them standing. Occasion items are deleted either way, matching `delete_share`.
-- **Cascade cleanup on relationship loss**: when a member leaves, is removed, or a family is deleted, the service calls `unclaim_gifts_between` / `delete_occasion_items_between` per affected pair — but only when the two users no longer share access by any remaining path (no accepted connection, no other common family). `list_shares` rows are never touched; family access doesn't create share rows.
+- **Revoking an occasion share is claim-aware but claim-blind**: owners never see claim state on their own lists, so a 409 reveals only *that* claims exist — no counts, no gift or claimer names. `claims=release` unclaims for the members losing access; `claims=keep` leaves them standing. Folder items are deleted either way, matching `delete_share`. "Losing access" is computed per family, so a sibling occasion on the same family — or another family still sharing the list — spares everyone in it.
+- **Cascade cleanup on relationship loss**: when a member leaves, is removed, or a family is deleted, the service calls `unclaim_gifts_between` / `delete_folder_items_between` per affected pair — but only when the two users no longer share access by any remaining path (no accepted connection, no other common family). `list_shares` rows are never touched; family access doesn't create share rows.
 
 ## Debugging CI failures
 - **If told a CI/workflow run failed, always investigate via `gh` first** before running anything locally or claiming it's fixed: `gh run list -w CI` to find the failed run, then `gh run view <id> --log-failed`.
@@ -207,7 +368,7 @@ Family visibility is an explicit per-(list, family) `ListFamilyShare` grant, not
 
 **One ticket, at most one entry.** Work branches are squash-merged, so a ticket contributes exactly one commit. That is why the PR title has to be a well-formed Conventional Commit subject: it becomes the squash commit's subject, and thence the release-note line.
 
-**Releases are cut by hand.** There is no release workflow — `git cliff` is run locally to update `RELEASE_NOTES.md`, then the release is tagged (`tag_pattern = "v[0-9].*"`) and pushed. Nothing regenerates the notes afterwards, so a subject that was wrong at merge time can only be fixed by rewriting history or editing the notes directly. `git cliff --unreleased` previews what the next release will read like.
+**Releases are cut by hand, driven by two tasks.** `task release-branch` cuts the next `release/vX.Y.Z` off `main` — a minor bump from the latest GitHub release by default, `-- --major` or `-- --patch` to change that. `task release-notes` branches off the current release branch, regenerates `RELEASE_NOTES.md` with `git cliff --tag <version> -u --prepend`, opens a PR against the release branch, waits for CI and squash-merges it; the version comes from the release branch name, so nothing else has to track it. Both run on the host, not in the container. There is still no release *workflow*: the tag (`tag_pattern = "v[0-9].*"`) and the GitHub release are made by hand. Nothing regenerates the notes afterwards, so a subject that was wrong at merge time can only be fixed by rewriting history or editing the notes directly. `git cliff --unreleased` previews what the next release will read like.
 
 ## Pre-commit (planned, not yet installed)
 Pre-commit will live **on the host** (system Python), not in the container; its hooks delegate to `task` commands that run the checks inside Docker (`task lint`, `task test`). Never install pre-commit or its hooks inside the container.

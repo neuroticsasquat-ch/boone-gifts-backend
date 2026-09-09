@@ -20,7 +20,6 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(255))
     role: Mapped[str] = mapped_column(String(50), default="member")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    simple_mode: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     is_shared_account: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="0"
     )

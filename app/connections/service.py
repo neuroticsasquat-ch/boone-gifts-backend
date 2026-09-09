@@ -1,8 +1,10 @@
 from sqlalchemy.orm import Session
 
+from app.claims import repository as claims_repo
 from app.config import settings
 from app.connections import repository as repo
 from app.lists import repository as list_repo
+from app.lists import service as list_service
 from app.email.connection_request import render_connection_request_email
 from app.email.sender import send_email
 from app.models.connection import Connection
@@ -129,10 +131,15 @@ def get_connection_lists(
         if connection.requester_id == user_id
         else connection.requester_id
     )
-    return list_repo.get_lists_shared_by_user(db, owner_id=other_id, shared_with_user_id=user_id)
+    return [
+        list_service.to_summary(gift_list, user_id)
+        for gift_list in list_repo.get_lists_shared_by_user(
+            db, owner_id=other_id, shared_with_user_id=user_id
+        )
+    ]
 
 
 def cascade_disconnect(db: Session, user_a_id: int, user_b_id: int) -> None:
-    repo.unclaim_gifts_between(db, user_a_id, user_b_id)
+    claims_repo.unclaim_gifts_between(db, user_a_id, user_b_id)
     repo.delete_shares_between(db, user_a_id, user_b_id)
-    repo.delete_occasion_items_between(db, user_a_id, user_b_id)
+    repo.delete_folder_items_between(db, user_a_id, user_b_id)
