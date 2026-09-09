@@ -36,11 +36,12 @@ vacated by the rename precisely so the family concept could claim it.
 
 1. **The owner never sees claims on their own list.** This is structural, not discipline: the claim
    is its own row and there is nothing claim-shaped left on `gifts`, so an owner-facing serializer
-   has nothing to forget (ADR 0003). `claimed_count` lives on `GiftListViewerRead`, and
-   `app/lists/service.py:to_summary` is the single place that decides which schema a list row gets —
-   route new list-row responses through it rather than naming a schema at the endpoint. Every
-   surface that could leak claim state to an owner — including the 409 on revoking an occasion
-   share — reveals only *that* claims exist, never counts, gift names, or claimer names.
+   has nothing to forget (ADR 0003). `claimed_count` and `my_unpurchased_claim_count` live on
+   `GiftListViewerRead`, and `app/lists/service.py:to_summary` is the single place that decides
+   which schema a list row gets — route new list-row responses through it rather than naming a
+   schema at the endpoint. Every surface that could leak claim state to an owner — including the
+   409 on revoking an occasion share — reveals only *that* claims exist, never counts, gift names,
+   or claimer names.
    `tests/integration/test_owner_blindness.py` sweeps the owner-facing responses for it.
 
 2. **Visibility has exactly one predicate.** `can_view_list` in `app/access.py`: owner, OR a

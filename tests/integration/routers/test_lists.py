@@ -742,3 +742,217 @@ def test_list_without_a_person_reports_both_fields_null(
     data = client.get(f"/lists/{sample_list.id}", headers=member_headers).json()
     assert data["account_person_id"] is None
     assert data["account_person_name"] is None
+
+
+# --- unpurchased-claims count on shared rows (NEU-1279) ---
+#
+# The `• N to buy` badge on the Lists dashboard (project spec §9.1). For a
+# directly shared list it is the *only* route to the claim — that claim files
+# under no occasion and, unless the list sits in a folder, appears on no
+# shopping tab at all (§9.4) — so it is required, not decorative.
+
+
+@pytest.fixture
+def shopping_world(db, family_world):
+    """`family_world`, with claims on it: U has one gift still to buy on L_p and
+    one on L_q, has already bought a second on L_p, and Q has claimed a third
+    that is none of U's business."""
+    from datetime import datetime, timezone
+
+    from app.models.claim import Claim
+    from app.models.gift import Gift
+
+    w = family_world
+    to_buy, bought, qs, spare = (
+        Gift(list_id=w.l_p.id, name="To buy"),
+        Gift(list_id=w.l_p.id, name="Bought"),
+        Gift(list_id=w.l_p.id, name="Q's pick"),
+        Gift(list_id=w.l_p.id, name="Unclaimed"),
+    )
+    on_l_q = Gift(list_id=w.l_q.id, name="To buy on Q's list")
+    db.add_all([to_buy, bought, qs, spare, on_l_q])
+    db.flush()
+
+    now = datetime.now(timezone.utc)
+    db.add_all(
+        [
+            Claim(gift_id=to_buy.id, user_id=w.u.id, claimed_at=now),
+            Claim(gift_id=bought.id, user_id=w.u.id, claimed_at=now, purchased_at=now),
+            Claim(gift_id=qs.id, user_id=w.q.id, claimed_at=now),
+            Claim(gift_id=on_l_q.id, user_id=w.u.id, claimed_at=now),
+        ]
+    )
+    db.flush()
+    return w
+
+
+def _row(response, list_id):
+    return next(row for row in response.json() if row["id"] == list_id)
+
+
+def test_shared_row_counts_the_callers_own_unpurchased_claims(client, shopping_world):
+    w = shopping_world
+    response = client.get("/lists?filter=shared", headers=_auth(w.u))
+    assert response.status_code == 200
+    row = _row(response, w.l_p.id)
+    # Three of L_p's four gifts are claimed; one of those is U's and unbought.
+    assert row["claimed_count"] == 3
+    assert row["my_unpurchased_claim_count"] == 1
+
+
+def test_a_purchased_claim_is_not_still_to_buy(client, db, shopping_world):
+    """Ticking a gift bought is what clears it off the badge."""
+    from datetime import datetime, timezone
+
+    from app.models.claim import Claim
+    from app.models.gift import Gift
+
+    w = shopping_world
+    still_to_buy = (
+        db.query(Claim)
+        .join(Gift, Gift.id == Claim.gift_id)
+        .filter(Gift.list_id == w.l_p.id, Claim.user_id == w.u.id,
+                Claim.purchased_at.is_(None))
+        .one()
+    )
+    still_to_buy.purchased_at = datetime.now(timezone.utc)
+    db.flush()
+
+    response = client.get("/lists?filter=shared", headers=_auth(w.u))
+    assert _row(response, w.l_p.id)["my_unpurchased_claim_count"] == 0
+    # The list is no less spoken for, though — the two counts answer different
+    # questions and only one of them is about the caller.
+    assert _row(response, w.l_p.id)["claimed_count"] == 3
+
+
+def test_another_viewers_claims_are_not_mine_to_buy(client, shopping_world):
+    """Q claimed a gift on L_p; U shares F2 with Q and can see the list. The
+    badge counts what *U* has to buy, never what anyone else has taken."""
+    w = shopping_world
+    response = client.get("/lists?filter=shared", headers=_auth(w.q))
+    row = _row(response, w.l_p.id)
+    assert row["claimed_count"] == 3
+    assert row["my_unpurchased_claim_count"] == 1
+
+
+def test_the_count_is_per_row_not_per_scope(client, shopping_world):
+    """Two shared lists, one claim of U's outstanding on each: each row reports
+    its own, not the scope's total."""
+    w = shopping_world
+    response = client.get("/lists?filter=shared", headers=_auth(w.u))
+    assert _row(response, w.l_q.id)["my_unpurchased_claim_count"] == 1
+
+
+def test_a_shared_row_with_no_claims_of_mine_reports_zero(client, shopping_world):
+    w = shopping_world
+    response = client.get("/lists?filter=shared&archived=true", headers=_auth(w.u))
+    assert _row(response, w.l_p_arch.id)["my_unpurchased_claim_count"] == 0
+
+
+def test_the_unfiltered_scope_carries_the_count_on_shared_rows_only(
+    client, shopping_world
+):
+    """`GET /lists` mixes owned and shared rows. U owns L_u, which must not
+    carry the field at all — the same rule `claimed_count` broke (ADR 0003)."""
+    w = shopping_world
+    response = client.get("/lists", headers=_auth(w.u))
+    assert response.status_code == 200
+    assert "my_unpurchased_claim_count" not in _row(response, w.l_u.id)
+    shared = _row(response, w.l_p.id)
+    assert shared["my_unpurchased_claim_count"] == 1
+
+
+def test_the_count_costs_no_query_per_row(client, db, shopping_world):
+    """The badge must not reintroduce an N+1 across the shared scope: whatever
+    `GET /lists?filter=shared` costs, it costs the same for several times the
+    rows. The added lists carry claimed gifts of their own, so this pins the
+    batching of `Gift.claim` as well as of `GiftList.gifts` — a count queried
+    per gift would slip past rows that had none."""
+    from datetime import datetime, timezone
+
+    from sqlalchemy import event
+
+    from app.models.claim import Claim
+    from app.models.gift import Gift
+    from app.models.gift_list import GiftList
+    from app.models.list_occasion_share import ListOccasionShare
+
+    w = shopping_world
+    engine = db.get_bind()
+
+    def count_queries():
+        seen = []
+
+        @event.listens_for(engine, "before_cursor_execute")
+        def record(conn, cursor, statement, *args):
+            seen.append(statement)
+
+        try:
+            response = client.get("/lists?filter=shared", headers=_auth(w.u))
+            assert response.status_code == 200
+            return len(seen), len(response.json())
+        finally:
+            event.remove(engine, "before_cursor_execute", record)
+
+    before, rows_before = count_queries()
+
+    # Six more lists in the same scope, each shared to an occasion U can reach
+    # and each carrying two gifts U has claimed and not yet bought.
+    now = datetime.now(timezone.utc)
+    for n in range(6):
+        extra = GiftList(name=f"Extra {n}", owner_id=w.p.id)
+        db.add(extra)
+        db.flush()
+        db.add(ListOccasionShare(list_id=extra.id, occasion_id=w.o1.id))
+        for m in range(2):
+            gift = Gift(list_id=extra.id, name=f"Extra {n} gift {m}")
+            db.add(gift)
+            db.flush()
+            db.add(Claim(gift_id=gift.id, user_id=w.u.id, claimed_at=now))
+    db.flush()
+
+    after, rows_after = count_queries()
+    assert rows_after == rows_before + 6, "the extra lists should be in scope"
+    assert after == before, (
+        f"query count grew with the row count ({before} → {after}): "
+        "the count is being computed per row"
+    )
+
+
+def test_the_badge_reaches_a_claim_on_a_directly_shared_list(client, db, family_world):
+    """The case §9.4 makes the badge mandatory for. A claim on a list shared
+    only person-to-person files under no occasion and, with the list in no
+    folder, appears on no shopping tab at all — this row is its only route.
+
+    Deliberately not `shopping_world`'s L_p, which is *also* occasion-shared and
+    so would pass on the occasion path alone.
+    """
+    from datetime import datetime, timezone
+
+    from app.models.claim import Claim
+    from app.models.gift import Gift
+    from app.models.list_share import ListShare
+
+    w = family_world
+    direct_only = GiftList(name="Jane's Wishlist", owner_id=w.q.id)
+    db.add(direct_only)
+    db.flush()
+    db.add(ListShare(list_id=direct_only.id, user_id=w.u.id))
+    gift = Gift(list_id=direct_only.id, name="Cast iron skillet")
+    db.add(gift)
+    db.flush()
+    db.add(
+        Claim(
+            gift_id=gift.id,
+            user_id=w.u.id,
+            occasion_id=None,  # no occasion: this is the gap the badge covers
+            claimed_at=datetime.now(timezone.utc),
+        )
+    )
+    db.flush()
+
+    response = client.get("/lists?filter=shared", headers=_auth(w.u))
+    assert response.status_code == 200
+    row = _row(response, direct_only.id)
+    assert row["shared_via"]["kind"] == "user", "this list is reachable no other way"
+    assert row["my_unpurchased_claim_count"] == 1

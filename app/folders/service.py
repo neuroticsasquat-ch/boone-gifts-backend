@@ -23,12 +23,15 @@ def list_folders(db: Session, owner_id: int, archived: bool = False) -> list[Fol
     return repo.get_folders_for_user(db, owner_id, archived=archived)
 
 
-def get_folder_detail(db: Session, folder: Folder) -> dict:
+def get_folder_detail(db: Session, folder: Folder, viewer_id: int) -> dict:
     # A folder groups lists its owner mostly does *not* own, so each row is
-    # serialized for them individually — the shared ones keep `claimed_count`,
-    # the caller's own carry no claim state at all.
+    # serialized for them individually — the shared ones keep `claimed_count`
+    # and the caller's own `my_unpurchased_claim_count`, the caller's own lists
+    # carry no claim state at all. Serialized for the *caller*, not for
+    # `folder.owner_id`: `OwnedFolder` currently makes those the same user, but
+    # the counts are per-caller facts, so the argument says which one it means.
     lists = [
-        list_service.to_summary(gift_list, folder.owner_id)
+        list_service.to_summary(gift_list, viewer_id)
         for gift_list in repo.get_lists_for_folder(db, folder)
     ]
     return {

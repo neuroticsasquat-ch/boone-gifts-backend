@@ -27,6 +27,7 @@ CLAIM_KEYS = {
     "claimed_at",
     "claimed_by_id",
     "claimed_count",
+    "my_unpurchased_claim_count",
     "amount_paid",
     "purchased_at",
 }
@@ -160,6 +161,10 @@ def test_a_connections_lists_carry_the_count(
         row for row in response.json() if row["id"] == owned_list_with_a_claim.id
     )
     assert row["claimed_count"] == 1
+    # The admin's one claim here is already bought, so nothing is left to buy —
+    # but the field is required on the viewer schema, so its presence is proof
+    # the count was computed for this endpoint rather than defaulted.
+    assert row["my_unpurchased_claim_count"] == 0
 
 
 def test_a_folders_rows_keep_the_count_for_the_lists_it_does_not_own(
@@ -177,12 +182,27 @@ def test_a_folders_rows_keep_the_count_for_the_lists_it_does_not_own(
     db.add(FolderItem(folder_id=folder.id, list_id=owned_list_with_a_claim.id))
     db.flush()
 
+    # A second gift on the same list, claimed by the admin and not yet bought:
+    # this is what the folder row's badge has to surface.
+    to_buy = Gift(list_id=owned_list_with_a_claim.id, name="Still to buy")
+    db.add(to_buy)
+    db.flush()
+    db.add(
+        Claim(
+            gift_id=to_buy.id,
+            user_id=admin_user.id,
+            claimed_at=datetime.now(timezone.utc),
+        )
+    )
+    db.flush()
+
     response = client.get(f"/folders/{folder.id}", headers=admin_headers)
     assert response.status_code == 200
     row = next(
         r for r in response.json()["lists"] if r["id"] == owned_list_with_a_claim.id
     )
-    assert row["claimed_count"] == 1
+    assert row["claimed_count"] == 2
+    assert row["my_unpurchased_claim_count"] == 1
 
 
 def test_a_folders_rows_stay_blind_on_the_owners_own_lists(
@@ -201,3 +221,19 @@ def test_a_folders_rows_stay_blind_on_the_owners_own_lists(
     assert response.status_code == 200
     assert response.json()["lists"], "the fixture list should be in the folder"
     _assert_blind(response.json()["lists"])
+
+
+def test_a_viewer_gets_their_own_unpurchased_count(
+    client, admin_headers, owned_list_with_a_claim
+):
+    """The same two halves for `my_unpurchased_claim_count` (NEU-1279): absent
+    from every owner-facing payload above — `CLAIM_KEYS` carries it, so every
+    sweep in this file already checks that — and present for the viewer it is
+    about. Here the admin's one claim is already bought, so nothing is to buy."""
+    response = client.get("/lists?filter=shared", headers=admin_headers)
+    assert response.status_code == 200
+    row = next(
+        row for row in response.json() if row["id"] == owned_list_with_a_claim.id
+    )
+    assert row["claimed_count"] == 1
+    assert row["my_unpurchased_claim_count"] == 0

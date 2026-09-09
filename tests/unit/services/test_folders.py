@@ -104,7 +104,7 @@ def test_get_folder_detail(mock_get_lists):
     gift_list = _make_gift_list(id=10, owner_id=5)
     mock_get_lists.return_value = [gift_list]
 
-    result = service.get_folder_detail(db, col)
+    result = service.get_folder_detail(db, col, viewer_id=5)
 
     mock_get_lists.assert_called_once_with(db, col)
     assert result["id"] == 1
@@ -126,7 +126,7 @@ def test_get_folder_detail_serializes_each_row_for_the_folders_owner(mock_get_li
     someone_elses = _make_gift_list(id=11, owner_id=6)
     mock_get_lists.return_value = [own, someone_elses]
 
-    rows = service.get_folder_detail(db, col)["lists"]
+    rows = service.get_folder_detail(db, col, viewer_id=5)["lists"]
 
     assert type(rows[0]) is GiftListRead
     assert type(rows[1]) is GiftListViewerRead

@@ -56,15 +56,23 @@ def to_summary(gift_list: GiftList, user_id: int) -> GiftListRead | GiftListView
     """Serialize one list row for one caller.
 
     The single place that decides whether a row may carry claim state. An owner
-    gets `GiftListRead`, which has no `claimed_count` to fill in; anyone else
-    gets the viewer schema, which does. Route every list-row response through
-    here rather than naming a schema at the endpoint — naming it per endpoint is
-    how `claimed_count` came to be returned on owned rows in the first place
-    (ADR 0003).
+    gets `GiftListRead`, which has no `claimed_count` or
+    `my_unpurchased_claim_count` to fill in; anyone else gets the viewer schema,
+    which does. Route every list-row response through here rather than naming a
+    schema at the endpoint — naming it per endpoint is how `claimed_count` came
+    to be returned on owned rows in the first place (ADR 0003).
+
+    The viewer schema is told who is asking, because
+    `my_unpurchased_claim_count` counts *this* caller's own unbought claims
+    rather than the row's total. It refuses to validate without that, so a
+    caller who reaches it another way fails loudly instead of serving everyone
+    an empty badge.
     """
     if gift_list.owner_id == user_id:
         return GiftListRead.model_validate(gift_list)
-    return GiftListViewerRead.model_validate(gift_list)
+    return GiftListViewerRead.model_validate(
+        gift_list, context={"viewer_id": user_id}
+    )
 
 
 def get_lists(
