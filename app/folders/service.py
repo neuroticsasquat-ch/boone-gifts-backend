@@ -2,6 +2,7 @@ from sqlalchemy.orm import Session
 
 from app.access import can_view_list
 from app.folders import repository as repo
+from app.lists import service as list_service
 from app.models.folder import Folder
 from app.models.user import User
 from app.services.exceptions import ConflictError, ForbiddenError, NotFoundError
@@ -18,7 +19,13 @@ def list_folders(db: Session, owner_id: int, archived: bool = False) -> list[Fol
 
 
 def get_folder_detail(db: Session, folder: Folder) -> dict:
-    lists = repo.get_lists_for_folder(db, folder)
+    # A folder groups lists its owner mostly does *not* own, so each row is
+    # serialized for them individually — the shared ones keep `claimed_count`,
+    # the caller's own carry no claim state at all.
+    lists = [
+        list_service.to_summary(gift_list, folder.owner_id)
+        for gift_list in repo.get_lists_for_folder(db, folder)
+    ]
     return {
         "id": folder.id,
         "name": folder.name,

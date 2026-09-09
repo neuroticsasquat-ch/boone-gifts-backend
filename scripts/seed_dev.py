@@ -23,10 +23,12 @@ destructive flag to guard.
 import argparse
 import sys
 from datetime import datetime, timezone
+from decimal import Decimal
 
 from sqlalchemy import select
 
 from app.database import Base, SessionLocal, engine
+from app.models.claim import Claim
 from app.models.account_person import AccountPerson
 from app.models.folder import Folder
 from app.models.folder_item import FolderItem
@@ -42,6 +44,11 @@ from app.models.occasion import Occasion
 from app.models.user import User
 
 DEFAULT_PASSWORD = "devpass123"
+
+# "bought, but the claimer skipped the amount" — distinct from not bought at
+# all, and the case a budget has to report as an understatement rather than a
+# fact. A sentinel because None already means "not bought".
+SKIPPED = object()
 
 # (email, name, role)
 SEED_USERS = [
@@ -82,12 +89,21 @@ def purge(db) -> int:
         ).scalars()
     )
 
-    # A fixture user may have claimed a gift on a list this purge is not
-    # deleting, and a non-fixture list may be shared with them or into one of
-    # their families — so each table is cleared by both routes, not just by list.
+    # A fixture user may hold a claim on a list this purge is not deleting, and a
+    # non-fixture list may be shared with them or into one of their families — so
+    # claims and shares are cleared by both routes. Gifts go by list alone: a
+    # foreign gift is not ours to delete just because a fixture user claimed it.
     if list_ids or user_ids:
+        # Claims hold a foreign key into `gifts`, so they go first — by either
+        # route, since a fixture user's claim may sit on a non-fixture gift.
+        gift_ids = set(
+            db.execute(select(Gift.id).where(Gift.list_id.in_(list_ids))).scalars()
+        )
+        db.query(Claim).filter(
+            Claim.gift_id.in_(gift_ids) | Claim.user_id.in_(user_ids)
+        ).delete(synchronize_session=False)
         db.query(Gift).filter(
-            Gift.list_id.in_(list_ids) | Gift.claimed_by_id.in_(user_ids)
+            Gift.list_id.in_(list_ids)
         ).delete(synchronize_session=False)
         db.query(ListShare).filter(
             ListShare.list_id.in_(list_ids) | ListShare.user_id.in_(user_ids)
@@ -175,19 +191,28 @@ def seed(db, password: str) -> None:
         db.add(gift_list)
         return gift_list
 
-    def add_gifts(gift_list, names, claimed_by=None):
+    def add_gifts(gift_list, names, claimed_by=None, bought=None):
         """Claims land on the first gift only, so every list that has claims also
-        has unclaimed gifts to look at."""
+        has unclaimed gifts to look at.
+
+        `bought` is the amount the claimer recorded paying. Pass a Decimal for a
+        purchase with a price on it, `SKIPPED` for one where they skipped the
+        amount, and leave it None for a claim that has not been bought yet — the
+        three states a budget rollup has to tell apart."""
         for index, name in enumerate(names):
-            claimed = claimed_by is not None and index == 0
-            db.add(
-                Gift(
-                    list_id=gift_list.id,
-                    name=name,
-                    claimed_by_id=claimed_by.id if claimed else None,
-                    claimed_at=now if claimed else None,
+            gift = Gift(list_id=gift_list.id, name=name)
+            db.add(gift)
+            if claimed_by is not None and index == 0:
+                db.flush()
+                db.add(
+                    Claim(
+                        gift_id=gift.id,
+                        user_id=claimed_by.id,
+                        claimed_at=now,
+                        purchased_at=now if bought is not None else None,
+                        amount_paid=bought if bought is not SKIPPED else None,
+                    )
                 )
-            )
 
     tom_wishlist = new_list(tom, "Tom's Wishlist", "Ideas for me")
     tom_christmas = new_list(tom, "Christmas 2026", "What I want this year")
@@ -215,13 +240,20 @@ def seed(db, password: str) -> None:
     add_gifts(tom_wishlist, ["Cast iron skillet", "Running shoes", "Coffee grinder"])
     add_gifts(tom_christmas, ["Wool socks", "Book: Piranesi"])
     add_gifts(beths_list, ["Puzzle", "Slippers"])
+    # Tom's three claim states, so every budget case is reachable by hand: taken
+    # but not yet bought, bought with an amount, and bought with the amount
+    # skipped — the last of which a rollup must report as an understatement.
     add_gifts(jane_wishlist, ["Headphones", "Gardening gloves", "Tea sampler"],
               claimed_by=tom)
-    add_gifts(carol_wishlist, ["Scarf", "Cookbook"], claimed_by=tom)
+    add_gifts(carol_wishlist, ["Scarf", "Cookbook"],
+              claimed_by=tom, bought=Decimal("64.99"))
     add_gifts(gran_list, ["Cardigan", "Bird feeder"])
     add_gifts(grandpa_list, ["Fishing reel", "Reading lamp"])
     add_gifts(kitchen_list, ["Stand mixer", "Knife block"])
-    add_gifts(dave_wishlist, ["Board game", "Whiskey glasses"])
+    # Reaches Tom only through the Extended family's occasion, so it is also the
+    # claim whose filing NEU-1269 has to resolve without a direct share.
+    add_gifts(dave_wishlist, ["Board game", "Whiskey glasses"],
+              claimed_by=tom, bought=SKIPPED)
 
     # Dave's request stays pending so the connection-request UI has something to
     # render; the rest are accepted.

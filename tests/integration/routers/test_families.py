@@ -1,8 +1,11 @@
+from datetime import datetime, timezone
+
 import pytest
 from fastapi import status
 from sqlalchemy import select
 
 from app.dependencies import create_access_token
+from app.models.claim import Claim
 from app.models.folder import Folder
 from app.models.folder_item import FolderItem
 from app.models.family import Family
@@ -85,9 +88,14 @@ def _seed_cross_artifacts(db, user_a, user_b):
     db.add_all([list_a, list_b])
     db.flush()
 
-    gift_a = Gift(list_id=list_a.id, name="On A's list", claimed_by_id=user_b.id)
-    gift_b = Gift(list_id=list_b.id, name="On B's list", claimed_by_id=user_a.id)
+    gift_a = Gift(list_id=list_a.id, name="On A's list")
+    gift_b = Gift(list_id=list_b.id, name="On B's list")
     db.add_all([gift_a, gift_b])
+    db.flush()
+    db.add_all([
+        Claim(gift_id=gift_a.id, user_id=user_b.id, claimed_at=datetime.now(timezone.utc)),
+        Claim(gift_id=gift_b.id, user_id=user_a.id, claimed_at=datetime.now(timezone.utc)),
+    ])
     db.flush()
 
     coll_a = Folder(name=f"{user_a.id}'s Folder", owner_id=user_a.id)
@@ -105,7 +113,7 @@ def _seed_cross_artifacts(db, user_a, user_b):
 
 def _is_claimed(db, gift):
     row = db.execute(
-        select(Gift.claimed_by_id).where(Gift.id == gift.id)
+        select(Claim.id).where(Claim.gift_id == gift.id)
     ).scalar_one_or_none()
     return row is not None
 
@@ -845,8 +853,16 @@ def test_third_party_not_affected_when_still_has_access(
     list_a = GiftList(name="A's Extra List", owner_id=member_user.id)
     db.add(list_a)
     db.flush()
-    gift_a_for_d = Gift(list_id=list_a.id, name="A gift for D to claim", claimed_by_id=third_user.id)
+    gift_a_for_d = Gift(list_id=list_a.id, name="A gift for D to claim")
     db.add(gift_a_for_d)
+    db.flush()
+    db.add(
+        Claim(
+            gift_id=gift_a_for_d.id,
+            user_id=third_user.id,
+            claimed_at=datetime.now(timezone.utc),
+        )
+    )
     db.flush()
     coll_d = Folder(name="D's Folder", owner_id=third_user.id)
     db.add(coll_d)

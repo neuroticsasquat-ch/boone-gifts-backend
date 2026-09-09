@@ -40,7 +40,11 @@ def create_list(request: GiftListCreate, user: CurrentUser, db: DbSession):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
-@router.get("", response_model=list[GiftListRead])
+# No `response_model`: the rows are a mix of owned and shared lists, and only
+# the shared ones may carry `claimed_count`. One declared schema would have to
+# be the wider of the two, which is exactly the leak ADR 0003 closes. Same
+# reasoning as `get_list` below.
+@router.get("")
 def list_lists(
     user: CurrentUser,
     db: DbSession,

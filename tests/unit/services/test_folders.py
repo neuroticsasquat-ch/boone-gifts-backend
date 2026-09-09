@@ -8,6 +8,7 @@ from app.folders import service
 from app.models.folder import Folder
 from app.models.folder_item import FolderItem
 from app.models.gift_list import GiftList
+from app.schemas.gift_list import GiftListRead, GiftListViewerRead
 from app.services.exceptions import ConflictError, ForbiddenError, NotFoundError
 
 
@@ -32,6 +33,18 @@ def _make_gift_list(id: int = 10, owner_id: int = 1) -> MagicMock:
     gl = MagicMock(spec=GiftList)
     gl.id = id
     gl.owner_id = owner_id
+    gl.name = f"List {id}"
+    gl.description = None
+    gl.owner_name = "Test User"
+    gl.recipient_name = None
+    gl.account_person_id = None
+    gl.account_person_name = None
+    gl.is_archived = False
+    gl.gifts = []
+    gl.gift_count = 0
+    gl.shared_via = None
+    gl.created_at = datetime(2026, 1, 1)
+    gl.updated_at = datetime(2026, 1, 1)
     return gl
 
 
@@ -97,9 +110,25 @@ def test_get_folder_detail(mock_get_lists):
     assert result["name"] == "Wishlist"
     assert result["description"] == "Holiday"
     assert result["owner_id"] == 5
-    assert result["lists"] == [gift_list]
+    assert [row.id for row in result["lists"]] == [gift_list.id]
     assert result["created_at"] == col.created_at
     assert result["updated_at"] == col.updated_at
+
+
+@patch(f"{REPO}.get_lists_for_folder")
+def test_get_folder_detail_serializes_each_row_for_the_folders_owner(mock_get_lists):
+    """A folder holds lists its owner mostly does not own, so the row schema is
+    chosen per list: their own carry no claim state, everyone else's do."""
+    db = MagicMock()
+    col = _make_folder(id=1, owner_id=5)
+    own = _make_gift_list(id=10, owner_id=5)
+    someone_elses = _make_gift_list(id=11, owner_id=6)
+    mock_get_lists.return_value = [own, someone_elses]
+
+    rows = service.get_folder_detail(db, col)["lists"]
+
+    assert type(rows[0]) is GiftListRead
+    assert type(rows[1]) is GiftListViewerRead
 
 
 # --- update_folder ---

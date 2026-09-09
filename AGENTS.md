@@ -59,10 +59,10 @@ app/
   database.py          # Engine, sessionmaker, Base
   dependencies.py      # get_db, token creation, get_current_user, require_admin, access deps
   access.py            # Visibility predicates: can_view_list, users_share_access
-  models/              # user, account_person, invite, gift_list, gift, list_share,
-                       # list_occasion_share, connection, folder, folder_item,
-                       # password_reset_token, family, family_member, family_invite,
-                       # occasion
+  models/              # user, account_person, invite, gift_list, gift, claim,
+                       # list_share, list_occasion_share, connection, folder,
+                       # folder_item, password_reset_token, family, family_member,
+                       # family_invite, occasion
   schemas/             # Pydantic request/response models, one module per domain
   services/exceptions.py   # NotFoundError, ForbiddenError, ConflictError, BadRequestError
   account/             # GET/PUT /account — the shared-account flag and its people
@@ -70,7 +70,8 @@ app/
   users/               # /users CRUD (admin-only)
   invites/             # /invites CRUD (admin-only)
   lists/               # /lists CRUD, filter logic, owner vs viewer responses
-  gifts/               # /lists/{id}/gifts CRUD + claim/unclaim
+  gifts/               # /lists/{id}/gifts CRUD + claim/unclaim/purchase
+  claims/              # Claim queries — no router yet; the claim is its own entity (ADR 0003)
   shares/              # /lists/{id}/shares — direct shares, cascade on unshare
   list_occasions/      # /lists/{id}/occasions — occasion shares, claim handling on revoke
   connections/         # /connections lifecycle + cascade disconnect
@@ -93,7 +94,8 @@ tests/
 - **Route protection**: `get_current_user` (401), `require_admin` (403). Defense in depth: `get_current_user` rejects refresh tokens and checks `is_active`, so a deactivated user cannot authenticate on a still-valid token
 - **Registration is invite-only** — the email comes from the invite record (admin or family invite), never the request body
 - **List access**: `get_list_for_owner` (403 if not owner); `get_list_for_viewer` goes through `can_view_list`
-- **Gift responses**: owners get `GiftOwnerRead` (no claim fields), shared viewers get `GiftRead` (with them)
+- **Gift responses**: owners get `GiftOwnerRead` (no claim fields), shared viewers get `GiftRead` (with them, read through `Gift.claim`)
+- **List-row responses**: owners get `GiftListRead`, viewers get `GiftListViewerRead` (which adds `claimed_count`). `app/lists/service.py:to_summary` chooses; endpoints returning a mix declare no `response_model`
 
 ## Visibility model
 
@@ -167,6 +169,25 @@ A family's shared gifting occasion — "Boone Family · Christmas 2026". The uni
 - `OccasionUpdate` treats `None` as "leave it alone", so an explicit `null` in the body is a **422**,
   never a write: neither column is nullable
 
+### Claims
+A claim is one account's private intent to buy a gift, and now its own row rather than three columns
+on the gift. See `docs/adr/0003-claims-are-their-own-table.md`.
+- **Table**: `claims` (gift_id **unique**, user_id indexed, occasion_id nullable+indexed, claimed_at,
+  purchased_at, amount_paid `Numeric(10,2)`). The unique `gift_id` is what makes one claimer per
+  gift a constraint rather than a convention, and what decides the winner of a claim race —
+  `create_claim` inserts inside a SAVEPOINT and returns `None` to the loser, who gets the 409
+- `POST /lists/{id}/gifts/{gift_id}/claim` — the claim files under **no occasion**; resolving the
+  filing is NEU-1269. `DELETE` deletes the row, so the purchase state and the amount go with it and
+  there is no explicit reset to forget
+- `POST .../purchase` takes an optional `{ amount_paid }`. Omitting it leaves whatever is recorded
+  (so unticking and re-ticking is non-destructive), an explicit null clears it, and no body at all is
+  the "skip the amount" case. `DELETE .../purchase` clears `purchased_at` and **keeps**
+  `amount_paid`
+- **Every claim query lives in `app/claims/repository.py`** — including the teardown the connections,
+  families, list-occasion and users services call. Don't hand-write claim SQL in a domain repository
+- `amount_paid` is the *claimer's* spend; `gifts.price` is the *owner's* asking price and is public
+  to viewers. Never seed one from the other
+
 ## Data model notes
 - **Lists carry a recipient**: `recipient_name` alone, meaning one thing — a person with no account. Read `GiftList.kept_for_absent_person` rather than testing the column. The co-resident case that `recipient_has_account = true` used to cover is an account person now (dropped in `e2b7d4a91c53`)
 - **Lists may instead carry an account person**: `account_person_id`, mutually exclusive with `recipient_name` (both null is a legal household list). See "Shared accounts" below
@@ -191,6 +212,7 @@ A family's shared gifting occasion — "Boone Family · Christmas 2026". The uni
 | `f1a6b3c80d27` | Drop `users.simple_mode` and `family_invites.simple_mode` |
 | `a3f8c1e70b52` | `occasions` table — the family-owned gifting occasion |
 | `b7e2d4f16c93` | `list_occasion_shares` table; drop `list_family_shares` with **no backfill** |
+| `d4c8a1f92b60` | `claims` table, **backfilled** from `gifts`; drop `gifts.claimed_by_id`, `claimed_at`, `purchased_at` |
 
 ## Testing
 - ~744 test functions across 56 files
@@ -202,7 +224,7 @@ A family's shared gifting occasion — "Boone Family · Christmas 2026". The uni
 - CI runs `uv sync --frozen && pytest tests/ -v` with `APP_JWT_SECRET=ci-test-secret`
 
 ## Dev fixtures
-`python -m scripts.seed_dev` (add `--reset` to re-seed, `--purge` to remove) builds the visibility states a single account can't produce: a directly shared list, a list reaching you only through an occasion, a list kept for someone with no account, an archived list, a claimed gift, a pending connection request, and a shared account with two people. All fixture users are `@example.com`, and purge only deletes rows reachable from them. Run it with `-m` — executing the file directly puts `scripts/` on `sys.path` instead of `/app`.
+`python -m scripts.seed_dev` (add `--reset` to re-seed, `--purge` to remove) builds the visibility states a single account can't produce: a directly shared list, a list reaching you only through an occasion, a list kept for someone with no account, an archived list, a pending connection request, a shared account with two people, and one claim in each of its three money states — taken but not bought, bought with an amount, and bought with the amount skipped. All fixture users are `@example.com`, and purge only deletes rows reachable from them. Run it with `-m` — executing the file directly puts `scripts/` on `sys.path` instead of `/app`.
 
 ## Critical conventions
 - **Router endpoints use `db.flush()`, never `db.commit()`** — the `get_db` dependency commits on success and rolls back on exception. In tests the fixture rolls back. New endpoints must follow this.

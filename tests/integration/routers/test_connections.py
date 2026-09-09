@@ -270,6 +270,9 @@ def test_disconnect_revokes_shares(
 def test_disconnect_unclaims_gifts(
     client, member_user, member_headers, admin_user, connection, db
 ):
+    from datetime import datetime, timezone
+
+    from app.models.claim import Claim
     from app.models.gift_list import GiftList
     from app.models.gift import Gift
     from app.models.list_share import ListShare
@@ -282,12 +285,14 @@ def test_disconnect_unclaims_gifts(
     db.add(share)
     db.flush()
 
-    gift = Gift(
-        list_id=gift_list.id,
-        name="Claimed Gift",
-        claimed_by_id=admin_user.id,
-    )
+    gift = Gift(list_id=gift_list.id, name="Claimed Gift")
     db.add(gift)
+    db.flush()
+    db.add(
+        Claim(
+            gift_id=gift.id, user_id=admin_user.id, claimed_at=datetime.now(timezone.utc)
+        )
+    )
     db.flush()
 
     response = client.delete(
@@ -296,9 +301,9 @@ def test_disconnect_unclaims_gifts(
     )
     assert response.status_code == 204
 
+    # The claim row goes, so the purchase state and amount go with it.
     db.refresh(gift)
-    assert gift.claimed_by_id is None
-    assert gift.claimed_at is None
+    assert gift.claim is None
 
 
 def test_disconnect_removes_folder_items(

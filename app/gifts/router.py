@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, status
 
 from app.dependencies import CurrentUser, DbSession, OwnedList, ViewableList
 from app.gifts import service as gift_service
+from app.schemas.claim import PurchaseCreate
 from app.schemas.gift import GiftCreate, GiftUpdate
 from app.schemas.gift_list import GiftOwnerRead, GiftRead
 from app.services.exceptions import BadRequestError, ConflictError, ForbiddenError, NotFoundError
@@ -73,10 +74,17 @@ def unclaim_gift(
 
 @router.post("/{gift_id}/purchase", response_model=GiftRead)
 def purchase_gift(
-    gift_id: int, gift_list: ViewableList, user: CurrentUser, db: DbSession
+    gift_id: int,
+    gift_list: ViewableList,
+    user: CurrentUser,
+    db: DbSession,
+    request: PurchaseCreate | None = None,
 ):
+    # The body is optional: ticking purchased without recording an amount is
+    # the "Skip" the spec asks for, not a malformed request.
+    updates = request.model_dump(exclude_unset=True) if request else {}
     try:
-        return gift_service.purchase_gift(db, gift_id, gift_list.id, user.id)
+        return gift_service.purchase_gift(db, gift_id, gift_list.id, user.id, updates)
     except NotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     except ForbiddenError:

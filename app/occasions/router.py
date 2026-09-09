@@ -2,7 +2,6 @@ from fastapi import APIRouter, HTTPException, Query, status
 
 from app.dependencies import CurrentUser, DbSession
 from app.occasions import service as occasion_service
-from app.schemas.gift_list import GiftListRead
 from app.schemas.occasion import (
     OccasionCreate,
     OccasionCreateRead,
@@ -82,7 +81,10 @@ def update_occasion(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
 
 
-@router.get("/occasions/{occasion_id}/lists", response_model=list[GiftListRead])
+# No `response_model`: the service picks the schema per row, and declaring one
+# here would re-widen owned rows or narrow viewer rows. See
+# `app/lists/service.py:to_summary`.
+@router.get("/occasions/{occasion_id}/lists")
 def list_occasion_lists(occasion_id: int, user: CurrentUser, db: DbSession):
     try:
         return occasion_service.list_lists(db, occasion_id=occasion_id, actor=user)

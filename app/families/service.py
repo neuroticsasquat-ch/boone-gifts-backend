@@ -1,10 +1,8 @@
 from sqlalchemy.orm import Session
 
 from app.access import users_share_access
-from app.connections.repository import (
-    delete_folder_items_between,
-    unclaim_gifts_between,
-)
+from app.claims.repository import unclaim_gifts_between
+from app.connections.repository import delete_folder_items_between
 from app.families import repository as repo
 from app.list_occasions import repository as list_occasion_repo
 from app.models.user import User

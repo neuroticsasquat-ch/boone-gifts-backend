@@ -3,7 +3,6 @@ from fastapi import APIRouter, HTTPException, status
 from app.connections import service as connection_service
 from app.dependencies import CurrentUser, DbSession
 from app.schemas.connection import ConnectionCreate, ConnectionRead
-from app.schemas.gift_list import GiftListRead
 from app.services.exceptions import (
     BadRequestError,
     ConflictError,
@@ -65,7 +64,10 @@ def delete_connection(connection_id: int, user: CurrentUser, db: DbSession) -> N
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
 
 
-@router.get("/{connection_id}/lists", response_model=list[GiftListRead])
+# No `response_model`: the service picks the schema per row, and declaring one
+# here would re-widen owned rows or narrow viewer rows. See
+# `app/lists/service.py:to_summary`.
+@router.get("/{connection_id}/lists")
 def connection_lists(connection_id: int, user: CurrentUser, db: DbSession):
     try:
         return connection_service.get_connection_lists(db, connection_id, user.id)

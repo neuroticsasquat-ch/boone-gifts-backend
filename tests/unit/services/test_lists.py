@@ -34,10 +34,17 @@ def _make_gift_list(
     # person/recipient exclusivity of the resulting row.
     gl.recipient_name = None
     gl.account_person_id = None
+    gl.account_person_name = None
+    gl.is_archived = False
+    gl.gift_count = 0
+    gl.shared_via = None
+    gl.created_at = datetime(2026, 1, 1)
+    gl.updated_at = datetime(2026, 1, 1)
     return gl
 
 
 REPO = "app.lists.service.repo"
+CLAIMS_REPO = "app.lists.service.claims_repo"
 LIST_OCCASION_SVC = "app.lists.service.list_occasion_service"
 
 
@@ -167,7 +174,7 @@ def test_update_list(mock_update):
 
 
 @patch(f"{REPO}.delete_list")
-@patch(f"{REPO}.has_claimed_gifts", return_value=False)
+@patch(f"{CLAIMS_REPO}.has_claimed_gifts", return_value=False)
 def test_delete_list(mock_has_claims, mock_delete):
     db = MagicMock()
     gift_list = _make_gift_list()
@@ -178,7 +185,7 @@ def test_delete_list(mock_has_claims, mock_delete):
     mock_delete.assert_called_once_with(db, gift_list)
 
 
-@patch(f"{REPO}.has_claimed_gifts", return_value=True)
+@patch(f"{CLAIMS_REPO}.has_claimed_gifts", return_value=True)
 def test_delete_list_blocked_by_claims(mock_has_claims):
     from app.services.exceptions import ConflictError
 

@@ -1,10 +1,12 @@
 """Share-to-an-occasion: creation behavior, the share management API, the
 archived-occasion rules, and the claim handling on revoke (NEU-1265)."""
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
 
 from app.dependencies import create_access_token
+from app.models.claim import Claim
 from app.models.folder import Folder
 from app.models.folder_item import FolderItem
 from app.models.family import Family
@@ -362,10 +364,16 @@ def claimed(db, world, owned_list):
     """Owner's list shared to the Boones' occasion, with a gift claimed by rel
     and a folder item pointing at it from rel's folder."""
     db.add(ListOccasionShare(list_id=owned_list.id, occasion_id=world.boones_xmas.id))
-    gift = Gift(list_id=owned_list.id, name="A Book", claimed_by_id=world.rel.id)
+    gift = Gift(list_id=owned_list.id, name="A Book")
     db.add(gift)
     folder = Folder(name="Rel's Shopping", owner_id=world.rel.id)
     db.add(folder)
+    db.flush()
+    db.add(
+        Claim(
+            gift_id=gift.id, user_id=world.rel.id, claimed_at=datetime.now(timezone.utc)
+        )
+    )
     db.flush()
     db.add(FolderItem(folder_id=folder.id, list_id=owned_list.id))
     db.flush()
@@ -374,6 +382,14 @@ def claimed(db, world, owned_list):
 
 def _items(db, folder_id):
     return db.query(FolderItem).filter_by(folder_id=folder_id).count()
+
+
+def _claimer_id(db, gift):
+    """Who holds the claim on this gift, if anyone. The answer moved off the
+    gift row and onto `claims` (ADR 0003)."""
+    db.expire_all()
+    claim = db.query(Claim).filter_by(gift_id=gift.id).one_or_none()
+    return claim.user_id if claim else None
 
 
 def test_revoke_with_no_affected_claims_returns_204(client, db, world, owned_list):
@@ -405,7 +421,7 @@ def test_revoke_with_a_claim_returns_409_and_changes_nothing(
 
     assert _shared(db, owned_list.id) == {world.boones_xmas.id}
     db.refresh(claimed.gift)
-    assert claimed.gift.claimed_by_id == world.rel.id
+    assert _claimer_id(db, claimed.gift) == world.rel.id
     assert _items(db, claimed.folder.id) == 1
 
 
@@ -419,8 +435,9 @@ def test_revoke_claims_release_unclaims_and_drops_folder_items(
     assert resp.status_code == 204
     assert _shared(db, owned_list.id) == set()
     db.refresh(claimed.gift)
-    assert claimed.gift.claimed_by_id is None
-    assert claimed.gift.claimed_at is None
+    # The claim row goes entirely, taking its purchase state with it.
+    assert _claimer_id(db, claimed.gift) is None
+    assert claimed.gift.claim is None
     assert _items(db, claimed.folder.id) == 0
 
 
@@ -434,7 +451,7 @@ def test_revoke_claims_keep_leaves_the_claim_but_drops_folder_items(
     assert resp.status_code == 204
     assert _shared(db, owned_list.id) == set()
     db.refresh(claimed.gift)
-    assert claimed.gift.claimed_by_id == world.rel.id
+    assert _claimer_id(db, claimed.gift) == world.rel.id
     assert _items(db, claimed.folder.id) == 0
 
 
@@ -450,7 +467,7 @@ def test_revoke_release_spares_a_claimer_who_still_has_a_list_share(
     )
     assert resp.status_code == 204
     db.refresh(claimed.gift)
-    assert claimed.gift.claimed_by_id == world.rel.id
+    assert _claimer_id(db, claimed.gift) == world.rel.id
     assert _items(db, claimed.folder.id) == 1
 
 
@@ -468,7 +485,7 @@ def test_revoke_release_spares_a_claimer_who_sees_it_via_another_family(
     )
     assert resp.status_code == 204
     db.refresh(claimed.gift)
-    assert claimed.gift.claimed_by_id == world.rel.id
+    assert _claimer_id(db, claimed.gift) == world.rel.id
     assert _items(db, claimed.folder.id) == 1
 
 
@@ -487,7 +504,7 @@ def test_revoke_release_spares_a_claimer_reached_by_a_sibling_occasion(
     )
     assert resp.status_code == 204
     db.refresh(claimed.gift)
-    assert claimed.gift.claimed_by_id == world.rel.id
+    assert _claimer_id(db, claimed.gift) == world.rel.id
     assert _items(db, claimed.folder.id) == 1
 
 
@@ -506,7 +523,16 @@ def test_revoke_without_claims_is_not_blocked_by_a_claimer_who_keeps_access(
 
 def test_revoke_ignores_the_owners_own_claim(client, db, world, owned_list):
     db.add(ListOccasionShare(list_id=owned_list.id, occasion_id=world.boones_xmas.id))
-    db.add(Gift(list_id=owned_list.id, name="Self", claimed_by_id=world.owner.id))
+    gift = Gift(list_id=owned_list.id, name="Self")
+    db.add(gift)
+    db.flush()
+    db.add(
+        Claim(
+            gift_id=gift.id,
+            user_id=world.owner.id,
+            claimed_at=datetime.now(timezone.utc),
+        )
+    )
     db.flush()
 
     resp = client.delete(

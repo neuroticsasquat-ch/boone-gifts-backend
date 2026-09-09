@@ -1,6 +1,7 @@
 from sqlalchemy import Integer, String, cast, delete, func, literal, null, or_, select
 from sqlalchemy.orm import Session, aliased
 
+from app.claims import repository as claims_repo
 from app.models.folder_item import FolderItem
 from app.models.family import Family
 from app.models.family_member import FamilyMember
@@ -156,21 +157,13 @@ def update_list(db: Session, gift_list: GiftList, updates: dict) -> GiftList:
     return gift_list
 
 
-def has_claimed_gifts(db: Session, list_id: int) -> bool:
-    count = db.execute(
-        select(Gift.id).where(
-            Gift.list_id == list_id,
-            Gift.claimed_by_id.isnot(None),
-        ).limit(1)
-    ).first()
-    return count is not None
-
-
 def delete_list(db: Session, gift_list: GiftList) -> None:
     list_id = gift_list.id
     db.execute(delete(FolderItem).where(FolderItem.list_id == list_id))
     db.execute(delete(ListShare).where(ListShare.list_id == list_id))
     db.execute(delete(ListOccasionShare).where(ListOccasionShare.list_id == list_id))
+    # Claims hold a foreign key into `gifts`, so they unwind before the gifts do.
+    claims_repo.delete_claims_on_lists(db, [list_id])
     db.execute(delete(Gift).where(Gift.list_id == list_id))
     db.delete(gift_list)
     db.flush()

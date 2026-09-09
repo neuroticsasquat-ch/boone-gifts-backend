@@ -4,11 +4,12 @@ from app.access import can_view_list
 from app.families import repository as families_repo
 from app.family_invites.service import _require_organizer
 from app.list_occasions import repository as list_occasions_repo
+from app.lists import service as list_service
 from app.models.family_member import FamilyMember
-from app.models.gift_list import GiftList
 from app.models.occasion import Occasion
 from app.models.user import User
 from app.occasions import repository as repo
+from app.schemas.gift_list import GiftListRead, GiftListViewerRead
 from app.services.exceptions import ForbiddenError, NotFoundError
 
 ORGANIZER_ONLY = "Only organizers can rename or archive an occasion."
@@ -78,7 +79,9 @@ def update_occasion(
     return repo.update_occasion(db, occasion, update_data)
 
 
-def list_lists(db: Session, occasion_id: int, actor: User) -> list[GiftList]:
+def list_lists(
+    db: Session, occasion_id: int, actor: User
+) -> list[GiftListRead | GiftListViewerRead]:
     """The occasion's lists, as this member can see them.
 
     Every row goes through `can_view_list` even though membership of the
@@ -89,7 +92,7 @@ def list_lists(db: Session, occasion_id: int, actor: User) -> list[GiftList]:
     """
     _load_for_member(db, occasion_id, actor)
     return [
-        gift_list
+        list_service.to_summary(gift_list, actor.id)
         for gift_list in list_occasions_repo.get_lists_shared_to_occasion(
             db, occasion_id
         )
