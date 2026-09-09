@@ -111,16 +111,21 @@ disabled, with the reason stated.
 ```
 WHO CAN SEE THIS LIST
 
-  PEOPLE
-    ☑ Jane Boone
-    ☐ Carol Boone
-
   FAMILIES
     ☑ Boone Family        Christmas 2026
     ☑ Extended Family     [ Christmas 2026  ▾ ]
     ☐ Work Friends        No active occasion — a member
                           needs to create one
+
+  PEOPLE
+    ☑ Jane Boone          jane@example.com
+    ☐ Carol Boone         Already sees this through Boone Family
+    ☐ Dan Boone           dan@example.com
 ```
+
+**Families first** (NEU-1284). Families is the broader stroke, and it governs what the People rows
+can offer — a control whose top half is decided by its bottom half is read in the wrong order. The
+header summary reads the same way round: "Shared with Boone Family · Christmas 2026, Jane".
 
 - **Exactly one active occasion** — the common case. Checking the family selects it; the occasion
   name is displayed for transparency but is not a control.
@@ -129,6 +134,19 @@ WHO CAN SEE THIS LIST
 - **No active occasion** — row disabled, reason given, checkbox not operable.
 - **Pre-checked by default**: on the create-list form, every family the user belongs to that has
   exactly one active occasion arrives checked. This replaces simple mode's auto-grant (§8).
+- **A person an active occasion share already reaches** — row disabled, and the detail line names
+  every family that covers them instead of their email. Ticking it would grant nothing they do not
+  already have (NEU-1284). Three limits on the rule:
+  - It disables an **unticked** box only. A direct share already made stays revokable — this panel
+    is the only place to revoke one, and you can always remove a grant even when you cannot add a
+    redundant one.
+  - It keys off an **active** occasion. A share on an archived occasion still grants sight
+    (§5.4), but that route is winding down, so the direct share is worth offering and the row
+    stays live, unannotated.
+  - It is a **redundancy nudge, not a permission**. `POST /lists/{id}/shares` keeps accepting the
+    grant, because a direct share is what survives the person leaving the family or the occasion
+    share being revoked. The panel needs `member_ids` on `GET /lists/{id}/families` to compute it
+    (NEU-1285).
 
 ### 5.3 Occasion lifecycle
 
