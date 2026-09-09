@@ -1,24 +1,34 @@
 from datetime import datetime, timezone
+from decimal import Decimal
 
 from app.models.claim import Claim
 from app.models.gift import Gift
 
 
-def _claimed_gift(db, gift_list, name, claimer, purchased_at=None):
-    """A gift with a claim standing on it — two rows since ADR 0003."""
-    gift = Gift(list_id=gift_list.id, name=name)
+def _claimed_gift(
+    db,
+    gift_list,
+    name,
+    claimer,
+    purchased_at=None,
+    amount_paid=None,
+    price=None,
+):
+    """A gift with a claim standing on it — two rows since ADR 0003. Returns
+    the claim, since the shopping tab addresses claims, not gifts."""
+    gift = Gift(list_id=gift_list.id, name=name, price=price)
     db.add(gift)
     db.flush()
-    db.add(
-        Claim(
-            gift_id=gift.id,
-            user_id=claimer.id,
-            claimed_at=datetime.now(timezone.utc),
-            purchased_at=purchased_at,
-        )
+    claim = Claim(
+        gift_id=gift.id,
+        user_id=claimer.id,
+        claimed_at=datetime.now(timezone.utc),
+        purchased_at=purchased_at,
+        amount_paid=amount_paid,
     )
+    db.add(claim)
     db.flush()
-    return gift
+    return claim
 
 
 def test_create_folder(client, member_user, member_headers):
@@ -239,15 +249,15 @@ def test_folders_for_list_empty(client, member_headers, sample_list):
     assert response.json() == []
 
 
-# Shopping list endpoint tests
+# Shopping tab tests — GET /folders/{id}/shopping
 
-def test_shopping_list_returns_claimed_gifts(
-    client, member_user, member_headers, admin_user, folder, folder_item, shared_list, db
+def test_shopping_returns_claimed_gifts(
+    client, member_user, member_headers, folder, folder_item, shared_list, db
 ):
-    gift = _claimed_gift(db, shared_list, "Claimed by Member", member_user)
+    _claimed_gift(db, shared_list, "Claimed by Member", member_user)
 
     response = client.get(
-        f"/folders/{folder.id}/shopping-list",
+        f"/folders/{folder.id}/shopping",
         headers=member_headers,
     )
     assert response.status_code == 200
@@ -258,40 +268,85 @@ def test_shopping_list_returns_claimed_gifts(
     assert data[0]["purchased_at"] is None
 
 
-def test_shopping_list_excludes_unclaimed(
+def test_shopping_carries_the_claimers_own_spend(
+    client, member_user, member_headers, folder, folder_item, shared_list, db
+):
+    """`price` is the owner's asking price; `amount_paid` is what the claimer
+    actually spent. Never seed one from the other."""
+    claim = _claimed_gift(
+        db,
+        shared_list,
+        "Cast iron skillet",
+        member_user,
+        purchased_at=datetime(2026, 5, 24, 12, 0, tzinfo=timezone.utc),
+        amount_paid=Decimal("31.50"),
+        price=Decimal("39.00"),
+    )
+
+    row = client.get(
+        f"/folders/{folder.id}/shopping",
+        headers=member_headers,
+    ).json()[0]
+    assert row["claim_id"] == claim.id
+    assert row["gift_id"] == claim.gift_id
+    assert row["price"] == "39.00"
+    assert row["amount_paid"] == "31.50"
+    assert row["list_id"] == shared_list.id
+
+
+def test_shopping_excludes_unclaimed(
     client, member_headers, folder, folder_item, shared_list, db
 ):
-    from app.models.gift import Gift
-
     gift = Gift(list_id=shared_list.id, name="Unclaimed Gift")
     db.add(gift)
     db.flush()
 
     response = client.get(
-        f"/folders/{folder.id}/shopping-list",
+        f"/folders/{folder.id}/shopping",
         headers=member_headers,
     )
     assert response.status_code == 200
     assert response.json() == []
 
 
-def test_shopping_list_excludes_other_claimer(
+def test_shopping_excludes_other_claimer(
     client, member_headers, admin_user, folder, folder_item, shared_list, db
 ):
-    gift = _claimed_gift(db, shared_list, "Admin's Claim", admin_user)
+    """Invariant 1 on the folder tab: only ever the caller's own claims."""
+    _claimed_gift(db, shared_list, "Admin's Claim", admin_user)
 
     response = client.get(
-        f"/folders/{folder.id}/shopping-list",
+        f"/folders/{folder.id}/shopping",
         headers=member_headers,
     )
     assert response.status_code == 200
     assert response.json() == []
 
 
-def test_shopping_list_shows_purchased_at(
+def test_shopping_excludes_lists_outside_the_folder(
     client, member_user, member_headers, folder, folder_item, shared_list, db
 ):
-    gift = _claimed_gift(
+    """A folder scopes by its own items, so a claim on a list the caller never
+    filed here stays off this tab."""
+    from app.models.gift_list import GiftList
+
+    elsewhere = GiftList(name="Not In The Folder", owner_id=member_user.id)
+    db.add(elsewhere)
+    db.flush()
+    _claimed_gift(db, elsewhere, "Claimed Elsewhere", member_user)
+    _claimed_gift(db, shared_list, "Claimed In Folder", member_user)
+
+    response = client.get(
+        f"/folders/{folder.id}/shopping",
+        headers=member_headers,
+    )
+    assert [row["name"] for row in response.json()] == ["Claimed In Folder"]
+
+
+def test_shopping_shows_purchased_at(
+    client, member_user, member_headers, folder, folder_item, shared_list, db
+):
+    _claimed_gift(
         db,
         shared_list,
         "Bought Gift",
@@ -300,7 +355,7 @@ def test_shopping_list_shows_purchased_at(
     )
 
     response = client.get(
-        f"/folders/{folder.id}/shopping-list",
+        f"/folders/{folder.id}/shopping",
         headers=member_headers,
     )
     assert response.status_code == 200
@@ -309,9 +364,9 @@ def test_shopping_list_shows_purchased_at(
     assert data[0]["purchased_at"] is not None
 
 
-def test_shopping_list_not_owner_403(client, admin_headers, folder):
+def test_shopping_not_owner_403(client, admin_headers, folder):
     response = client.get(
-        f"/folders/{folder.id}/shopping-list",
+        f"/folders/{folder.id}/shopping",
         headers=admin_headers,
     )
     assert response.status_code == 403

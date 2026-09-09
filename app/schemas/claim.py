@@ -62,6 +62,32 @@ class OccasionCandidate(BaseModel):
     family: CandidateFamily
 
 
+class ShoppingItem(BaseModel):
+    """One line on a shopping tab: the caller's own claim, and the gift it
+    stands on.
+
+    Only ever the caller's own — there is no parameter, no admin path and no
+    aggregate that returns anyone else's (`CONTEXT.md` invariant 1). `price` is
+    the *owner's* asking price, public to every viewer of the list;
+    `amount_paid` is what the claimer actually spent and is private to them.
+    Never seed one from the other.
+
+    `claim_id` is here because correcting the filing or the amount goes through
+    `PATCH /claims/{id}`, which the tab has no other way to address (§6.2).
+    """
+
+    claim_id: int
+    gift_id: int
+    name: str
+    description: str | None
+    url: str | None
+    price: Decimal | None
+    list_id: int
+    list_name: str
+    purchased_at: datetime | None
+    amount_paid: Decimal | None
+
+
 class ClaimRead(BaseModel):
     """A claim as its own claimer sees it. Never handed to anyone else: the
     filing is private to the claimer, and the list's owner sees no claim state

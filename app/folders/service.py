@@ -1,6 +1,7 @@
 from sqlalchemy.orm import Session
 
 from app.access import can_view_list
+from app.claims import repository as claims_repo
 from app.folders import repository as repo
 from app.lists import service as list_service
 from app.models.folder import Folder
@@ -74,5 +75,7 @@ def get_folder_ids_for_list(db: Session, list_id: int, owner_id: int) -> list[in
     return repo.get_folder_ids_for_list(db, list_id, owner_id)
 
 
-def get_shopping_list(db: Session, folder_id: int, user_id: int) -> list[dict]:
-    return repo.get_shopping_list_items(db, folder_id, user_id)
+def get_shopping(db: Session, folder_id: int, user_id: int) -> list[dict]:
+    """The folder's shopping tab. The query lives with the other claim queries
+    (`app/claims/repository.py`), not here."""
+    return claims_repo.get_shopping_for_folder(db, folder_id, user_id)

@@ -257,7 +257,10 @@ def seed(db, password: str) -> None:
     add_gifts(carol_wishlist, ["Scarf", "Cookbook"],
               claimed_by=tom, bought=Decimal("64.99"))
     add_gifts(gran_list, ["Cardigan", "Bird feeder"])
-    add_gifts(grandpa_list, ["Fishing reel", "Reading lamp"])
+    # Claimed and filed under an *archived* Christmas, which is the only way to
+    # see by hand that an archived occasion still serves its shopping tab.
+    add_gifts(grandpa_list, ["Fishing reel", "Reading lamp"],
+              claimed_by=tom, bought=Decimal("42.00"))
     add_gifts(kitchen_list, ["Stand mixer", "Knife block"])
     # Reaches Tom only through the Extended family's occasion, so it is also the
     # claim whose filing NEU-1269 has to resolve without a direct share.
@@ -358,6 +361,22 @@ def seed(db, password: str) -> None:
     # the active one while `claim_options` still offers the two past ones.
     for occasion in (boones_christmas, boones_last_year, boones_two_years_ago):
         db.add(ListOccasionShare(list_id=standing_list.id, occasion_id=occasion.id))
+
+    # Tom's filings, applied here because the claims above predate the occasions.
+    # Every shopping tab needs something on it: Boone Christmas gets a purchase
+    # with an amount, Extended Christmas one where he skipped it, and last
+    # year's archived Christmas one that must still be served. His claim on
+    # Jane's list is deliberately left unfiled — a directly shared list belongs
+    # to no occasion, and the folder tab is its only route (project spec §9.4).
+    def file_under(gift_list, occasion):
+        gift_ids = select(Gift.id).where(Gift.list_id == gift_list.id)
+        db.query(Claim).filter(
+            Claim.gift_id.in_(gift_ids), Claim.user_id == tom.id
+        ).update({"occasion_id": occasion.id}, synchronize_session=False)
+
+    file_under(carol_wishlist, boones_christmas)
+    file_under(grandpa_list, boones_last_year)
+    file_under(dave_wishlist, extended_christmas)
 
     christmas = Folder(owner_id=tom.id, name="Christmas 2026 Shopping",
                            description="Everyone I'm buying for")

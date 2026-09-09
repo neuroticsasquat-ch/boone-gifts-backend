@@ -187,7 +187,15 @@ Creates five `@example.com` users with the list-visibility states a single accou
 - `DELETE /folders/{id}` -- Delete a folder
 - `POST /folders/{id}/items` -- Add a list to a folder
 - `DELETE /folders/{id}/items/{list_id}` -- Remove a list from a folder
-- `GET /folders/{id}/shopping-list` -- Everything you've claimed across the folder
+- `GET /folders/{id}/shopping` -- Everything you've claimed across the folder
+
+### Occasions (`/families/{family_id}/occasions`, `/occasions`)
+- `GET /families/{family_id}/occasions` -- The family's occasions; any member
+- `POST /families/{family_id}/occasions` -- Create one; any member
+- `GET /occasions/{id}` -- Get an occasion; any member of its family
+- `PUT /occasions/{id}` -- Rename or archive; organizers only
+- `GET /occasions/{id}/lists` -- The lists shared to it that you can see
+- `GET /occasions/{id}/shopping` -- Everything *you* have claimed under it
 
 ### Meta (`/meta`)
 - `GET /meta` -- Fetch URL metadata (title, description, price, image)

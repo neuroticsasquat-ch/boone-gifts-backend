@@ -4,12 +4,17 @@ This is the first time role gates something a member can *see*, so the member
 and organizer paths are covered explicitly on every endpoint: any member reads
 and creates, only an organizer renames or archives.
 """
+from datetime import datetime, timezone
+from decimal import Decimal
+
 import pytest
 import sqlalchemy
 
 from app.dependencies import create_access_token
+from app.models.claim import Claim
 from app.models.family import Family
 from app.models.family_member import FamilyMember
+from app.models.gift import Gift
 from app.models.gift_list import GiftList
 from app.models.list_occasion_share import ListOccasionShare
 from app.models.occasion import Occasion
@@ -586,3 +591,209 @@ def test_lists_requires_authentication(client, db, family, member_user):
     occasion = _seed_occasion(db, family, member_user)
 
     assert client.get(f"/occasions/{occasion.id}/lists").status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# GET /occasions/{id}/shopping — the caller's own claims, and nobody else's
+# ---------------------------------------------------------------------------
+
+
+def _seed_claim(
+    db,
+    gift_list,
+    claimer,
+    name,
+    occasion=None,
+    purchased_at=None,
+    amount_paid=None,
+    price=None,
+):
+    """A gift with a claim standing on it — two rows since ADR 0003."""
+    gift = Gift(list_id=gift_list.id, name=name, price=price)
+    db.add(gift)
+    db.flush()
+    claim = Claim(
+        gift_id=gift.id,
+        user_id=claimer.id,
+        occasion_id=occasion.id if occasion is not None else None,
+        claimed_at=datetime.now(timezone.utc),
+        purchased_at=purchased_at,
+        amount_paid=amount_paid,
+    )
+    db.add(claim)
+    db.flush()
+    return claim
+
+
+def test_shopping_never_returns_another_members_claims(
+    client, db, family, member_user, plain_member, plain_member_headers
+):
+    """`CONTEXT.md` invariant 1, at the one endpoint most tempted to break it.
+
+    Both claims are filed under the same occasion, on the same list, by two
+    members of the same family — everything matches except the claimer.
+    """
+    occasion = _seed_occasion(db, family, member_user)
+    gift_list = _seed_list(db, member_user, "Gran's List")
+    _seed_claim(db, gift_list, plain_member, "Mine", occasion=occasion)
+    _seed_claim(db, gift_list, member_user, "Not mine", occasion=occasion)
+
+    response = client.get(
+        f"/occasions/{occasion.id}/shopping", headers=plain_member_headers
+    )
+
+    assert response.status_code == 200
+    assert [row["name"] for row in response.json()] == ["Mine"]
+
+
+def test_shopping_returns_only_claims_filed_under_this_occasion(
+    client, db, family, member_user, plain_member, plain_member_headers
+):
+    occasion = _seed_occasion(db, family, member_user)
+    other = _seed_occasion(db, family, member_user, name="Gran's 80th")
+    gift_list = _seed_list(db, member_user, "Gran's List")
+    _seed_claim(db, gift_list, plain_member, "Filed here", occasion=occasion)
+    _seed_claim(db, gift_list, plain_member, "Filed elsewhere", occasion=other)
+    _seed_claim(db, gift_list, plain_member, "Filed nowhere")
+
+    response = client.get(
+        f"/occasions/{occasion.id}/shopping", headers=plain_member_headers
+    )
+
+    assert [row["name"] for row in response.json()] == ["Filed here"]
+
+
+def test_shopping_carries_the_whole_line(
+    client, db, family, member_user, plain_member, plain_member_headers
+):
+    """Gift, the owner's asking price, the list it came from, and the
+    claimer's own purchase state — the shopping tab renders all of it."""
+    occasion = _seed_occasion(db, family, member_user)
+    gift_list = _seed_list(db, member_user, "Gran's List")
+    claim = _seed_claim(
+        db,
+        gift_list,
+        plain_member,
+        "Cast iron skillet",
+        occasion=occasion,
+        purchased_at=datetime(2026, 5, 24, 12, 0, tzinfo=timezone.utc),
+        amount_paid=Decimal("31.50"),
+        price=Decimal("39.00"),
+    )
+    gift = db.get(Gift, claim.gift_id)
+    gift.description = "The 12-inch one"
+    gift.url = "https://example.com/skillet"
+    db.flush()
+
+    row = client.get(
+        f"/occasions/{occasion.id}/shopping", headers=plain_member_headers
+    ).json()[0]
+
+    assert row["claim_id"] == claim.id
+    assert row["gift_id"] == gift.id
+    assert row["name"] == "Cast iron skillet"
+    assert row["description"] == "The 12-inch one"
+    assert row["url"] == "https://example.com/skillet"
+    # The owner's asking price and the claimer's spend are separate facts, and
+    # neither is ever seeded from the other.
+    assert row["price"] == "39.00"
+    assert row["amount_paid"] == "31.50"
+    assert row["list_id"] == gift_list.id
+    assert row["list_name"] == "Gran's List"
+    assert row["purchased_at"] is not None
+
+
+def test_shopping_groups_by_list_in_a_stable_order(
+    client, db, family, member_user, plain_member, plain_member_headers
+):
+    occasion = _seed_occasion(db, family, member_user)
+    first = _seed_list(db, member_user, "Gran's List")
+    second = _seed_list(db, member_user, "Jane's Wishlist")
+    _seed_claim(db, first, plain_member, "A1", occasion=occasion)
+    _seed_claim(db, second, plain_member, "B1", occasion=occasion)
+    _seed_claim(db, first, plain_member, "A2", occasion=occasion)
+
+    names = [
+        row["name"]
+        for row in client.get(
+            f"/occasions/{occasion.id}/shopping", headers=plain_member_headers
+        ).json()
+    ]
+
+    assert names == ["A1", "A2", "B1"]
+
+
+def test_shopping_still_served_for_an_archived_occasion(
+    client, db, family, member_user, plain_member, plain_member_headers
+):
+    """The January shopper is still buying against December's occasion."""
+    occasion = _seed_occasion(db, family, member_user, is_archived=True)
+    gift_list = _seed_list(db, member_user, "Gran's List")
+    _seed_claim(db, gift_list, plain_member, "Bought in January", occasion=occasion)
+
+    response = client.get(
+        f"/occasions/{occasion.id}/shopping", headers=plain_member_headers
+    )
+
+    assert response.status_code == 200
+    assert [row["name"] for row in response.json()] == ["Bought in January"]
+
+
+def test_shopping_survives_the_share_being_revoked(
+    client, db, family, member_user, plain_member, plain_member_headers
+):
+    """Filing is stored, not derived — a claim that outlived its share still
+    belongs to the budget it was filed under."""
+    occasion = _seed_occasion(db, family, member_user)
+    gift_list = _seed_list(db, member_user, "Gran's List")
+    share = ListOccasionShare(list_id=gift_list.id, occasion_id=occasion.id)
+    db.add(share)
+    db.flush()
+    _seed_claim(db, gift_list, plain_member, "Still mine", occasion=occasion)
+    db.delete(share)
+    db.flush()
+
+    response = client.get(
+        f"/occasions/{occasion.id}/shopping", headers=plain_member_headers
+    )
+
+    assert [row["name"] for row in response.json()] == ["Still mine"]
+
+
+def test_shopping_is_empty_when_nothing_is_filed(
+    client, db, family, member_user, plain_member_headers
+):
+    occasion = _seed_occasion(db, family, member_user)
+
+    response = client.get(
+        f"/occasions/{occasion.id}/shopping", headers=plain_member_headers
+    )
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_shopping_forbidden_for_a_non_member(
+    client, db, family, member_user, outsider_headers
+):
+    occasion = _seed_occasion(db, family, member_user)
+
+    response = client.get(
+        f"/occasions/{occasion.id}/shopping", headers=outsider_headers
+    )
+
+    assert response.status_code == 403
+
+
+def test_shopping_not_found_for_an_occasion_that_does_not_exist(
+    client, member_headers
+):
+    response = client.get("/occasions/999999/shopping", headers=member_headers)
+
+    assert response.status_code == 404
+
+
+def test_shopping_requires_authentication(client, db, family, member_user):
+    occasion = _seed_occasion(db, family, member_user)
+
+    assert client.get(f"/occasions/{occasion.id}/shopping").status_code == 401

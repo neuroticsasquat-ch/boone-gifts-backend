@@ -76,10 +76,12 @@ app/
   shares/              # /lists/{id}/shares — direct shares, cascade on unshare
   list_occasions/      # /lists/{id}/occasions — occasion shares, claim handling on revoke
   connections/         # /connections lifecycle + cascade disconnect
-  folders/             # /folders CRUD + items with access checks
+  folders/             # /folders CRUD + items with access checks, and the
+                       # folder shopping tab
   families/            # /families CRUD, membership, cascade cleanup
   family_invites/      # Family invite create/accept/decline/revoke
-  occasions/           # /families/{id}/occasions + /occasions/{id} — the family occasion
+  occasions/           # /families/{id}/occasions + /occasions/{id} — the family
+                       # occasion, and its shopping tab
   meta/                # GET /meta — URL metadata with SSRF protection
   cli/create_admin.py  # Interactive first-admin creation
 alembic/versions/      # Migrations
@@ -142,6 +144,7 @@ Family visibility is an explicit per-(list, occasion) `ListOccasionShare` row, n
 - `DELETE /lists/{id}/occasions/{occasion_id}?claims=release|keep` — unshare; 204, or **409** when a member who would lose access holds a claim and no `claims` choice was given. Works on an archived occasion: archiving blocks new shares, not the withdrawal of old ones
 - `POST /lists` accepts `occasion_ids` — each must be on one of the caller's families and unarchived, else 403/409. Omitted or empty shares with nobody; there is no auto-grant, and the §5.2 pre-checking is a client concern
 - `GET /occasions/{id}/lists` — the occasion's lists, for any member of its family, each still routed through `can_view_list`
+- `GET /occasions/{id}/shopping` — see "Shopping tabs" below
 - `GET /lists?filter=shared` — **the one shared scope**: every list another account has made
   visible to the caller, by a direct `ListShare` **or** an occasion share. Each row carries
   `shared_via` — `{kind: "user", id, name}` or `{kind: "occasion", id, name, family: {id, name}}`;
@@ -191,6 +194,30 @@ on the gift. See `docs/adr/0003-claims-are-their-own-table.md`.
   families, list-occasion and users services call. Don't hand-write claim SQL in a domain repository
 - `amount_paid` is the *claimer's* spend; `gifts.price` is the *owner's* asking price and is public
   to viewers. Never seed one from the other
+
+#### Shopping tabs
+`GET /occasions/{id}/shopping` (any member of the occasion's family) and
+`GET /folders/{id}/shopping` (the folder's owner) are the same payload under two scopes: the
+caller's own claims, each row carrying the gift, the owner's asking price, the list it came from,
+and the claimer's `purchased_at` and `amount_paid`. Ordered by list then gift — "grouped by list"
+is the client grouping on `list_id`, and the order is stable across reloads.
+
+- **Only ever the caller's own claims.** There is no parameter, no admin path and no aggregate that
+  returns anyone else's — `CONTEXT.md` invariant 1, not a preference. Both queries are keyed on the
+  caller's user id, and both have a regression test that a second user's claims never appear
+- Both live in `app/claims/repository.py` (`get_shopping_for_occasion`, `get_shopping_for_folder`)
+  off one shared select, so a column added to the payload lands on both tabs. The folder query was
+  `app/folders/repository.py:get_shopping_list_items`, and `/folders/{id}/shopping-list` was
+  renamed to `/folders/{id}/shopping` outright — no shim (project spec §12)
+- The occasion tab reads `claims.occasion_id` **alone**, with no join back to the shares: filing is
+  stored, not derived, so a claim outlives the share being revoked and the occasion being archived
+- **An archived occasion still serves its shopping payload** — the January shopper is still buying
+  against December's occasion
+- Rows carry `claim_id` because correcting the filing or the amount goes through `PATCH /claims/{id}`
+- The occasion tab gates on **current** family membership, so someone who has left the family can no
+  longer read it even for claims they filed themselves and which survive the departure. That is what
+  §10.1 asks for, and it is a live instance of the §9.4 gap: those claims are then reachable only
+  through a folder
 
 #### Filing a claim under an occasion
 `claims.occasion_id` is not "which occasion this gift was claimed for". A claim is a single global

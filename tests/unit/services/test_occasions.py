@@ -259,3 +259,41 @@ def test_update_occasion_raises_not_found_for_an_unknown_id():
             service.update_occasion(
                 db, occasion_id=5, actor=_make_user(), update_data={"name": "Renamed"}
             )
+
+
+@patch("app.occasions.service.claims_repo.get_shopping_for_occasion")
+def test_shopping_is_scoped_to_the_caller(mock_shopping):
+    """The actor's own id is what bounds the query — there is no parameter
+    that could widen it to another member's claims."""
+    db = MagicMock()
+    mock_shopping.return_value = [{"name": "Skillet"}]
+    actor = _make_user(id=10)
+
+    with patch(REPO) as repo, patch(FAMILIES_REPO) as families_repo:
+        repo.get_occasion.return_value = _make_occasion()
+        families_repo.get_family.return_value = _make_family()
+        families_repo.get_family_member.return_value = _make_member("member")
+
+        result = service.list_shopping(db, occasion_id=5, actor=actor)
+
+    mock_shopping.assert_called_once_with(db, 5, 10)
+    assert result == [{"name": "Skillet"}]
+
+
+def test_shopping_refuses_a_non_member():
+    db = MagicMock()
+    with patch(REPO) as repo, patch(FAMILIES_REPO) as families_repo:
+        repo.get_occasion.return_value = _make_occasion()
+        families_repo.get_family.return_value = _make_family()
+        families_repo.get_family_member.return_value = None
+
+        with pytest.raises(ForbiddenError):
+            service.list_shopping(db, occasion_id=5, actor=_make_user())
+
+
+def test_shopping_raises_not_found_for_an_unknown_occasion():
+    db = MagicMock()
+    with patch(REPO) as repo:
+        repo.get_occasion.return_value = None
+        with pytest.raises(NotFoundError):
+            service.list_shopping(db, occasion_id=5, actor=_make_user())

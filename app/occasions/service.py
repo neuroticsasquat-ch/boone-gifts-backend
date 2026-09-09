@@ -1,6 +1,7 @@
 from sqlalchemy.orm import Session
 
 from app.access import can_view_list
+from app.claims import repository as claims_repo
 from app.families import repository as families_repo
 from app.family_invites.service import _require_organizer
 from app.list_occasions import repository as list_occasions_repo
@@ -98,3 +99,19 @@ def list_lists(
         )
         if can_view_list(db, actor, gift_list)
     ]
+
+
+def list_shopping(db: Session, occasion_id: int, actor: User) -> list[dict]:
+    """The caller's own claims filed under this occasion.
+
+    Membership of the occasion's family is the gate, and the only one that is
+    needed: the query is keyed on the caller's own user id, so there is no
+    parameter, no admin path and no aggregate here that could return anyone
+    else's claims (`CONTEXT.md` invariant 1).
+
+    Archiving is not unsharing (§5.4), and a January shopper is still buying
+    against December's occasion, so an archived occasion serves its payload
+    unchanged — `_load_for_member` deliberately does not consult `is_archived`.
+    """
+    _load_for_member(db, occasion_id, actor)
+    return claims_repo.get_shopping_for_occasion(db, occasion_id, actor.id)
