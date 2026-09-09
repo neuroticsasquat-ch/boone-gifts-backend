@@ -3,10 +3,12 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 
 from app.claims import repository as claims_repo
+from app.claims import service as claim_service
 from app.gifts import repository as repo
 from app.lists import repository as list_repo
 from app.models.claim import Claim
 from app.models.gift import Gift
+from app.models.user import User
 from app.services.exceptions import BadRequestError, ConflictError, ForbiddenError, NotFoundError
 
 
@@ -50,18 +52,42 @@ def delete_gift(db: Session, gift_id: int, list_id: int) -> None:
 
 
 def claim_gift(
-    db: Session, gift_id: int, list_id: int, owner_id: int, user_id: int
+    db: Session,
+    gift_id: int,
+    list_id: int,
+    owner_id: int,
+    user: User,
+    occasion_id: int | None = None,
+    occasion_provided: bool = False,
 ) -> Gift:
-    if owner_id == user_id:
+    """Claim a gift and file it under an occasion.
+
+    The claim rules that predate filing all take precedence, so an already
+    claimed gift answers 409 whatever the filing would have been. The filing is
+    resolved *before* the insert: the one case that refuses the claim outright
+    must leave no claim row behind (NEU-1269 §3.1).
+    """
+    if owner_id == user.id:
         raise ForbiddenError("Cannot claim your own gift.")
     gift = _get_gift_for_list(db, gift_id, list_id)
     gift_list = list_repo.get_list_by_id(db, list_id)
-    if gift_list and gift_list.is_archived:
+    if gift_list is None:
+        # Unreachable while gifts.list_id is a foreign key, but the filing
+        # resolution below dereferences the row, so narrow it here rather than
+        # leaving a half-honoured None check behind.
+        raise NotFoundError("Gift not found.")
+    if gift_list.is_archived:
         raise BadRequestError("Cannot claim gifts on an archived list.")
-    # Filed under no occasion: resolving the filing is NEU-1269's job, and a
-    # claim is a fact about the gift with or without one.
-    claim = claims_repo.create_claim(db, gift_id, user_id)
+    if claims_repo.get_claim_for_gift(db, gift_id) is not None:
+        raise ConflictError("Gift already claimed.")
+
+    filed_under = claim_service.resolve_filing(
+        db, gift_list, user, occasion_id, occasion_provided
+    )
+    claim = claims_repo.create_claim(db, gift_id, user.id, filed_under)
     if claim is None:
+        # The pre-check above is for precedence, not for correctness: the unique
+        # constraint is still what decides the winner of a claim race.
         raise ConflictError("Gift already claimed.")
     db.refresh(gift)
     return gift

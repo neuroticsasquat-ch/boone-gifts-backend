@@ -2,9 +2,9 @@ from fastapi import APIRouter, HTTPException, status
 
 from app.dependencies import CurrentUser, DbSession, OwnedList, ViewableList
 from app.gifts import service as gift_service
-from app.schemas.claim import PurchaseCreate
+from app.schemas.claim import ClaimCreate, PurchaseCreate
 from app.schemas.gift import GiftCreate, GiftUpdate
-from app.schemas.gift_list import GiftOwnerRead, GiftRead
+from app.schemas.gift_list import GiftClaimRead, GiftOwnerRead, GiftRead
 from app.services.exceptions import BadRequestError, ConflictError, ForbiddenError, NotFoundError
 
 router = APIRouter(prefix="/lists/{list_id}/gifts", tags=["gifts"])
@@ -42,11 +42,32 @@ def delete_gift(gift_id: int, gift_list: OwnedList, db: DbSession):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
 
 
-@router.post("/{gift_id}/claim", response_model=GiftRead)
-def claim_gift(gift_id: int, gift_list: ViewableList, user: CurrentUser, db: DbSession):
+@router.post(
+    "/{gift_id}/claim",
+    response_model=GiftClaimRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def claim_gift(
+    gift_id: int,
+    gift_list: ViewableList,
+    user: CurrentUser,
+    db: DbSession,
+    request: ClaimCreate | None = None,
+):
+    # The body is optional, and an omitted `occasion_id` differs from an explicit
+    # null: the first asks the server to resolve the filing, the second is the
+    # claimer filing under nothing. `model_fields_set` is the only thing that
+    # tells them apart once the body is parsed.
+    occasion_provided = request is not None and "occasion_id" in request.model_fields_set
     try:
         return gift_service.claim_gift(
-            db, gift_id, gift_list.id, gift_list.owner_id, user.id
+            db,
+            gift_id,
+            gift_list.id,
+            gift_list.owner_id,
+            user,
+            occasion_id=request.occasion_id if request else None,
+            occasion_provided=occasion_provided,
         )
     except BadRequestError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))

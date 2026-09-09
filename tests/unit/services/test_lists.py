@@ -130,27 +130,39 @@ def test_get_lists_all(mock_get_all):
 # --- get_list (owner vs viewer) ---
 
 
+@patch("app.lists.service.claim_service.occasion_sets")
 @patch("app.lists.service.GiftListDetailOwner.model_validate")
-def test_get_list_as_owner(mock_validate):
+def test_get_list_as_owner(mock_validate, mock_sets):
     gift_list = _make_gift_list(owner_id=5)
     expected = MagicMock(spec=GiftListDetailOwner)
     mock_validate.return_value = expected
 
-    result = service.get_list(gift_list, user_id=5)
+    result = service.get_list(MagicMock(), gift_list, SimpleNamespace(id=5))
 
     mock_validate.assert_called_once_with(gift_list)
     assert result == expected
+    # The owner's detail is never even asked what a claim could be filed under.
+    mock_sets.assert_not_called()
 
 
+@patch("app.lists.service.claim_service.occasion_sets")
 @patch("app.lists.service.GiftListDetailViewer.model_validate")
-def test_get_list_as_viewer(mock_validate):
+def test_get_list_as_viewer(mock_validate, mock_sets):
     gift_list = _make_gift_list(owner_id=5)
     expected = MagicMock(spec=GiftListDetailViewer)
     mock_validate.return_value = expected
+    allowed, suggested = ["allowed"], ["suggested"]
+    mock_sets.return_value = (allowed, suggested)
+    db, viewer = MagicMock(), SimpleNamespace(id=10)
 
-    result = service.get_list(gift_list, user_id=10)
+    result = service.get_list(db, gift_list, viewer)
 
     mock_validate.assert_called_once_with(gift_list)
+    mock_sets.assert_called_once_with(db, gift_list, viewer)
+    # candidates is `suggested`, options is `allowed` — swapping them would
+    # prompt on every claim and hide the correction path.
+    assert result.claim_candidates == suggested
+    assert result.claim_options == allowed
     assert result == expected
 
 

@@ -64,7 +64,7 @@ def unseen_share_count(user: CurrentUser, db: DbSession):
 def get_list(gift_list: ViewableList, user: CurrentUser, db: DbSession):
     if gift_list.owner_id != user.id:
         list_service.mark_share_seen(db, list_id=gift_list.id, user_id=user.id)
-    return list_service.get_list(gift_list, user_id=user.id)
+    return list_service.get_list(db, gift_list, user)
 
 
 @router.put("/{list_id}", response_model=GiftListRead)

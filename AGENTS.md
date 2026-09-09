@@ -71,7 +71,8 @@ app/
   invites/             # /invites CRUD (admin-only)
   lists/               # /lists CRUD, filter logic, owner vs viewer responses
   gifts/               # /lists/{id}/gifts CRUD + claim/unclaim/purchase
-  claims/              # Claim queries — no router yet; the claim is its own entity (ADR 0003)
+  claims/              # PATCH /claims/{id} + every claim query; the claim is its own
+                       # entity (ADR 0003) and files under one occasion (NEU-1269)
   shares/              # /lists/{id}/shares — direct shares, cascade on unshare
   list_occasions/      # /lists/{id}/occasions — occasion shares, claim handling on revoke
   connections/         # /connections lifecycle + cascade disconnect
@@ -176,9 +177,12 @@ on the gift. See `docs/adr/0003-claims-are-their-own-table.md`.
   purchased_at, amount_paid `Numeric(10,2)`). The unique `gift_id` is what makes one claimer per
   gift a constraint rather than a convention, and what decides the winner of a claim race —
   `create_claim` inserts inside a SAVEPOINT and returns `None` to the loser, who gets the 409
-- `POST /lists/{id}/gifts/{gift_id}/claim` — the claim files under **no occasion**; resolving the
-  filing is NEU-1269. `DELETE` deletes the row, so the purchase state and the amount go with it and
-  there is no explicit reset to forget
+- `POST /lists/{id}/gifts/{gift_id}/claim` — **201**, body `{ occasion_id }` optional, and the
+  response states the filing actually recorded. `DELETE` deletes the row, so the purchase state and
+  the amount go with it and there is no explicit reset to forget
+- `PATCH /claims/{id}` — the claimer's own correction: `occasion_id`, `amount_paid`, or both, read
+  with `exclude_unset` so an amount-only edit never touches the filing. **403** for anyone else
+  *and* for a claim that does not exist, so probing ids tells the list's owner nothing
 - `POST .../purchase` takes an optional `{ amount_paid }`. Omitting it leaves whatever is recorded
   (so unticking and re-ticking is non-destructive), an explicit null clears it, and no body at all is
   the "skip the amount" case. `DELETE .../purchase` clears `purchased_at` and **keeps**
@@ -187,6 +191,45 @@ on the gift. See `docs/adr/0003-claims-are-their-own-table.md`.
   families, list-occasion and users services call. Don't hand-write claim SQL in a domain repository
 - `amount_paid` is the *claimer's* spend; `gifts.price` is the *owner's* asking price and is public
   to viewers. Never seed one from the other
+
+#### Filing a claim under an occasion
+`claims.occasion_id` is not "which occasion this gift was claimed for". A claim is a single global
+fact — the gift is taken — while the filing is the claimer's own private record of their own spend,
+so it lands in exactly one budget. Where the two conflict, the claim wins. See
+`app/claims/service.py`.
+
+**Two derived sets, never one** (`occasion_sets`, one query per list and not per gift):
+
+| Set | Is | Decides |
+|---|---|---|
+| `allowed` | Occasions the list is shared to ∩ the claimer's families, **archived included** | Whether an explicitly supplied id is accepted, on `POST` and `PATCH` |
+| `suggested` | The active members of `allowed`; all of `allowed` when none are active | Auto-pick versus prompt, and what the client renders |
+
+Narrowing `suggested` to active is what stops every claim prompting forever once a family has three
+Christmases behind it; the `else allowed` fallback keeps the January shopper filing correctly.
+Keeping `allowed` wide is what makes a misfiled late claim fixable — narrow it and the correction
+path stops existing at all.
+
+- **`POST` with no id**: 0 suggested files under null, 1 files silently, **2+ is a 400
+  `ambiguous_occasion` and no claim row is written**. The client had `claim_candidates` and should
+  have prompted; without the 400, a frontend that silently stops prompting is indistinguishable
+  from a working one and every budget quietly reads low
+- **`POST` with an id outside `allowed`**: **201, the claim still stands**, filed by the no-id rule
+  (and under null where that rule cannot decide). Not a 403 — claiming is competitive, and a share
+  revoked between the client's read and the user's click must never cost someone the gift. It is
+  not an error and must not be logged as one
+- **`PATCH` with an id outside `allowed`**: **403**, no fallback. The user is explicitly choosing,
+  and silently recording something else would be worse than refusing
+- **Filing is stored, never derived.** Revoking the share, archiving the occasion and leaving the
+  family each leave an existing filing untouched — where a claim survives a cascade, its filing
+  survives with it. A budget whose history rewrites itself is worse than no budget
+- `GiftListDetailViewer` carries `claim_candidates` (= `suggested`) and `claim_options`
+  (= `allowed`), each entry `{id, name, is_archived, family: {id, name}}`. **`GiftListDetailOwner`
+  carries neither, ever** — they are derived from the viewer's own memberships, and this is exactly
+  the class of field that produced the `claimed_count` leak
+- The filing itself is claimer-private: `GiftClaimRead` declares `occasion_id` and is returned only
+  from the claim endpoints, where the caller *is* the claimer. `GiftRead` — the gift row every
+  viewer of a list reads — deliberately does not declare it
 
 ## Data model notes
 - **Lists carry a recipient**: `recipient_name` alone, meaning one thing — a person with no account. Read `GiftList.kept_for_absent_person` rather than testing the column. The co-resident case that `recipient_has_account = true` used to cover is an account person now (dropped in `e2b7d4a91c53`)
@@ -224,7 +267,7 @@ on the gift. See `docs/adr/0003-claims-are-their-own-table.md`.
 - CI runs `uv sync --frozen && pytest tests/ -v` with `APP_JWT_SECRET=ci-test-secret`
 
 ## Dev fixtures
-`python -m scripts.seed_dev` (add `--reset` to re-seed, `--purge` to remove) builds the visibility states a single account can't produce: a directly shared list, a list reaching you only through an occasion, a list kept for someone with no account, an archived list, a pending connection request, a shared account with two people, and one claim in each of its three money states — taken but not bought, bought with an amount, and bought with the amount skipped. All fixture users are `@example.com`, and purge only deletes rows reachable from them. Run it with `-m` — executing the file directly puts `scripts/` on `sys.path` instead of `/app`.
+`python -m scripts.seed_dev` (add `--reset` to re-seed, `--purge` to remove) builds the visibility states a single account can't produce: a directly shared list, a list reaching you only through an occasion, a list kept for someone with no account, an archived list, a pending connection request, a shared account with two people, one claim in each of its three money states — taken but not bought, bought with an amount, and bought with the amount skipped — and a family with two archived Christmases plus one active, shared a standing list, which is the only way to see a claim file silently instead of prompting. All fixture users are `@example.com`, and purge only deletes rows reachable from them. Run it with `-m` — executing the file directly puts `scripts/` on `sys.path` instead of `/app`.
 
 ## Critical conventions
 - **Router endpoints use `db.flush()`, never `db.commit()`** — the `get_db` dependency commits on success and rolls back on exception. In tests the fixture rolls back. New endpoints must follow this.

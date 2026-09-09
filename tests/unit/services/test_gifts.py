@@ -1,4 +1,5 @@
 from datetime import datetime
+from types import SimpleNamespace
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
@@ -7,7 +8,12 @@ import pytest
 from app.gifts import service
 from app.models.claim import Claim
 from app.models.gift import Gift
-from app.services.exceptions import ConflictError, ForbiddenError, NotFoundError
+from app.services.exceptions import (
+    BadRequestError,
+    ConflictError,
+    ForbiddenError,
+    NotFoundError,
+)
 
 
 def _make_gift(id: int = 1, list_id: int = 10, name: str = "Test Gift") -> MagicMock:
@@ -35,6 +41,7 @@ def _make_claim(
 REPO = "app.gifts.service.repo"
 CLAIMS_REPO = "app.gifts.service.claims_repo"
 LIST_REPO = "app.gifts.service.list_repo"
+RESOLVE = "app.gifts.service.claim_service.resolve_filing"
 
 
 def _make_non_archived_list():
@@ -127,20 +134,25 @@ def test_delete_gift_claimed(mock_get, mock_claim):
 # --- claim_gift ---
 
 
+CLAIMER = SimpleNamespace(id=99)
+
+
+@patch(f"{RESOLVE}", return_value=None)
+@patch(f"{CLAIMS_REPO}.get_claim_for_gift", return_value=None)
 @patch(f"{LIST_REPO}.get_list_by_id")
 @patch(f"{CLAIMS_REPO}.create_claim")
 @patch(f"{REPO}.get_gift_by_id")
-def test_claim_gift_success(mock_get, mock_claim, mock_get_list):
+def test_claim_gift_success(mock_get, mock_claim, mock_get_list, _standing, _resolve):
     db = MagicMock()
     gift = _make_gift(id=1, list_id=10)
     mock_get.return_value = gift
     mock_claim.return_value = _make_claim(gift_id=1, user_id=99)
     mock_get_list.return_value = _make_non_archived_list()
 
-    service.claim_gift(db, gift_id=1, list_id=10, owner_id=5, user_id=99)
+    service.claim_gift(db, gift_id=1, list_id=10, owner_id=5, user=CLAIMER)
 
     mock_get.assert_called_once_with(db, 1)
-    mock_claim.assert_called_once_with(db, 1, 99)
+    mock_claim.assert_called_once_with(db, 1, 99, None)
     db.refresh.assert_called_once_with(gift)
 
 
@@ -148,39 +160,94 @@ def test_claim_gift_success(mock_get, mock_claim, mock_get_list):
 def test_claim_gift_by_owner(mock_get):
     db = MagicMock()
     with pytest.raises(ForbiddenError):
-        service.claim_gift(db, gift_id=1, list_id=10, owner_id=5, user_id=5)
+        service.claim_gift(
+            db, gift_id=1, list_id=10, owner_id=5, user=SimpleNamespace(id=5)
+        )
 
     mock_get.assert_not_called()
 
 
+@patch(f"{RESOLVE}", return_value=None)
+@patch(f"{CLAIMS_REPO}.get_claim_for_gift", return_value=None)
 @patch(f"{LIST_REPO}.get_list_by_id")
 @patch(f"{CLAIMS_REPO}.create_claim", return_value=None)
 @patch(f"{REPO}.get_gift_by_id")
-def test_claim_gift_already_claimed(mock_get, mock_claim, mock_get_list):
+def test_claim_gift_already_claimed(
+    mock_get, mock_claim, mock_get_list, _standing, _resolve
+):
     """The repository loses the race and says so by returning None."""
     db = MagicMock()
     mock_get.return_value = _make_gift(id=1, list_id=10)
     mock_get_list.return_value = _make_non_archived_list()
 
     with pytest.raises(ConflictError):
-        service.claim_gift(db, gift_id=1, list_id=10, owner_id=5, user_id=99)
+        service.claim_gift(db, gift_id=1, list_id=10, owner_id=5, user=CLAIMER)
 
-    mock_claim.assert_called_once_with(db, 1, 99)
+    mock_claim.assert_called_once_with(db, 1, 99, None)
 
 
+@patch(f"{RESOLVE}")
+@patch(f"{CLAIMS_REPO}.get_claim_for_gift")
 @patch(f"{LIST_REPO}.get_list_by_id")
 @patch(f"{CLAIMS_REPO}.create_claim")
 @patch(f"{REPO}.get_gift_by_id")
-def test_claim_files_under_no_occasion(mock_get, mock_claim, mock_get_list):
-    """Filing is NEU-1269's job; a claim made here files under null."""
+def test_a_standing_claim_is_409_before_the_filing_is_resolved(
+    mock_get, mock_claim, mock_get_list, mock_standing, mock_resolve
+):
+    """The claim rules that predate filing take precedence, so an already
+    claimed gift answers 409 even where the filing would have been ambiguous."""
     db = MagicMock()
     mock_get.return_value = _make_gift(id=1, list_id=10)
+    mock_get_list.return_value = _make_non_archived_list()
+    mock_standing.return_value = _make_claim(gift_id=1, user_id=7)
+
+    with pytest.raises(ConflictError):
+        service.claim_gift(db, gift_id=1, list_id=10, owner_id=5, user=CLAIMER)
+
+    mock_resolve.assert_not_called()
+    mock_claim.assert_not_called()
+
+
+@patch(f"{RESOLVE}", return_value=3)
+@patch(f"{CLAIMS_REPO}.get_claim_for_gift", return_value=None)
+@patch(f"{LIST_REPO}.get_list_by_id")
+@patch(f"{CLAIMS_REPO}.create_claim")
+@patch(f"{REPO}.get_gift_by_id")
+def test_the_resolved_filing_is_what_gets_written(
+    mock_get, mock_claim, mock_get_list, _standing, mock_resolve
+):
+    db = MagicMock()
+    gift_list = _make_non_archived_list()
+    mock_get.return_value = _make_gift(id=1, list_id=10)
     mock_claim.return_value = _make_claim(gift_id=1, user_id=99)
+    mock_get_list.return_value = gift_list
+
+    service.claim_gift(
+        db, gift_id=1, list_id=10, owner_id=5, user=CLAIMER,
+        occasion_id=7, occasion_provided=True,
+    )
+
+    mock_resolve.assert_called_once_with(db, gift_list, CLAIMER, 7, True)
+    assert mock_claim.call_args.args == (db, 1, 99, 3)
+
+
+@patch(f"{RESOLVE}", side_effect=BadRequestError("ambiguous_occasion"))
+@patch(f"{CLAIMS_REPO}.get_claim_for_gift", return_value=None)
+@patch(f"{LIST_REPO}.get_list_by_id")
+@patch(f"{CLAIMS_REPO}.create_claim")
+@patch(f"{REPO}.get_gift_by_id")
+def test_an_ambiguous_filing_writes_no_claim(
+    mock_get, mock_claim, mock_get_list, _standing, _resolve
+):
+    """Resolution happens before the insert, so the 400 leaves nothing behind."""
+    db = MagicMock()
+    mock_get.return_value = _make_gift(id=1, list_id=10)
     mock_get_list.return_value = _make_non_archived_list()
 
-    service.claim_gift(db, gift_id=1, list_id=10, owner_id=5, user_id=99)
+    with pytest.raises(BadRequestError):
+        service.claim_gift(db, gift_id=1, list_id=10, owner_id=5, user=CLAIMER)
 
-    assert mock_claim.call_args.args == (db, 1, 99)
+    mock_claim.assert_not_called()
 
 
 # --- unclaim_gift ---

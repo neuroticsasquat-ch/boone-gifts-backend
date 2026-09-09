@@ -4,6 +4,8 @@ from typing import Literal
 
 from pydantic import BaseModel, field_validator, model_validator
 
+from app.schemas.claim import OccasionCandidate
+
 
 class SharedViaFamily(BaseModel):
     """The family behind an occasion the list reached the viewer through. Derived
@@ -117,6 +119,10 @@ class GiftRead(BaseModel):
         if not hasattr(data, "claim"):
             return data
         claim = data.claim
+        # `occasion_id` is in this dict and deliberately not a field on
+        # `GiftRead`, so Pydantic drops it here. The claimer's filing is private
+        # to the claimer, and this schema is handed to every viewer of the list.
+        # `GiftClaimRead` declares it, and is only ever returned to the claimer.
         return {
             "id": data.id,
             "name": data.name,
@@ -127,9 +133,24 @@ class GiftRead(BaseModel):
             "claimed_at": claim.claimed_at if claim else None,
             "purchased_at": claim.purchased_at if claim else None,
             "amount_paid": claim.amount_paid if claim else None,
+            "occasion_id": claim.occasion_id if claim else None,
             "created_at": data.created_at,
             "updated_at": data.updated_at,
         }
+
+
+class GiftClaimRead(GiftRead):
+    """A gift as the **claimer** sees it the moment they claim it: the gift, the
+    claim, and the occasion the claim was actually filed under.
+
+    The filing is the one piece of claim state nobody but the claimer may see,
+    so it lives on a schema returned only from endpoints where the caller is by
+    definition the claimer. Every claim response states the filing recorded,
+    because the server may have resolved, or silently corrected, what the client
+    asked for (NEU-1269 §3.1).
+    """
+
+    occasion_id: int | None = None
 
 
 class GiftListRead(BaseModel):
@@ -200,6 +221,14 @@ class GiftListDetailOwner(BaseModel):
 
 
 class GiftListDetailViewer(BaseModel):
+    """A list's detail as somebody the list was **shared with** sees it.
+
+    `claim_candidates` and `claim_options` ride here and **never** on
+    `GiftListDetailOwner`: they are derived from the viewer's own memberships,
+    so they would be meaningless on an owner's response — and this is precisely
+    the class of field that produced the `claimed_count` leak (ADR 0003).
+    """
+
     id: int
     name: str
     description: str | None
@@ -210,6 +239,14 @@ class GiftListDetailViewer(BaseModel):
     account_person_name: str | None = None
     is_archived: bool
     gifts: list[GiftRead]
+    # `suggested`: what the client renders, and counts to decide whether to
+    # prompt at all. Two or more means prompt — claiming without asking is what
+    # the 400 on the claim endpoint exists to catch.
+    claim_candidates: list[OccasionCandidate] = []
+    # `allowed`: the same set widened to include archived occasions, so the
+    # picker can offer "show past occasions" without a second request. Without
+    # it the correction path exists in the API and no UI can reach it (§2.2).
+    claim_options: list[OccasionCandidate] = []
     created_at: datetime
     updated_at: datetime
 
