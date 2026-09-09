@@ -202,6 +202,7 @@ def test_get_lists_every_family_with_its_occasions_and_shared_flags(
         {
             "id": world.boones.id,
             "name": "The Boones",
+            "member_ids": [world.owner.id, world.rel.id],
             "occasions": [
                 {
                     "id": world.boones_xmas.id,
@@ -214,6 +215,7 @@ def test_get_lists_every_family_with_its_occasions_and_shared_flags(
         {
             "id": world.smiths.id,
             "name": "The Smiths",
+            "member_ids": [world.owner.id, world.cousin.id],
             "occasions": [
                 {
                     "id": world.smiths_xmas.id,
@@ -258,6 +260,85 @@ def test_get_lists_an_archived_occasion_only_when_already_shared_to_it(
         "is_archived": True,
         "shared": True,
     } in boones["occasions"]
+
+
+def test_get_carries_every_member_id_of_each_family(client, db, world, owned_list):
+    """The panel disables a person an occasion share already reaches, so every
+    family says who is in it — the owner included (NEU-1285 §3). Two families
+    with a member in common each carry them."""
+    both = _mkuser(db, "both@test.com", "In Both")
+    db.add_all(
+        [
+            FamilyMember(family_id=world.boones.id, user_id=both.id, role="member"),
+            FamilyMember(family_id=world.smiths.id, user_id=both.id, role="member"),
+        ]
+    )
+    db.flush()
+
+    resp = client.get(f"/lists/{owned_list.id}/families", headers=_auth(world.owner))
+    by_id = {f["id"]: f for f in resp.json()}
+    assert set(by_id[world.boones.id]["member_ids"]) == {
+        world.owner.id,
+        world.rel.id,
+        both.id,
+    }
+    assert set(by_id[world.smiths.id]["member_ids"]) == {
+        world.owner.id,
+        world.cousin.id,
+        both.id,
+    }
+
+
+def test_get_carries_just_the_owner_for_a_family_of_one(
+    client, db, world, owned_list
+):
+    workmates = _mkfamily(db, "Work Friends", world.owner)
+
+    resp = client.get(f"/lists/{owned_list.id}/families", headers=_auth(world.owner))
+    row = next(f for f in resp.json() if f["id"] == workmates.id)
+    assert row["member_ids"] == [world.owner.id]
+
+
+def test_get_costs_no_query_per_family(client, db, world, owned_list):
+    """`member_ids` must not put the endpoint's query count on the number of
+    families the owner belongs to: whatever the payload costs, it costs the same
+    for several times the families (NEU-1285 §1)."""
+    from sqlalchemy import event
+
+    engine = db.get_bind()
+
+    def count_queries():
+        seen = []
+
+        @event.listens_for(engine, "before_cursor_execute")
+        def record(conn, cursor, statement, *args):
+            seen.append(statement)
+
+        try:
+            resp = client.get(
+                f"/lists/{owned_list.id}/families", headers=_auth(world.owner)
+            )
+            assert resp.status_code == 200
+            return len(seen), len(resp.json())
+        finally:
+            event.remove(engine, "before_cursor_execute", record)
+
+    before, rows_before = count_queries()
+
+    # Six more families the owner belongs to, each with a member of its own and
+    # an active occasion, so every half of the payload has more to assemble.
+    for n in range(6):
+        other = _mkuser(db, f"extra{n}@test.com", f"Extra {n}")
+        family = _mkfamily(db, f"Extra Family {n}", world.owner, other)
+        _mkoccasion(db, family, "Christmas 2026", world.owner)
+    db.flush()
+
+    after, rows_after = count_queries()
+    assert rows_after == rows_before + 6, "the extra families should be in scope"
+    assert after == before, (
+        f"query count grew with the family count ({before} → {after}): "
+        "the member ids are being fetched per family"
+    )
 
 
 def test_get_forbidden_for_non_owner(client, world, owned_list):

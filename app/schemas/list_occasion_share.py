@@ -16,13 +16,20 @@ class ShareTargetOccasion(BaseModel):
 
 
 class ShareTargetFamily(BaseModel):
-    """One family the list's owner belongs to, with its shareable occasions.
+    """One family the list's owner belongs to, with its members and its
+    shareable occasions.
 
     An empty `occasions` is the "no active occasion" state: the family is still
     listed, because the control renders it disabled with the reason given rather
     than hiding it (ADR 0002 §5.2).
+
+    `member_ids` is every member of the family, the owner included — the
+    control's people half disables a connection an occasion share already
+    reaches (NEU-1284), and this is what it matches against. It discloses
+    nothing new: see `list_share_targets`.
     """
 
     id: int
     name: str
+    member_ids: list[int]
     occasions: list[ShareTargetOccasion]
