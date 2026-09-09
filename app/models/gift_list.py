@@ -44,6 +44,13 @@ class GiftList(Base):
         return self.owner.name
 
     @property
+    def gift_count(self) -> int:
+        """How many gifts are on this list. Safe on every response: it counts
+        the owner's own rows and says nothing about who has claimed them —
+        unlike `claimed_count`, which only viewer-facing schemas may carry."""
+        return len(self.gifts)
+
+    @property
     def account_person_name(self) -> str | None:
         """The label this list carries, or None. A label, not an identity —
         it names one member of the owning account, never a separate user."""

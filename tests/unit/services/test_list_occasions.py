@@ -14,6 +14,7 @@ from app.list_occasions import service
 from app.services.exceptions import ConflictError, ForbiddenError, NotFoundError
 
 REPO = "app.list_occasions.service.repo"
+CLAIMS_REPO = "app.list_occasions.service.claims_repo"
 FAMILIES_REPO = "app.list_occasions.service.families_repo"
 OCCASIONS_REPO = "app.list_occasions.service.occasions_repo"
 
@@ -269,12 +270,12 @@ def _revoking(losing_ids, has_claims, occasion=None):
             (f"{FAMILIES_REPO}.get_family_member", object()),
             (f"{REPO}.find_share", object()),
             (f"{REPO}.get_member_ids_losing_access", losing_ids),
-            (f"{REPO}.any_claims_by_users", has_claims),
+            (f"{CLAIMS_REPO}.any_claims_by_users", has_claims),
         ]:
             stack.enter_context(patch(target, return_value=value))
         yield SimpleNamespace(
             delete_share=stack.enter_context(patch(f"{REPO}.delete_share")),
-            unclaim=stack.enter_context(patch(f"{REPO}.unclaim_for_users")),
+            unclaim=stack.enter_context(patch(f"{CLAIMS_REPO}.unclaim_for_users")),
             delete_items=stack.enter_context(
                 patch(f"{REPO}.delete_folder_items_for_users")
             ),

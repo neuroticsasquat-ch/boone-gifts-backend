@@ -1,6 +1,7 @@
 from sqlalchemy.orm import Session
 
 from app.account import service as account_service
+from app.claims import repository as claims_repo
 from app.list_occasions import service as list_occasion_service
 from app.lists import repository as repo
 from app.models.gift_list import GiftList
@@ -8,6 +9,8 @@ from app.models.user import User
 from app.schemas.gift_list import (
     GiftListDetailOwner,
     GiftListDetailViewer,
+    GiftListRead,
+    GiftListViewerRead,
     SharedVia,
     SharedViaFamily,
 )
@@ -48,13 +51,31 @@ def create_list(
     return gift_list
 
 
-def get_lists(db: Session, user_id: int, filter: str | None = None, archived: bool = False) -> list[GiftList]:
+def to_summary(gift_list: GiftList, user_id: int) -> GiftListRead | GiftListViewerRead:
+    """Serialize one list row for one caller.
+
+    The single place that decides whether a row may carry claim state. An owner
+    gets `GiftListRead`, which has no `claimed_count` to fill in; anyone else
+    gets the viewer schema, which does. Route every list-row response through
+    here rather than naming a schema at the endpoint — naming it per endpoint is
+    how `claimed_count` came to be returned on owned rows in the first place
+    (ADR 0003).
+    """
+    if gift_list.owner_id == user_id:
+        return GiftListRead.model_validate(gift_list)
+    return GiftListViewerRead.model_validate(gift_list)
+
+
+def get_lists(
+    db: Session, user_id: int, filter: str | None = None, archived: bool = False
+) -> list[GiftListRead | GiftListViewerRead]:
     if filter == "owned":
-        return repo.get_lists_by_owner(db, user_id, archived=archived)
+        rows = repo.get_lists_by_owner(db, user_id, archived=archived)
     elif filter == "shared":
-        return get_shared_lists(db, user_id, archived=archived)
+        rows = get_shared_lists(db, user_id, archived=archived)
     else:
-        return repo.get_all_visible_lists(db, user_id, archived=archived)
+        rows = repo.get_all_visible_lists(db, user_id, archived=archived)
+    return [to_summary(gift_list, user_id) for gift_list in rows]
 
 
 def get_shared_lists(db: Session, user_id: int, archived: bool = False) -> list[GiftList]:
@@ -99,7 +120,7 @@ def update_list(db: Session, gift_list: GiftList, updates: dict) -> GiftList:
 
 
 def delete_list(db: Session, gift_list: GiftList) -> None:
-    if repo.has_claimed_gifts(db, gift_list.id):
+    if claims_repo.has_claimed_gifts(db, gift_list.id):
         raise ConflictError(
             "This list has gifts that have been claimed. "
             "Remove claims first or archive the list instead."

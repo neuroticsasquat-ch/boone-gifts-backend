@@ -46,6 +46,7 @@ def _make_connection(
 
 
 REPO = "app.connections.service.repo"
+CLAIMS_REPO = "app.connections.service.claims_repo"
 SEND_EMAIL = "app.connections.service.send_email"
 
 
@@ -202,7 +203,7 @@ def test_delete_pending_connection(mock_find, mock_delete):
 
 @patch(f"{REPO}.delete_folder_items_between")
 @patch(f"{REPO}.delete_shares_between")
-@patch(f"{REPO}.unclaim_gifts_between")
+@patch(f"{CLAIMS_REPO}.unclaim_gifts_between")
 @patch(f"{REPO}.delete_connection")
 @patch(f"{REPO}.find_connection_by_id")
 def test_delete_accepted_connection_cascades(
@@ -290,7 +291,7 @@ def test_list_requests_empty(mock_get):
 
 @patch(f"{REPO}.delete_folder_items_between")
 @patch(f"{REPO}.delete_shares_between")
-@patch(f"{REPO}.unclaim_gifts_between")
+@patch(f"{CLAIMS_REPO}.unclaim_gifts_between")
 def test_cascade_disconnect(mock_unclaim, mock_shares, mock_items):
     db = MagicMock()
     service.cascade_disconnect(db, 10, 20)

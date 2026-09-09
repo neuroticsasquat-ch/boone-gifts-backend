@@ -14,6 +14,7 @@ import pytest
 from sqlalchemy import create_engine, text
 
 PREVIOUS_REVISION = "a3f8c1e70b52"
+REVISION = "b7e2d4f16c93"
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -86,7 +87,7 @@ def _tables(engine):
 
 def test_upgrade_drops_list_family_shares(seeded):
     engine, db_path = seeded
-    _alembic("upgrade", "head", db_path)
+    _alembic("upgrade", REVISION, db_path)
 
     assert "list_family_shares" not in _tables(engine)
 
@@ -94,7 +95,7 @@ def test_upgrade_drops_list_family_shares(seeded):
 def test_upgrade_creates_an_empty_list_occasion_shares(seeded):
     """No backfill: every existing family grant goes, and owners re-share."""
     engine, db_path = seeded
-    _alembic("upgrade", "head", db_path)
+    _alembic("upgrade", REVISION, db_path)
 
     assert "list_occasion_shares" in _tables(engine)
     with engine.connect() as conn:
@@ -106,7 +107,7 @@ def test_upgrade_creates_an_empty_list_occasion_shares(seeded):
 
 def test_the_new_table_takes_a_share_and_rejects_a_duplicate(seeded):
     engine, db_path = seeded
-    _alembic("upgrade", "head", db_path)
+    _alembic("upgrade", REVISION, db_path)
 
     with engine.begin() as conn:
         conn.execute(
@@ -127,7 +128,11 @@ def test_the_new_table_takes_a_share_and_rejects_a_duplicate(seeded):
 def test_claims_are_untouched_by_the_drop(seeded):
     """The asymmetry ADR 0002 asks for and warns against tidying: grants are
     dropped, claims are preserved. A dropped grant is re-created in seconds; a
-    dropped claim silently invites two people to buy the same present."""
+    dropped claim silently invites two people to buy the same present.
+
+    Pinned to this revision rather than `head`: the revision after it moves the
+    claim off the gift row entirely (NEU-1268), and what this asserts is that
+    *this* migration left it alone."""
     engine, db_path = seeded
     with engine.begin() as conn:
         conn.execute(
@@ -137,7 +142,7 @@ def test_claims_are_untouched_by_the_drop(seeded):
             )
         )
 
-    _alembic("upgrade", "head", db_path)
+    _alembic("upgrade", REVISION, db_path)
 
     with engine.connect() as conn:
         claimed_by = conn.execute(
@@ -148,7 +153,7 @@ def test_claims_are_untouched_by_the_drop(seeded):
 
 def test_downgrade_restores_an_empty_list_family_shares(seeded):
     engine, db_path = seeded
-    _alembic("upgrade", "head", db_path)
+    _alembic("upgrade", REVISION, db_path)
     _alembic("downgrade", PREVIOUS_REVISION, db_path)
 
     tables = _tables(engine)

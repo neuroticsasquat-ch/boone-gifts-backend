@@ -1,30 +1,39 @@
 from datetime import datetime
+from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from app.gifts import service
+from app.models.claim import Claim
 from app.models.gift import Gift
 from app.services.exceptions import ConflictError, ForbiddenError, NotFoundError
 
 
-def _make_gift(
-    id: int = 1,
-    list_id: int = 10,
-    name: str = "Test Gift",
-    claimed_by_id: int | None = None,
-    claimed_at: datetime | None = None,
-) -> MagicMock:
+def _make_gift(id: int = 1, list_id: int = 10, name: str = "Test Gift") -> MagicMock:
     gift = MagicMock(spec=Gift)
     gift.id = id
     gift.list_id = list_id
     gift.name = name
-    gift.claimed_by_id = claimed_by_id
-    gift.claimed_at = claimed_at
     return gift
 
 
+def _make_claim(
+    gift_id: int = 1,
+    user_id: int = 99,
+    purchased_at: datetime | None = None,
+    amount_paid: Decimal | None = None,
+) -> MagicMock:
+    claim = MagicMock(spec=Claim)
+    claim.gift_id = gift_id
+    claim.user_id = user_id
+    claim.purchased_at = purchased_at
+    claim.amount_paid = amount_paid
+    return claim
+
+
 REPO = "app.gifts.service.repo"
+CLAIMS_REPO = "app.gifts.service.claims_repo"
 LIST_REPO = "app.gifts.service.list_repo"
 
 
@@ -92,10 +101,11 @@ def test_update_gift_wrong_list(mock_get):
 
 
 @patch(f"{REPO}.delete_gift")
+@patch(f"{CLAIMS_REPO}.get_claim_for_gift", return_value=None)
 @patch(f"{REPO}.get_gift_by_id")
-def test_delete_gift(mock_get, mock_delete):
+def test_delete_gift(mock_get, mock_claim, mock_delete):
     db = MagicMock()
-    gift = _make_gift(id=1, list_id=10, claimed_by_id=None)
+    gift = _make_gift(id=1, list_id=10)
     mock_get.return_value = gift
 
     service.delete_gift(db, gift_id=1, list_id=10)
@@ -103,11 +113,12 @@ def test_delete_gift(mock_get, mock_delete):
     mock_delete.assert_called_once_with(db, gift)
 
 
+@patch(f"{CLAIMS_REPO}.get_claim_for_gift")
 @patch(f"{REPO}.get_gift_by_id")
-def test_delete_gift_claimed(mock_get):
+def test_delete_gift_claimed(mock_get, mock_claim):
     db = MagicMock()
-    gift = _make_gift(id=1, list_id=10, claimed_by_id=99)
-    mock_get.return_value = gift
+    mock_get.return_value = _make_gift(id=1, list_id=10)
+    mock_claim.return_value = _make_claim(gift_id=1, user_id=99)
 
     with pytest.raises(ConflictError):
         service.delete_gift(db, gift_id=1, list_id=10)
@@ -117,12 +128,13 @@ def test_delete_gift_claimed(mock_get):
 
 
 @patch(f"{LIST_REPO}.get_list_by_id")
-@patch(f"{REPO}.claim_gift", return_value=1)
+@patch(f"{CLAIMS_REPO}.create_claim")
 @patch(f"{REPO}.get_gift_by_id")
 def test_claim_gift_success(mock_get, mock_claim, mock_get_list):
     db = MagicMock()
-    gift = _make_gift(id=1, list_id=10, claimed_by_id=None)
+    gift = _make_gift(id=1, list_id=10)
     mock_get.return_value = gift
+    mock_claim.return_value = _make_claim(gift_id=1, user_id=99)
     mock_get_list.return_value = _make_non_archived_list()
 
     service.claim_gift(db, gift_id=1, list_id=10, owner_id=5, user_id=99)
@@ -142,12 +154,12 @@ def test_claim_gift_by_owner(mock_get):
 
 
 @patch(f"{LIST_REPO}.get_list_by_id")
-@patch(f"{REPO}.claim_gift", return_value=0)
+@patch(f"{CLAIMS_REPO}.create_claim", return_value=None)
 @patch(f"{REPO}.get_gift_by_id")
 def test_claim_gift_already_claimed(mock_get, mock_claim, mock_get_list):
+    """The repository loses the race and says so by returning None."""
     db = MagicMock()
-    gift = _make_gift(id=1, list_id=10)
-    mock_get.return_value = gift
+    mock_get.return_value = _make_gift(id=1, list_id=10)
     mock_get_list.return_value = _make_non_archived_list()
 
     with pytest.raises(ConflictError):
@@ -156,35 +168,156 @@ def test_claim_gift_already_claimed(mock_get, mock_claim, mock_get_list):
     mock_claim.assert_called_once_with(db, 1, 99)
 
 
+@patch(f"{LIST_REPO}.get_list_by_id")
+@patch(f"{CLAIMS_REPO}.create_claim")
+@patch(f"{REPO}.get_gift_by_id")
+def test_claim_files_under_no_occasion(mock_get, mock_claim, mock_get_list):
+    """Filing is NEU-1269's job; a claim made here files under null."""
+    db = MagicMock()
+    mock_get.return_value = _make_gift(id=1, list_id=10)
+    mock_claim.return_value = _make_claim(gift_id=1, user_id=99)
+    mock_get_list.return_value = _make_non_archived_list()
+
+    service.claim_gift(db, gift_id=1, list_id=10, owner_id=5, user_id=99)
+
+    assert mock_claim.call_args.args == (db, 1, 99)
+
+
 # --- unclaim_gift ---
 
 
 @patch(f"{LIST_REPO}.get_list_by_id")
-@patch(f"{REPO}.unclaim_gift", return_value=1)
+@patch(f"{CLAIMS_REPO}.delete_claim")
+@patch(f"{CLAIMS_REPO}.get_claim_for_gift")
 @patch(f"{REPO}.get_gift_by_id")
-def test_unclaim_gift_success(mock_get, mock_unclaim, mock_get_list):
+def test_unclaim_gift_success(mock_get, mock_get_claim, mock_delete, mock_get_list):
     db = MagicMock()
-    gift = _make_gift(id=1, list_id=10, claimed_by_id=99)
+    gift = _make_gift(id=1, list_id=10)
+    claim = _make_claim(gift_id=1, user_id=99)
     mock_get.return_value = gift
+    mock_get_claim.return_value = claim
     mock_get_list.return_value = _make_non_archived_list()
 
     service.unclaim_gift(db, gift_id=1, list_id=10, user_id=99)
 
     mock_get.assert_called_once_with(db, 1)
-    mock_unclaim.assert_called_once_with(db, 1, 99)
+    mock_delete.assert_called_once_with(db, claim)
     db.refresh.assert_called_once_with(gift)
 
 
 @patch(f"{LIST_REPO}.get_list_by_id")
-@patch(f"{REPO}.unclaim_gift", return_value=0)
+@patch(f"{CLAIMS_REPO}.delete_claim")
+@patch(f"{CLAIMS_REPO}.get_claim_for_gift")
 @patch(f"{REPO}.get_gift_by_id")
-def test_unclaim_gift_not_claimer(mock_get, mock_unclaim, mock_get_list):
+def test_unclaim_gift_not_claimer(mock_get, mock_get_claim, mock_delete, mock_get_list):
     db = MagicMock()
-    gift = _make_gift(id=1, list_id=10, claimed_by_id=50)
-    mock_get.return_value = gift
+    mock_get.return_value = _make_gift(id=1, list_id=10)
+    mock_get_claim.return_value = _make_claim(gift_id=1, user_id=50)
     mock_get_list.return_value = _make_non_archived_list()
 
     with pytest.raises(ForbiddenError):
         service.unclaim_gift(db, gift_id=1, list_id=10, user_id=99)
 
-    mock_unclaim.assert_called_once_with(db, 1, 99)
+    mock_delete.assert_not_called()
+
+
+@patch(f"{LIST_REPO}.get_list_by_id")
+@patch(f"{CLAIMS_REPO}.delete_claim")
+@patch(f"{CLAIMS_REPO}.get_claim_for_gift", return_value=None)
+@patch(f"{REPO}.get_gift_by_id")
+def test_unclaim_gift_unclaimed(mock_get, mock_get_claim, mock_delete, mock_get_list):
+    db = MagicMock()
+    mock_get.return_value = _make_gift(id=1, list_id=10)
+    mock_get_list.return_value = _make_non_archived_list()
+
+    with pytest.raises(ForbiddenError):
+        service.unclaim_gift(db, gift_id=1, list_id=10, user_id=99)
+
+    mock_delete.assert_not_called()
+
+
+# --- purchase_gift / unpurchase_gift ---
+
+
+@patch(f"{CLAIMS_REPO}.update_claim")
+@patch(f"{CLAIMS_REPO}.get_claim_for_gift")
+@patch(f"{REPO}.get_gift_by_id")
+def test_purchase_records_the_amount(mock_get, mock_get_claim, mock_update):
+    db = MagicMock()
+    claim = _make_claim(gift_id=1, user_id=99)
+    mock_get.return_value = _make_gift(id=1, list_id=10)
+    mock_get_claim.return_value = claim
+
+    service.purchase_gift(
+        db, gift_id=1, list_id=10, user_id=99, updates={"amount_paid": Decimal("42.00")}
+    )
+
+    updates = mock_update.call_args.args[2]
+    assert updates["amount_paid"] == Decimal("42.00")
+    assert updates["purchased_at"] is not None
+
+
+@patch(f"{CLAIMS_REPO}.update_claim")
+@patch(f"{CLAIMS_REPO}.get_claim_for_gift")
+@patch(f"{REPO}.get_gift_by_id")
+def test_purchase_without_an_amount_leaves_it_alone(
+    mock_get, mock_get_claim, mock_update
+):
+    """Skipping the amount is one click, and re-ticking must not wipe what was
+    recorded the first time round."""
+    db = MagicMock()
+    mock_get.return_value = _make_gift(id=1, list_id=10)
+    mock_get_claim.return_value = _make_claim(
+        gift_id=1, user_id=99, amount_paid=Decimal("42.00")
+    )
+
+    service.purchase_gift(db, gift_id=1, list_id=10, user_id=99, updates={})
+
+    assert "amount_paid" not in mock_update.call_args.args[2]
+
+
+@patch(f"{CLAIMS_REPO}.update_claim")
+@patch(f"{CLAIMS_REPO}.get_claim_for_gift")
+@patch(f"{REPO}.get_gift_by_id")
+def test_purchase_with_an_explicit_null_clears_the_amount(
+    mock_get, mock_get_claim, mock_update
+):
+    db = MagicMock()
+    mock_get.return_value = _make_gift(id=1, list_id=10)
+    mock_get_claim.return_value = _make_claim(
+        gift_id=1, user_id=99, amount_paid=Decimal("42.00")
+    )
+
+    service.purchase_gift(
+        db, gift_id=1, list_id=10, user_id=99, updates={"amount_paid": None}
+    )
+
+    assert mock_update.call_args.args[2]["amount_paid"] is None
+
+
+@patch(f"{CLAIMS_REPO}.get_claim_for_gift")
+@patch(f"{REPO}.get_gift_by_id")
+def test_purchase_by_a_non_claimer(mock_get, mock_get_claim):
+    db = MagicMock()
+    mock_get.return_value = _make_gift(id=1, list_id=10)
+    mock_get_claim.return_value = _make_claim(gift_id=1, user_id=50)
+
+    with pytest.raises(ForbiddenError):
+        service.purchase_gift(db, gift_id=1, list_id=10, user_id=99, updates={})
+
+
+@patch(f"{CLAIMS_REPO}.update_claim")
+@patch(f"{CLAIMS_REPO}.get_claim_for_gift")
+@patch(f"{REPO}.get_gift_by_id")
+def test_unpurchase_keeps_the_amount(mock_get, mock_get_claim, mock_update):
+    """`amount_paid` survives unticking, so re-ticking does not make the user
+    retype what they paid."""
+    db = MagicMock()
+    mock_get.return_value = _make_gift(id=1, list_id=10)
+    mock_get_claim.return_value = _make_claim(
+        gift_id=1, user_id=99, purchased_at=datetime(2026, 1, 1)
+    )
+
+    service.unpurchase_gift(db, gift_id=1, list_id=10, user_id=99)
+
+    assert mock_update.call_args.args[2] == {"purchased_at": None}

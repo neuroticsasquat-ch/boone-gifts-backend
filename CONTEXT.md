@@ -10,8 +10,9 @@ the words mean and what must stay true.
 |---|---|---|
 | **Account** | One login. The unit of identity everywhere: one family member, one connection, one claimer | `users` |
 | **List** | A gift list owned by exactly one account | `lists` |
-| **Gift** | An item on a list, optionally claimed and optionally marked purchased | `gifts` |
-| **Claim** | One account's private intent to buy a gift. Invisible to the list's owner | `gifts.claimed_by_id` |
+| **Gift** | An item on a list. Carries the owner's asking price, and nothing about who has claimed it | `gifts` |
+| **Claim** | One account's private intent to buy a gift, with what it cost. Invisible to the list's owner | `claims` |
+| **Amount paid** | What the *claimer* spent. Distinct from `gifts.price`, the owner's asking price, which every viewer sees | `claims.amount_paid` |
 | **Connection** | An accepted relationship between two accounts. A prerequisite for a direct share — **not** itself a grant of visibility | `connections` |
 | **Direct share** | A grant of one list to one account | `list_shares` |
 | **Family** | A named group of accounts, with organizers and members | `families`, `family_members` |
@@ -31,9 +32,14 @@ vacated by the rename precisely so the family concept could claim it.
 
 ## Invariants
 
-1. **The owner never sees claims on their own list.** `GiftOwnerRead` omits the claim fields;
-   every surface that could leak claim state to an owner — including the 409 on revoking an occasion
+1. **The owner never sees claims on their own list.** This is structural, not discipline: the claim
+   is its own row and there is nothing claim-shaped left on `gifts`, so an owner-facing serializer
+   has nothing to forget (ADR 0003). `claimed_count` lives on `GiftListViewerRead`, and
+   `app/lists/service.py:to_summary` is the single place that decides which schema a list row gets —
+   route new list-row responses through it rather than naming a schema at the endpoint. Every
+   surface that could leak claim state to an owner — including the 409 on revoking an occasion
    share — reveals only *that* claims exist, never counts, gift names, or claimer names.
+   `tests/integration/test_owner_blindness.py` sweeps the owner-facing responses for it.
 
 2. **Visibility has exactly one predicate.** `can_view_list` in `app/access.py`: owner, OR a
    `ListShare` row, OR the list is shared to an occasion of a family the viewer belongs to. Claims

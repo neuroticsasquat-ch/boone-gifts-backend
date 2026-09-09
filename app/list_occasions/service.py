@@ -1,5 +1,6 @@
 from sqlalchemy.orm import Session
 
+from app.claims import repository as claims_repo
 from app.families import repository as families_repo
 from app.list_occasions import repository as repo
 from app.models.gift_list import GiftList
@@ -107,12 +108,12 @@ def revoke_share(
     losing_ids = repo.get_member_ids_losing_access(
         db, gift_list.id, occasion, gift_list.owner_id
     )
-    if claims is None and repo.any_claims_by_users(db, gift_list.id, losing_ids):
+    if claims is None and claims_repo.any_claims_by_users(db, gift_list.id, losing_ids):
         raise ConflictError(CLAIMED_MESSAGE)
 
     repo.delete_share(db, share)
     if claims == "release":
-        repo.unclaim_for_users(db, gift_list.id, losing_ids)
+        claims_repo.unclaim_for_users(db, gift_list.id, losing_ids)
     repo.delete_folder_items_for_users(db, gift_list.id, losing_ids)
 
 

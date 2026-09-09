@@ -3,7 +3,7 @@ from decimal import Decimal
 
 from pydantic import BaseModel
 
-from app.schemas.gift_list import GiftListRead
+from app.schemas.gift_list import GiftListRead, GiftListViewerRead
 
 
 class FolderCreate(BaseModel):
@@ -43,7 +43,10 @@ class FolderDetail(BaseModel):
     description: str | None
     owner_id: int
     is_archived: bool
-    lists: list[GiftListRead]
+    # Viewer schema first: it is the more specific arm, and a folder's rows are
+    # a mix. Narrowing a viewer row to the owner schema would silently drop
+    # `claimed_count`, which is what this field used to do.
+    lists: list[GiftListViewerRead | GiftListRead]
     created_at: datetime
     updated_at: datetime
 

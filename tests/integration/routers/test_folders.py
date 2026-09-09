@@ -1,3 +1,26 @@
+from datetime import datetime, timezone
+
+from app.models.claim import Claim
+from app.models.gift import Gift
+
+
+def _claimed_gift(db, gift_list, name, claimer, purchased_at=None):
+    """A gift with a claim standing on it — two rows since ADR 0003."""
+    gift = Gift(list_id=gift_list.id, name=name)
+    db.add(gift)
+    db.flush()
+    db.add(
+        Claim(
+            gift_id=gift.id,
+            user_id=claimer.id,
+            claimed_at=datetime.now(timezone.utc),
+            purchased_at=purchased_at,
+        )
+    )
+    db.flush()
+    return gift
+
+
 def test_create_folder(client, member_user, member_headers):
     response = client.post(
         "/folders",
@@ -221,12 +244,7 @@ def test_folders_for_list_empty(client, member_headers, sample_list):
 def test_shopping_list_returns_claimed_gifts(
     client, member_user, member_headers, admin_user, folder, folder_item, shared_list, db
 ):
-    from app.models.gift import Gift
-
-    gift = Gift(list_id=shared_list.id, name="Claimed by Member")
-    gift.claimed_by_id = member_user.id
-    db.add(gift)
-    db.flush()
+    gift = _claimed_gift(db, shared_list, "Claimed by Member", member_user)
 
     response = client.get(
         f"/folders/{folder.id}/shopping-list",
@@ -260,12 +278,7 @@ def test_shopping_list_excludes_unclaimed(
 def test_shopping_list_excludes_other_claimer(
     client, member_headers, admin_user, folder, folder_item, shared_list, db
 ):
-    from app.models.gift import Gift
-
-    gift = Gift(list_id=shared_list.id, name="Admin's Claim")
-    gift.claimed_by_id = admin_user.id
-    db.add(gift)
-    db.flush()
+    gift = _claimed_gift(db, shared_list, "Admin's Claim", admin_user)
 
     response = client.get(
         f"/folders/{folder.id}/shopping-list",
@@ -278,14 +291,13 @@ def test_shopping_list_excludes_other_claimer(
 def test_shopping_list_shows_purchased_at(
     client, member_user, member_headers, folder, folder_item, shared_list, db
 ):
-    from datetime import datetime, timezone
-    from app.models.gift import Gift
-
-    gift = Gift(list_id=shared_list.id, name="Bought Gift")
-    gift.claimed_by_id = member_user.id
-    gift.purchased_at = datetime(2026, 5, 24, 12, 0, 0, tzinfo=timezone.utc)
-    db.add(gift)
-    db.flush()
+    gift = _claimed_gift(
+        db,
+        shared_list,
+        "Bought Gift",
+        member_user,
+        purchased_at=datetime(2026, 5, 24, 12, 0, 0, tzinfo=timezone.utc),
+    )
 
     response = client.get(
         f"/folders/{folder.id}/shopping-list",

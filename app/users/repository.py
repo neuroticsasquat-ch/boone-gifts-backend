@@ -1,6 +1,7 @@
-from sqlalchemy import delete, or_, select, update
+from sqlalchemy import delete, or_, select
 from sqlalchemy.orm import Session
 
+from app.claims import repository as claims_repo
 from app.models.folder import Folder
 from app.models.folder_item import FolderItem
 from app.models.connection import Connection
@@ -56,12 +57,9 @@ def delete_user(db: Session, user: User) -> None:
 def cascade_delete_user(db: Session, user: User) -> None:
     uid = user.id
 
-    # Unclaim gifts this user claimed on others' lists
-    db.execute(
-        update(Gift)
-        .where(Gift.claimed_by_id == uid)
-        .values(claimed_by_id=None, claimed_at=None, purchased_at=None)
-    )
+    # Release every claim this user holds on other people's lists. The rows go,
+    # taking the purchase state and the amount paid with them.
+    claims_repo.delete_claims_by_user(db, uid)
 
     # Remove shares granted TO this user (and folder items referencing those shares)
     shared_list_ids = list(
@@ -84,12 +82,9 @@ def cascade_delete_user(db: Session, user: User) -> None:
         ).scalars().all()
     )
     if owned_list_ids:
-        # Unclaim gifts on this user's lists
-        db.execute(
-            update(Gift)
-            .where(Gift.list_id.in_(owned_list_ids), Gift.claimed_by_id.isnot(None))
-            .values(claimed_by_id=None, claimed_at=None, purchased_at=None)
-        )
+        # Other people's claims on this user's gifts. Claims hold a foreign key
+        # into `gifts`, so they go before the gifts do.
+        claims_repo.delete_claims_on_lists(db, owned_list_ids)
         db.execute(
             delete(ListShare).where(ListShare.list_id.in_(owned_list_ids))
         )

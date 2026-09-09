@@ -88,21 +88,60 @@ class GiftOwnerRead(BaseModel):
 
 
 class GiftRead(BaseModel):
+    """A gift as somebody the list was **shared with** sees it: the gift, plus
+    the claim standing on it.
+
+    The claim lives on its own row now (ADR 0003), so the flat fields below are
+    read through `Gift.claim` rather than off the gift. Flattening happens here
+    and only here — `GiftOwnerRead` cannot pick it up by forgetting to exclude
+    a column, because there is no column.
+    """
+
     id: int
     name: str
     description: str | None
     url: str | None
     price: Decimal | None
-    claimed_by_id: int | None
-    claimed_at: datetime | None
-    purchased_at: datetime | None
+    claimed_by_id: int | None = None
+    claimed_at: datetime | None = None
+    purchased_at: datetime | None = None
+    amount_paid: Decimal | None = None
     created_at: datetime
     updated_at: datetime
 
     model_config = {"from_attributes": True}
 
+    @model_validator(mode="before")
+    @classmethod
+    def flatten_claim(cls, data: object) -> object:
+        if not hasattr(data, "claim"):
+            return data
+        claim = data.claim
+        return {
+            "id": data.id,
+            "name": data.name,
+            "description": data.description,
+            "url": data.url,
+            "price": data.price,
+            "claimed_by_id": claim.user_id if claim else None,
+            "claimed_at": claim.claimed_at if claim else None,
+            "purchased_at": claim.purchased_at if claim else None,
+            "amount_paid": claim.amount_paid if claim else None,
+            "created_at": data.created_at,
+            "updated_at": data.updated_at,
+        }
+
 
 class GiftListRead(BaseModel):
+    """A list row as its **owner** sees it — and the base every other list-row
+    response is built from, so claim state can only ever be added deliberately.
+
+    It carries no claim state at all. `claimed_count` used to live here and was
+    returned for every row `GET /lists` produced, owned ones included: the leak
+    that motivated ADR 0003. It is on `GiftListViewerRead` now, which is only
+    ever handed a list the caller does not own.
+    """
+
     id: int
     name: str
     description: str | None
@@ -113,35 +152,34 @@ class GiftListRead(BaseModel):
     account_person_name: str | None = None
     is_archived: bool
     gift_count: int = 0
-    claimed_count: int = 0
     shared_via: SharedVia | None = None
     created_at: datetime
     updated_at: datetime
 
     model_config = {"from_attributes": True}
 
+
+class GiftListViewerRead(GiftListRead):
+    """A list row as somebody the list was **shared with** sees it: how much of
+    it is already spoken for. Hand it only a list the caller does not own —
+    `app/lists/service.py:to_summary` is the one place that chooses."""
+
+    claimed_count: int = 0
+
     @model_validator(mode="before")
     @classmethod
-    def compute_counts(cls, data: object) -> object:
-        if hasattr(data, "gifts"):
-            gifts = data.gifts
-            return {
-                "id": data.id,
-                "name": data.name,
-                "description": data.description,
-                "owner_id": data.owner_id,
-                "owner_name": data.owner_name,
-                "recipient_name": data.recipient_name,
-                "account_person_id": data.account_person_id,
-                "account_person_name": data.account_person_name,
-                "is_archived": data.is_archived,
-                "gift_count": len(gifts),
-                "claimed_count": sum(1 for g in gifts if g.claimed_by_id is not None),
-                "shared_via": getattr(data, "shared_via", None),
-                "created_at": data.created_at,
-                "updated_at": data.updated_at,
-            }
-        return data
+    def count_claims(cls, data: object) -> object:
+        if not hasattr(data, "gifts"):
+            return data
+        # Read every declared field off the row as usual, then add the one
+        # thing the row cannot answer for itself.
+        values = {
+            name: getattr(data, name)
+            for name in cls.model_fields
+            if hasattr(data, name)
+        }
+        values["claimed_count"] = sum(1 for g in data.gifts if g.claim is not None)
+        return values
 
 
 class GiftListDetailOwner(BaseModel):

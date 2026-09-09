@@ -5,7 +5,6 @@ from app.models.family import Family
 from app.models.family_member import FamilyMember
 from app.models.folder import Folder
 from app.models.folder_item import FolderItem
-from app.models.gift import Gift
 from app.models.gift_list import GiftList
 from app.models.list_occasion_share import ListOccasionShare
 from app.models.list_share import ListShare
@@ -187,32 +186,6 @@ def _in_any_family(db: Session, user_id: int, family_ids: set[int]) -> bool:
             )
         ).scalar()
     )
-
-
-def any_claims_by_users(db: Session, list_id: int, user_ids: list[int]) -> bool:
-    if not user_ids:
-        return False
-    return (
-        db.execute(
-            select(Gift.id)
-            .where(Gift.list_id == list_id, Gift.claimed_by_id.in_(user_ids))
-            .limit(1)
-        ).first()
-        is not None
-    )
-
-
-def unclaim_for_users(db: Session, list_id: int, user_ids: list[int]) -> None:
-    if not user_ids:
-        return
-    gifts = db.execute(
-        select(Gift).where(Gift.list_id == list_id, Gift.claimed_by_id.in_(user_ids))
-    ).scalars().all()
-    for gift in gifts:
-        gift.claimed_by_id = None
-        gift.claimed_at = None
-        gift.purchased_at = None
-    db.flush()
 
 
 def delete_folder_items_for_users(
