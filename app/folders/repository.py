@@ -1,10 +1,8 @@
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models.claim import Claim
 from app.models.folder import Folder
 from app.models.folder_item import FolderItem
-from app.models.gift import Gift
 from app.models.gift_list import GiftList
 from app.models.list_share import ListShare
 
@@ -106,36 +104,3 @@ def get_folder_ids_for_list(db: Session, list_id: int, owner_id: int) -> list[in
         )
     ).scalars().all()
     return list(result)
-
-
-def get_shopping_list_items(
-    db: Session, folder_id: int, user_id: int
-) -> list[dict]:
-    """Return all gifts claimed by user_id within the given folder.
-
-    Purchase state comes off the claim, not the gift (ADR 0003) — these are the
-    caller's own claims, so it is theirs to see."""
-    rows = db.execute(
-        select(Gift, GiftList.name.label("list_name"), Claim.purchased_at)
-        .join(GiftList, Gift.list_id == GiftList.id)
-        .join(FolderItem, FolderItem.list_id == GiftList.id)
-        .join(Claim, Claim.gift_id == Gift.id)
-        .where(
-            FolderItem.folder_id == folder_id,
-            Claim.user_id == user_id,
-        )
-        .order_by(GiftList.id, Gift.id)
-    ).all()
-    return [
-        {
-            "id": gift.id,
-            "name": gift.name,
-            "description": gift.description,
-            "url": gift.url,
-            "price": gift.price,
-            "list_id": gift.list_id,
-            "list_name": list_name,
-            "purchased_at": purchased_at,
-        }
-        for gift, list_name, purchased_at in rows
-    ]

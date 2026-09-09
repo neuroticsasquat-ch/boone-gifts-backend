@@ -2,13 +2,13 @@ from fastapi import APIRouter, HTTPException, Query, status
 
 from app.folders import service as folder_service
 from app.dependencies import CurrentUser, DbSession, OwnedFolder
+from app.schemas.claim import ShoppingItem
 from app.schemas.folder import (
     FolderCreate,
     FolderDetail,
     FolderItemCreate,
     FolderRead,
     FolderUpdate,
-    ShoppingListItem,
 )
 from app.services.exceptions import ConflictError, ForbiddenError, NotFoundError
 
@@ -83,6 +83,8 @@ def remove_item(list_id: int, folder: OwnedFolder, db: DbSession):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
 
 
-@router.get("/{folder_id}/shopping-list", response_model=list[ShoppingListItem])
-def get_shopping_list(folder: OwnedFolder, user: CurrentUser, db: DbSession):
-    return folder_service.get_shopping_list(db, folder.id, user.id)
+# `OwnedFolder` is the whole access story here: a folder belongs to one user,
+# so the caller is always reading their own claims.
+@router.get("/{folder_id}/shopping", response_model=list[ShoppingItem])
+def get_shopping(folder: OwnedFolder, user: CurrentUser, db: DbSession):
+    return folder_service.get_shopping(db, folder.id, user.id)

@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.claim import Claim
+from app.models.folder_item import FolderItem
 from app.models.gift import Gift
 from app.models.gift_list import GiftList
 
@@ -133,3 +134,80 @@ def delete_claims_on_lists(db: Session, list_ids: list[int]) -> None:
     gift_ids = select(Gift.id).where(Gift.list_id.in_(list_ids))
     db.execute(delete(Claim).where(Claim.gift_id.in_(gift_ids)))
     db.flush()
+
+
+def _shopping_select():
+    """The shopping row, minus the scope that selects it.
+
+    Both shopping tabs read the same thing — the caller's own claims and the
+    gifts they stand on — and differ only in what bounds the set: an occasion
+    the claims are *filed under*, or a folder the lists are *in*. One select,
+    two `where` clauses, so a column added to the payload lands on both tabs.
+
+    The join runs claim → gift → list, never the reverse, so a gift with no
+    claim cannot appear. Ordering by list and then gift is what "grouped by
+    list, stable order" means: the client groups on `list_id` and every reload
+    returns the same sequence.
+    """
+    return (
+        select(Claim, Gift, GiftList.name.label("list_name"))
+        .join(Gift, Claim.gift_id == Gift.id)
+        .join(GiftList, Gift.list_id == GiftList.id)
+        .order_by(GiftList.id, Gift.id)
+    )
+
+
+def _shopping_rows(db: Session, statement) -> list[dict]:
+    return [
+        {
+            "claim_id": claim.id,
+            "gift_id": gift.id,
+            "name": gift.name,
+            "description": gift.description,
+            "url": gift.url,
+            "price": gift.price,
+            "list_id": gift.list_id,
+            "list_name": list_name,
+            "purchased_at": claim.purchased_at,
+            "amount_paid": claim.amount_paid,
+        }
+        for claim, gift, list_name in db.execute(statement).all()
+    ]
+
+
+def get_shopping_for_occasion(
+    db: Session, occasion_id: int, user_id: int
+) -> list[dict]:
+    """The caller's own claims filed under one occasion.
+
+    Keyed on the stored filing alone — no join back to the shares. Filing is
+    stored, not derived (ADR 0003), so a claim whose list was later unshared,
+    or whose occasion was archived, still belongs on the tab it was filed
+    under; re-deriving it here is exactly the budget that rewrites its own
+    history.
+    """
+    return _shopping_rows(
+        db,
+        _shopping_select().where(
+            Claim.occasion_id == occasion_id,
+            Claim.user_id == user_id,
+        ),
+    )
+
+
+def get_shopping_for_folder(db: Session, folder_id: int, user_id: int) -> list[dict]:
+    """The caller's own claims on gifts in the lists this folder holds.
+
+    Scoped by folder membership rather than by a filing: a folder is the
+    claimer's own curation, and it is the only route to a claim on a directly
+    shared list, which belongs to no occasion (project spec §9.4).
+    """
+    return _shopping_rows(
+        db,
+        _shopping_select()
+        .join(FolderItem, FolderItem.list_id == GiftList.id)
+        .where(
+            FolderItem.folder_id == folder_id,
+            Claim.user_id == user_id,
+        ),
+    )

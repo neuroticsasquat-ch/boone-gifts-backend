@@ -254,3 +254,17 @@ def test_remove_item_not_found(mock_find):
 
     with pytest.raises(NotFoundError):
         service.remove_item(db, folder=col, list_id=999)
+
+
+@patch("app.folders.service.claims_repo.get_shopping_for_folder")
+def test_get_shopping_reads_the_callers_own_claims(mock_shopping):
+    """The claim query lives in the claims repository, and the caller's id is
+    passed to it — a folder's shopping tab has no way to ask for anyone
+    else's."""
+    db = MagicMock()
+    mock_shopping.return_value = [{"name": "Skillet"}]
+
+    result = service.get_shopping(db, folder_id=1, user_id=7)
+
+    mock_shopping.assert_called_once_with(db, 1, 7)
+    assert result == [{"name": "Skillet"}]

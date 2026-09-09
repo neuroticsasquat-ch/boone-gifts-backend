@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 
 from app.dependencies import CurrentUser, DbSession
 from app.occasions import service as occasion_service
+from app.schemas.claim import ShoppingItem
 from app.schemas.occasion import (
     OccasionCreate,
     OccasionCreateRead,
@@ -88,6 +89,16 @@ def update_occasion(
 def list_occasion_lists(occasion_id: int, user: CurrentUser, db: DbSession):
     try:
         return occasion_service.list_lists(db, occasion_id=occasion_id, actor=user)
+    except NotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    except ForbiddenError:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+
+
+@router.get("/occasions/{occasion_id}/shopping", response_model=list[ShoppingItem])
+def list_occasion_shopping(occasion_id: int, user: CurrentUser, db: DbSession):
+    try:
+        return occasion_service.list_shopping(db, occasion_id=occasion_id, actor=user)
     except NotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     except ForbiddenError:
