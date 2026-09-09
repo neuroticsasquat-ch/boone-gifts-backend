@@ -43,11 +43,12 @@ def db():
 # ---------------------------------------------------------------------------
 
 
+@patch(f"{REPO}.get_member_ids_for_families")
 @patch(f"{REPO}.get_occasions_for_families")
 @patch(f"{REPO}.get_families_for_user")
 @patch(f"{REPO}.shared_occasion_ids")
 def test_list_share_targets_groups_occasions_under_their_family(
-    mock_shared, mock_families, mock_occasions, db
+    mock_shared, mock_families, mock_occasions, mock_members, db
 ):
     mock_shared.return_value = {10}
     mock_families.return_value = [
@@ -59,11 +60,13 @@ def test_list_share_targets_groups_occasions_under_their_family(
         _occasion(11, 2, "Gran's 80th"),
         _occasion(12, 3, "Christmas 2026"),
     ]
+    mock_members.return_value = {2: [1, 4], 3: [1, 9]}
 
     assert service.list_share_targets(db, _list()) == [
         {
             "id": 2,
             "name": "The Boones",
+            "member_ids": [1, 4],
             "occasions": [
                 {
                     "id": 10,
@@ -82,6 +85,7 @@ def test_list_share_targets_groups_occasions_under_their_family(
         {
             "id": 3,
             "name": "The Smiths",
+            "member_ids": [1, 9],
             "occasions": [
                 {
                     "id": 12,
@@ -96,11 +100,12 @@ def test_list_share_targets_groups_occasions_under_their_family(
     mock_families.assert_called_once_with(db, 1)
 
 
+@patch(f"{REPO}.get_member_ids_for_families", return_value={2: [1]})
 @patch(f"{REPO}.get_occasions_for_families")
 @patch(f"{REPO}.get_families_for_user")
 @patch(f"{REPO}.shared_occasion_ids")
 def test_list_share_targets_hides_an_archived_occasion_unless_shared_to(
-    mock_shared, mock_families, mock_occasions, db
+    mock_shared, mock_families, mock_occasions, mock_members, db
 ):
     """An archived occasion is not a shareable target, so it only earns a row
     when the list is already on it and its name still has to be displayable."""
@@ -117,19 +122,41 @@ def test_list_share_targets_hides_an_archived_occasion_unless_shared_to(
     ]
 
 
+@patch(f"{REPO}.get_member_ids_for_families", return_value={2: [1]})
 @patch(f"{REPO}.get_occasions_for_families", return_value=[])
 @patch(f"{REPO}.get_families_for_user")
 @patch(f"{REPO}.shared_occasion_ids", return_value=set())
 def test_list_share_targets_keeps_a_family_with_no_occasions(
-    mock_shared, mock_families, mock_occasions, db
+    mock_shared, mock_families, mock_occasions, mock_members, db
 ):
     """A family with no active occasion cannot be shared to, but it is still
     listed — the control renders it disabled with the reason."""
     mock_families.return_value = [SimpleNamespace(id=2, name="Work Friends")]
 
     assert service.list_share_targets(db, _list()) == [
-        {"id": 2, "name": "Work Friends", "occasions": []}
+        {"id": 2, "name": "Work Friends", "member_ids": [1], "occasions": []}
     ]
+
+
+@patch(f"{REPO}.get_member_ids_for_families")
+@patch(f"{REPO}.get_occasions_for_families", return_value=[])
+@patch(f"{REPO}.get_families_for_user")
+@patch(f"{REPO}.shared_occasion_ids", return_value=set())
+def test_list_share_targets_asks_for_every_family_s_members_at_once(
+    mock_shared, mock_families, mock_occasions, mock_members, db
+):
+    """One batched call over all the families, not one per family — the field is
+    decoration on a payload already being assembled (NEU-1285 §1)."""
+    mock_families.return_value = [
+        SimpleNamespace(id=2, name="The Boones"),
+        SimpleNamespace(id=3, name="The Smiths"),
+    ]
+    mock_members.return_value = {2: [1, 4], 3: [1]}
+
+    targets = service.list_share_targets(db, _list())
+
+    mock_members.assert_called_once_with(db, [2, 3])
+    assert [t["member_ids"] for t in targets] == [[1, 4], [1]]
 
 
 # ---------------------------------------------------------------------------

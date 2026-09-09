@@ -43,10 +43,20 @@ def list_share_targets(db: Session, gift_list: GiftList) -> list[dict]:
     share made before archiving still has a name to display — archiving is not
     unsharing (ADR 0002 §5.4). A family with no listed active occasion cannot be
     shared to at all, which is the state the control renders disabled.
+
+    Each family also carries `member_ids`, every one of its members with the
+    owner among them, for the control's people half to disable a connection an
+    occasion share already reaches (NEU-1284). **This widens no disclosure.**
+    Every family here comes from `get_families_for_user(gift_list.owner_id)`, so
+    the caller is a member of each, and `GET /families/{id}` already returns
+    those members' user ids to any member. The field moves a permission the
+    caller already holds into a payload they are already reading.
     """
     shared = repo.shared_occasion_ids(db, gift_list.id)
     families = repo.get_families_for_user(db, gift_list.owner_id)
-    occasions = repo.get_occasions_for_families(db, [f.id for f in families])
+    family_ids = [f.id for f in families]
+    occasions = repo.get_occasions_for_families(db, family_ids)
+    member_ids = repo.get_member_ids_for_families(db, family_ids)
 
     by_family: dict[int, list[dict]] = {family.id: [] for family in families}
     for occasion in occasions:
@@ -62,7 +72,12 @@ def list_share_targets(db: Session, gift_list: GiftList) -> list[dict]:
             }
         )
     return [
-        {"id": family.id, "name": family.name, "occasions": by_family[family.id]}
+        {
+            "id": family.id,
+            "name": family.name,
+            "member_ids": member_ids[family.id],
+            "occasions": by_family[family.id],
+        }
         for family in families
     ]
 

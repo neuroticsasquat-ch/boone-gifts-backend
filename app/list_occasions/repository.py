@@ -102,6 +102,25 @@ def get_occasions_for_families(
     )
 
 
+def get_member_ids_for_families(
+    db: Session, family_ids: list[int]
+) -> dict[int, list[int]]:
+    """Every family's members, in one query rather than one per family. Each
+    requested family gets a key, so the caller never has to guess whether a
+    missing one means "no members" or "not asked about"."""
+    by_family: dict[int, list[int]] = {family_id: [] for family_id in family_ids}
+    if not family_ids:
+        return by_family
+    rows = db.execute(
+        select(FamilyMember.family_id, FamilyMember.user_id)
+        .where(FamilyMember.family_id.in_(family_ids))
+        .order_by(FamilyMember.family_id, FamilyMember.user_id)
+    ).all()
+    for family_id, user_id in rows:
+        by_family[family_id].append(user_id)
+    return by_family
+
+
 def delete_shares_for_family(db: Session, family_id: int) -> None:
     occasion_ids = select(Occasion.id).where(Occasion.family_id == family_id)
     db.execute(
