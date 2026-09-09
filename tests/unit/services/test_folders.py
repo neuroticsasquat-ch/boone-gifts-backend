@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -256,15 +257,45 @@ def test_remove_item_not_found(mock_find):
         service.remove_item(db, folder=col, list_id=999)
 
 
+@patch("app.folders.service.budgets_service")
 @patch("app.folders.service.claims_repo.get_shopping_for_folder")
-def test_get_shopping_reads_the_callers_own_claims(mock_shopping):
+def test_get_shopping_reads_the_callers_own_claims(mock_shopping, budgets_service):
     """The claim query lives in the claims repository, and the caller's id is
     passed to it — a folder's shopping tab has no way to ask for anyone
-    else's."""
+    else's. The budget rollup beside it is keyed on the same id."""
     db = MagicMock()
     mock_shopping.return_value = [{"name": "Skillet"}]
+    budgets_service.get_rollup.return_value = {"amount": None}
 
     result = service.get_shopping(db, folder_id=1, user_id=7)
 
     mock_shopping.assert_called_once_with(db, 1, 7)
-    assert result == [{"name": "Skillet"}]
+    budgets_service.get_rollup.assert_called_once_with(db, user_id=7, folder_id=1)
+    assert result == {"budget": {"amount": None}, "items": [{"name": "Skillet"}]}
+
+
+@patch("app.folders.service.budgets_service")
+def test_set_budget_is_scoped_to_the_folder_and_the_caller(budgets_service):
+    db = MagicMock()
+    budgets_service.set_budget.return_value = {"amount": Decimal("50.00")}
+
+    result = service.set_budget(db, folder_id=1, user_id=7, amount=Decimal("50.00"))
+
+    budgets_service.set_budget.assert_called_once_with(
+        db, user_id=7, folder_id=1, amount=Decimal("50.00")
+    )
+    assert result == {"amount": Decimal("50.00")}
+
+
+@patch("app.folders.service.budgets_repo")
+@patch(f"{REPO}.delete_folder")
+def test_delete_folder_takes_its_budget_with_it(mock_delete, budgets_repo):
+    """`budgets.folder_id` points at the folder, so the budget goes first —
+    the foreign key would refuse the delete otherwise."""
+    db = MagicMock()
+    folder = _make_folder(id=3)
+
+    service.delete_folder(db, folder)
+
+    budgets_repo.delete_budgets_for_folder.assert_called_once_with(db, 3)
+    mock_delete.assert_called_once_with(db, folder)

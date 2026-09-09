@@ -1,6 +1,9 @@
+from decimal import Decimal
+
 from sqlalchemy.orm import Session
 
 from app.access import can_view_list
+from app.budgets import service as budgets_service
 from app.claims import repository as claims_repo
 from app.families import repository as families_repo
 from app.family_invites.service import _require_organizer
@@ -101,7 +104,7 @@ def list_lists(
     ]
 
 
-def list_shopping(db: Session, occasion_id: int, actor: User) -> list[dict]:
+def list_shopping(db: Session, occasion_id: int, actor: User) -> dict:
     """The caller's own claims filed under this occasion.
 
     Membership of the occasion's family is the gate, and the only one that is
@@ -112,6 +115,35 @@ def list_shopping(db: Session, occasion_id: int, actor: User) -> list[dict]:
     Archiving is not unsharing (§5.4), and a January shopper is still buying
     against December's occasion, so an archived occasion serves its payload
     unchanged — `_load_for_member` deliberately does not consult `is_archived`.
+
+    The budget rollup rides along with the rows rather than sitting behind a
+    second endpoint: the tab renders one screen, and a total fetched separately
+    can contradict the list printed beneath it.
     """
     _load_for_member(db, occasion_id, actor)
-    return claims_repo.get_shopping_for_occasion(db, occasion_id, actor.id)
+    return {
+        "budget": budgets_service.get_rollup(
+            db, user_id=actor.id, occasion_id=occasion_id
+        ),
+        "items": claims_repo.get_shopping_for_occasion(db, occasion_id, actor.id),
+    }
+
+
+def set_budget(db: Session, occasion_id: int, actor: User, amount: Decimal) -> dict:
+    """Set the caller's own budget for this occasion, and return the rollup.
+
+    Membership is the gate and the whole of it. An organizer has no more say
+    here than anyone else: they name the occasion, they never touch money and
+    never see any (project spec §7).
+    """
+    _load_for_member(db, occasion_id, actor)
+    return budgets_service.set_budget(
+        db, user_id=actor.id, occasion_id=occasion_id, amount=amount
+    )
+
+
+def clear_budget(db: Session, occasion_id: int, actor: User) -> dict:
+    _load_for_member(db, occasion_id, actor)
+    return budgets_service.clear_budget(
+        db, user_id=actor.id, occasion_id=occasion_id
+    )

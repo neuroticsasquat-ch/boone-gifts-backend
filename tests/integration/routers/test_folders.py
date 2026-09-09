@@ -261,7 +261,7 @@ def test_shopping_returns_claimed_gifts(
         headers=member_headers,
     )
     assert response.status_code == 200
-    data = response.json()
+    data = response.json()["items"]
     assert len(data) == 1
     assert data[0]["name"] == "Claimed by Member"
     assert data[0]["list_name"] == shared_list.name
@@ -286,7 +286,7 @@ def test_shopping_carries_the_claimers_own_spend(
     row = client.get(
         f"/folders/{folder.id}/shopping",
         headers=member_headers,
-    ).json()[0]
+    ).json()["items"][0]
     assert row["claim_id"] == claim.id
     assert row["gift_id"] == claim.gift_id
     assert row["price"] == "39.00"
@@ -306,7 +306,7 @@ def test_shopping_excludes_unclaimed(
         headers=member_headers,
     )
     assert response.status_code == 200
-    assert response.json() == []
+    assert response.json()["items"] == []
 
 
 def test_shopping_excludes_other_claimer(
@@ -320,7 +320,7 @@ def test_shopping_excludes_other_claimer(
         headers=member_headers,
     )
     assert response.status_code == 200
-    assert response.json() == []
+    assert response.json()["items"] == []
 
 
 def test_shopping_excludes_lists_outside_the_folder(
@@ -340,7 +340,7 @@ def test_shopping_excludes_lists_outside_the_folder(
         f"/folders/{folder.id}/shopping",
         headers=member_headers,
     )
-    assert [row["name"] for row in response.json()] == ["Claimed In Folder"]
+    assert [row["name"] for row in response.json()["items"]] == ["Claimed In Folder"]
 
 
 def test_shopping_shows_purchased_at(
@@ -359,7 +359,7 @@ def test_shopping_shows_purchased_at(
         headers=member_headers,
     )
     assert response.status_code == 200
-    data = response.json()
+    data = response.json()["items"]
     assert len(data) == 1
     assert data[0]["purchased_at"] is not None
 

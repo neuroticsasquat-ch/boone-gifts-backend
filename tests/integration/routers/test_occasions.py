@@ -643,7 +643,7 @@ def test_shopping_never_returns_another_members_claims(
     )
 
     assert response.status_code == 200
-    assert [row["name"] for row in response.json()] == ["Mine"]
+    assert [row["name"] for row in response.json()["items"]] == ["Mine"]
 
 
 def test_shopping_returns_only_claims_filed_under_this_occasion(
@@ -660,7 +660,7 @@ def test_shopping_returns_only_claims_filed_under_this_occasion(
         f"/occasions/{occasion.id}/shopping", headers=plain_member_headers
     )
 
-    assert [row["name"] for row in response.json()] == ["Filed here"]
+    assert [row["name"] for row in response.json()["items"]] == ["Filed here"]
 
 
 def test_shopping_carries_the_whole_line(
@@ -687,7 +687,7 @@ def test_shopping_carries_the_whole_line(
 
     row = client.get(
         f"/occasions/{occasion.id}/shopping", headers=plain_member_headers
-    ).json()[0]
+    ).json()["items"][0]
 
     assert row["claim_id"] == claim.id
     assert row["gift_id"] == gift.id
@@ -717,7 +717,7 @@ def test_shopping_groups_by_list_in_a_stable_order(
         row["name"]
         for row in client.get(
             f"/occasions/{occasion.id}/shopping", headers=plain_member_headers
-        ).json()
+        ).json()["items"]
     ]
 
     assert names == ["A1", "A2", "B1"]
@@ -736,7 +736,7 @@ def test_shopping_still_served_for_an_archived_occasion(
     )
 
     assert response.status_code == 200
-    assert [row["name"] for row in response.json()] == ["Bought in January"]
+    assert [row["name"] for row in response.json()["items"]] == ["Bought in January"]
 
 
 def test_shopping_survives_the_share_being_revoked(
@@ -757,7 +757,7 @@ def test_shopping_survives_the_share_being_revoked(
         f"/occasions/{occasion.id}/shopping", headers=plain_member_headers
     )
 
-    assert [row["name"] for row in response.json()] == ["Still mine"]
+    assert [row["name"] for row in response.json()["items"]] == ["Still mine"]
 
 
 def test_shopping_is_empty_when_nothing_is_filed(
@@ -770,7 +770,7 @@ def test_shopping_is_empty_when_nothing_is_filed(
     )
 
     assert response.status_code == 200
-    assert response.json() == []
+    assert response.json()["items"] == []
 
 
 def test_shopping_forbidden_for_a_non_member(

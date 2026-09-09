@@ -3,6 +3,8 @@ from decimal import Decimal
 
 from pydantic import BaseModel
 
+from app.schemas.budget import BudgetRollup
+
 
 class PurchaseCreate(BaseModel):
     """What the claimer paid, when they tick a gift purchased.
@@ -101,3 +103,16 @@ class ClaimRead(BaseModel):
     amount_paid: Decimal | None
 
     model_config = {"from_attributes": True}
+
+
+class ShoppingPayload(BaseModel):
+    """A shopping tab: the caller's own claims, and the budget they count
+    against.
+
+    The rollup travels with the items rather than behind a second endpoint
+    because the two are one screen and must agree — a budget line fetched
+    separately can render a total that the list beside it contradicts.
+    """
+
+    budget: BudgetRollup
+    items: list[ShoppingItem]

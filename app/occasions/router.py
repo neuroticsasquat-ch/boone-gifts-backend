@@ -2,7 +2,8 @@ from fastapi import APIRouter, HTTPException, Query, status
 
 from app.dependencies import CurrentUser, DbSession
 from app.occasions import service as occasion_service
-from app.schemas.claim import ShoppingItem
+from app.schemas.budget import BudgetRollup, BudgetWrite
+from app.schemas.claim import ShoppingPayload
 from app.schemas.occasion import (
     OccasionCreate,
     OccasionCreateRead,
@@ -95,10 +96,41 @@ def list_occasion_lists(occasion_id: int, user: CurrentUser, db: DbSession):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
 
 
-@router.get("/occasions/{occasion_id}/shopping", response_model=list[ShoppingItem])
+@router.get("/occasions/{occasion_id}/shopping", response_model=ShoppingPayload)
 def list_occasion_shopping(occasion_id: int, user: CurrentUser, db: DbSession):
     try:
         return occasion_service.list_shopping(db, occasion_id=occasion_id, actor=user)
+    except NotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    except ForbiddenError:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+
+
+# Always the caller's own budget. There is no path here — and none anywhere —
+# that names whose budget to read, which is what makes "no endpoint returns
+# another user's spend" a shape rather than a promise.
+@router.put("/occasions/{occasion_id}/budget", response_model=BudgetRollup)
+def set_occasion_budget(
+    occasion_id: int, request: BudgetWrite, user: CurrentUser, db: DbSession
+):
+    try:
+        return occasion_service.set_budget(
+            db, occasion_id=occasion_id, actor=user, amount=request.amount
+        )
+    except NotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    except ForbiddenError:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+
+
+# 200 with the rollup, not 204: the tab re-renders the same budget line with no
+# target on it, and the counts beneath it are unchanged by the clearing.
+@router.delete("/occasions/{occasion_id}/budget", response_model=BudgetRollup)
+def clear_occasion_budget(occasion_id: int, user: CurrentUser, db: DbSession):
+    try:
+        return occasion_service.clear_budget(
+            db, occasion_id=occasion_id, actor=user
+        )
     except NotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     except ForbiddenError:

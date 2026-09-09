@@ -20,6 +20,8 @@ the words mean and what must stay true.
 | **Folder** | An account's private grouping of lists it can see — "Christmas 2026". Was called an *occasion*, and before that a *collection* | `folders`, `folder_items` |
 | **Occasion** | A family's shared gifting occasion — "Boone Family · Christmas 2026". Owned by a family, carries **no dates** | `occasions` |
 | **Active occasion** | An occasion with `is_archived = false` | `occasions.is_archived` |
+| **Budget** | What one account means to spend on one occasion, or on one folder. Private to the account that set it; there is no family budget | `budgets` |
+| **Rollup** | A budget with the caller's own spend counted against it — target, spent, remaining, and the bought/total/unpriced counts | computed, `app/budgets/service.py` |
 | **Recipient** | A person with **no account** for whom an account keeps a list | `lists.recipient_name` |
 | **Shared account** | An account used by more than one person, e.g. a couple sharing one login | `users.is_shared_account` |
 | **Account person** | A named person on a shared account. **A label, never an identity** | `account_people` |
@@ -79,3 +81,13 @@ vacated by the rename precisely so the family concept could claim it.
    **A list is shared to an occasion, never to a family**, and archiving one refuses new shares
    (409) without withdrawing the shares already made.
    See [ADR 0002](docs/adr/0002-family-shares-target-an-occasion.md).
+
+10. **A budget is private, and belongs to exactly one scope.** One per `(user, occasion)` and one
+    per `(user, folder)`, always the caller's own: no endpoint anywhere returns another user's
+    budget, spend or counts, and no spend is aggregated across accounts at any time — that is
+    invariant 1's reasoning applied to money. `budgets.occasion_id` and `budgets.folder_id` are
+    mutually exclusive with exactly one set, enforced in `app/budgets/service.py`.
+    **The money total always discloses its own incompleteness**: a purchase whose `amount_paid` is
+    null counts toward `bought_count` and `unpriced_count` and never toward `spent`, and is never
+    guessed at from the owner's asking price. A budget dies with its scope — deleting a folder, a
+    family (through its occasions) or a user clears the budgets pointing at it.
