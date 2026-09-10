@@ -5,6 +5,7 @@ from app.occasions import service as occasion_service
 from app.schemas.budget import BudgetRollup, BudgetWrite
 from app.schemas.claim import ShoppingPayload
 from app.schemas.occasion import (
+    ArchivePrompt,
     OccasionCreate,
     OccasionCreateRead,
     OccasionRead,
@@ -70,6 +71,20 @@ def list_all_occasions(
     archived: bool = Query(default=False),
 ):
     return occasion_service.list_all_occasions(db, actor=user, archived=archived)
+
+
+# The archive nudge's read half: every occasion this caller should be asked
+# about, across every family they belong to. Takes no parameter of any kind —
+# the memberships and the snooze are the caller's by construction — and a caller
+# with nothing to answer gets `200 []`, never a 404.
+#
+# **Must stay above `/occasions/{occasion_id}`.** Declared below it, FastAPI
+# matches the parameterised path first and fails to parse "archive-prompts" as
+# an `int` — a 422, which is a confusing way to find out about a route-ordering
+# bug.
+@router.get("/occasions/archive-prompts", response_model=list[ArchivePrompt])
+def list_archive_prompts(user: CurrentUser, db: DbSession):
+    return occasion_service.list_archive_prompts(db, actor=user)
 
 
 @router.get("/occasions/{occasion_id}", response_model=OccasionRead)
@@ -145,6 +160,25 @@ def set_occasion_budget(
 def clear_occasion_budget(occasion_id: int, user: CurrentUser, db: DbSession):
     try:
         return occasion_service.clear_budget(
+            db, occasion_id=occasion_id, actor=user
+        )
+    except NotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    except ForbiddenError:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+
+
+# No body: the 30-day snooze is the server's rule, not the client's. 204 rather
+# than the prompt list, because the banner already knows which row it removed
+# and re-reading the whole index to learn it would be a second round trip for
+# something the caller just decided.
+@router.post(
+    "/occasions/{occasion_id}/archive-prompt/dismiss",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def dismiss_archive_prompt(occasion_id: int, user: CurrentUser, db: DbSession):
+    try:
+        occasion_service.dismiss_archive_prompt(
             db, occasion_id=occasion_id, actor=user
         )
     except NotFoundError:

@@ -18,6 +18,7 @@ from app.models.gift import Gift
 from app.models.gift_list import GiftList
 from app.models.list_occasion_share import ListOccasionShare
 from app.models.occasion import Occasion
+from app.models.occasion_archive_prompt import OccasionArchivePrompt
 from app.models.user import User
 
 
@@ -1142,3 +1143,566 @@ def test_the_index_excludes_a_family_the_caller_does_not_belong_to(
 
 def test_the_index_requires_authentication(client):
     assert client.get("/occasions").status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# The archive nudge (NEU-1294)
+#
+# GET  /occasions/archive-prompts
+# POST /occasions/{id}/archive-prompt/dismiss
+#
+# The clock here is `shared_activity_at_expr()`, which reads **no claim at all**
+# — not even the caller's own. The first two tests are that rule; everything
+# after them is the rest of the contract.
+# ---------------------------------------------------------------------------
+
+IDLE_DAYS = 60
+
+
+def _ago(days: int) -> datetime:
+    """Aware UTC. SQLAlchemy's SQLite `DATETIME` strips the tzinfo on the way
+    in, so this lands as the naive UTC string the column already holds — the
+    same shape `server_default=func.now()` writes."""
+    return datetime.now(timezone.utc) - timedelta(days=days)
+
+
+def _stale_occasion(
+    db, family, creator, name="Christmas 2019", days=IDLE_DAYS + 1, is_archived=False
+):
+    """An occasion whose only clock is its own backdated creation."""
+    return _seed_occasion(
+        db, family, creator, name=name, is_archived=is_archived, created_at=_ago(days)
+    )
+
+
+def _share(db, gift_list, occasion, days_ago=None):
+    """`list_occasion_shares.created_at` is a server default, so a share into a
+    stale occasion has to be backdated explicitly or it revives the clock."""
+    share = ListOccasionShare(list_id=gift_list.id, occasion_id=occasion.id)
+    db.add(share)
+    db.flush()
+    if days_ago is not None:
+        share.created_at = _ago(days_ago)
+        db.flush()
+    return share
+
+
+def _prompts(client, headers):
+    response = client.get("/occasions/archive-prompts", headers=headers)
+    assert response.status_code == 200
+    return response.json()
+
+
+def _dismiss(client, headers, occasion):
+    return client.post(
+        f"/occasions/{occasion.id}/archive-prompt/dismiss", headers=headers
+    )
+
+
+def _seed_prompt(db, user, occasion, dismissed_until):
+    prompt = OccasionArchivePrompt(
+        user_id=user.id, occasion_id=occasion.id, dismissed_until=dismissed_until
+    )
+    db.add(prompt)
+    db.flush()
+    return prompt
+
+
+def test_another_users_claim_never_changes_what_i_am_nudged_about(
+    client, db, family, member_user, member_headers, co_member
+):
+    """**The disclosure guard.** The caller owns the only list on this stale
+    occasion. When somebody else claims and buys from it, the caller's prompts
+    must be byte-identical to what they were before.
+
+    The leak this forbids is the one ADR 0005 could not have caught, because it
+    is the *absence* of a row rather than the presence of one: if eligibility
+    read anyone else's claims, the caller's prompt would vanish the moment a
+    gift was taken — telling them somebody is buying them a present, and roughly
+    when. `CONTEXT.md` invariant 1, disclosed by a banner that stopped nagging.
+    """
+    occasion = _stale_occasion(db, family, member_user)
+    my_list = _seed_list(db, member_user, "My Own Wishlist")
+    _share(db, my_list, occasion, days_ago=IDLE_DAYS + 1)
+
+    before = _prompts(client, member_headers)
+    assert [row["id"] for row in before] == [occasion.id]
+
+    _seed_claim(
+        db,
+        my_list,
+        co_member,
+        "Wool socks",
+        occasion=occasion,
+        claimed_at=datetime.now(timezone.utc),
+        purchased_at=datetime.now(timezone.utc),
+        amount_paid=Decimal("20.00"),
+    )
+
+    assert _prompts(client, member_headers) == before
+
+
+def test_my_own_claim_does_not_change_it_either(
+    client, db, family, member_user, member_headers, co_member
+):
+    """The caller's own claims are safe to read, and are dropped anyway.
+
+    Including them would spare the person actively shopping in an occasion a
+    prompt the organizer beside them still sees, for no benefit — and it would
+    cost the property that makes the whole thing sound: staleness is one fact
+    about the occasion, identical for everyone eligible.
+    """
+    occasion = _stale_occasion(db, family, member_user)
+    their_list = _seed_list(db, co_member, "Co Member's Wishlist")
+    _share(db, their_list, occasion, days_ago=IDLE_DAYS + 1)
+
+    before = _prompts(client, member_headers)
+    assert [row["id"] for row in before] == [occasion.id]
+
+    _seed_claim(
+        db,
+        their_list,
+        member_user,
+        "A gift for them",
+        occasion=occasion,
+        claimed_at=datetime.now(timezone.utc),
+        purchased_at=datetime.now(timezone.utc),
+        amount_paid=Decimal("15.00"),
+    )
+
+    assert _prompts(client, member_headers) == before
+
+
+def test_two_eligible_members_see_the_same_staleness(
+    client, db, family, member_user, member_headers, plain_member, plain_member_headers
+):
+    """The property the claim-blind clock buys: no user's action can create or
+    destroy another user's prompt, so there is nothing left to infer."""
+    occasion = _stale_occasion(db, family, plain_member)
+    their_list = _seed_list(db, plain_member, "A Wishlist")
+    _share(db, their_list, occasion, days_ago=IDLE_DAYS + 1)
+    _seed_claim(
+        db,
+        their_list,
+        member_user,
+        "Something",
+        occasion=occasion,
+        claimed_at=datetime.now(timezone.utc),
+    )
+
+    organizer_rows = [row["id"] for row in _prompts(client, member_headers)]
+    creator_rows = [row["id"] for row in _prompts(client, plain_member_headers)]
+
+    assert organizer_rows == creator_rows == [occasion.id]
+
+
+# --- The audience -----------------------------------------------------------
+
+
+def test_an_organizer_is_nudged(client, db, family, member_user, member_headers):
+    occasion = _stale_occasion(db, family, member_user)
+
+    assert [row["id"] for row in _prompts(client, member_headers)] == [occasion.id]
+
+
+def test_the_creator_is_nudged_without_the_organizer_role(
+    client, db, family, plain_member, plain_member_headers
+):
+    """Organizer-only would leave a member-created occasion in a family with an
+    absent organizer permanently un-nudged — the dead Christmas the feature
+    exists for. The creator already had the authority to make it."""
+    occasion = _stale_occasion(db, family, plain_member)
+
+    rows = _prompts(client, plain_member_headers)
+
+    assert [row["id"] for row in rows] == [occasion.id]
+
+
+def test_a_member_who_is_neither_is_not_nudged(
+    client, db, family, member_user, plain_member, plain_member_headers
+):
+    _stale_occasion(db, family, member_user)
+
+    assert _prompts(client, plain_member_headers) == []
+
+
+def test_a_creator_who_has_left_the_family_is_not_nudged(
+    client, db, family, plain_member, plain_member_headers
+):
+    """`occasions.created_by_id` keeps pointing at a departed member, but
+    leaving withdraws what membership granted — they cannot archive it, and the
+    banner must never name a family they have left."""
+    _stale_occasion(db, family, plain_member)
+    db.execute(
+        sqlalchemy.delete(FamilyMember).where(
+            FamilyMember.family_id == family.id,
+            FamilyMember.user_id == plain_member.id,
+        )
+    )
+    db.flush()
+
+    assert _prompts(client, plain_member_headers) == []
+
+
+def test_an_archived_occasion_is_never_nudged(
+    client, db, family, member_user, member_headers
+):
+    """The nudge asks a question that has already been answered."""
+    _stale_occasion(db, family, member_user, is_archived=True)
+
+    assert _prompts(client, member_headers) == []
+
+
+def test_an_outsider_is_nudged_about_nothing(client, outsider_headers):
+    """A caller with nothing to answer gets `200 []`, never a 404."""
+    assert _prompts(client, outsider_headers) == []
+
+
+# --- Staleness --------------------------------------------------------------
+
+
+def test_the_sixty_day_boundary(client, db, family, member_user, member_headers):
+    fresh = _stale_occasion(
+        db, family, member_user, name="Still warm", days=IDLE_DAYS - 1
+    )
+    stale = _stale_occasion(
+        db, family, member_user, name="Gone quiet", days=IDLE_DAYS + 1
+    )
+
+    ids = [row["id"] for row in _prompts(client, member_headers)]
+
+    assert ids == [stale.id]
+    assert fresh.id not in ids
+
+
+def test_an_occasion_with_no_lists_at_all_is_nudged(
+    client, db, family, member_user, member_headers
+):
+    """`created_at` is the floor, so an occasion nothing ever happened to is
+    precisely the dead Christmas the nudge exists for — not a null clock the
+    banner would have to interpret."""
+    occasion = _stale_occasion(db, family, member_user)
+
+    assert [row["id"] for row in _prompts(client, member_headers)] == [occasion.id]
+
+
+def test_a_recent_share_revives_a_long_dead_occasion(
+    client, db, family, member_user, member_headers
+):
+    occasion = _stale_occasion(db, family, member_user)
+    _share(db, _seed_list(db, member_user, "A new list"), occasion)
+
+    assert _prompts(client, member_headers) == []
+
+
+# --- The payload ------------------------------------------------------------
+
+
+def test_the_prompt_names_the_occasion_and_its_family_and_nothing_else(
+    client, db, family, member_user, member_headers
+):
+    """No counts, no claimers, no gifts — and no date. A `datetime` on a prompt
+    invites the next reader to assume it is `last_activity_at`, which it
+    deliberately is not."""
+    occasion = _stale_occasion(db, family, member_user)
+
+    (row,) = _prompts(client, member_headers)
+
+    assert row == {
+        "id": occasion.id,
+        "name": "Christmas 2019",
+        "family_id": family.id,
+        "family_name": family.name,
+    }
+
+
+def test_prompts_span_every_family_and_come_back_newest_first(
+    client, db, family, member_user, member_headers
+):
+    other = Family(name="Work Friends", created_by_id=member_user.id)
+    db.add(other)
+    db.flush()
+    db.add(FamilyMember(family_id=other.id, user_id=member_user.id, role="organizer"))
+    db.flush()
+    first = _stale_occasion(db, family, member_user, name="Christmas 2018")
+    second = _stale_occasion(db, other, member_user, name="Christmas 2019")
+
+    assert [row["id"] for row in _prompts(client, member_headers)] == [
+        second.id,
+        first.id,
+    ]
+
+
+def test_the_route_is_not_read_as_an_occasion_id(client, member_headers):
+    """Declared below `/occasions/{occasion_id}`, FastAPI would match the
+    parameterised path first and answer 422 — a confusing way to find out about
+    a route-ordering bug."""
+    response = client.get("/occasions/archive-prompts", headers=member_headers)
+
+    assert response.status_code == 200
+
+
+# --- Dismissal --------------------------------------------------------------
+
+
+def test_dismissing_suppresses_it_for_that_caller_only(
+    client, db, family, member_user, member_headers, plain_member, plain_member_headers
+):
+    """A prompt is per account: one member's "not yet" can never silence
+    another eligible member's."""
+    occasion = _stale_occasion(db, family, plain_member)
+
+    assert _dismiss(client, plain_member_headers, occasion).status_code == 204
+
+    assert _prompts(client, plain_member_headers) == []
+    assert [row["id"] for row in _prompts(client, member_headers)] == [occasion.id]
+
+
+def test_a_lapsed_dismissal_stops_suppressing(
+    client, db, family, member_user, member_headers
+):
+    """The date expires and the nudge returns. There is no dismissal-on-activity
+    reset: activity is what happens on an occasion somebody is deliberately
+    keeping open."""
+    occasion = _stale_occasion(db, family, member_user)
+    _seed_prompt(db, member_user, occasion, dismissed_until=_ago(1))
+
+    assert [row["id"] for row in _prompts(client, member_headers)] == [occasion.id]
+
+
+def test_a_live_dismissal_suppresses(client, db, family, member_user, member_headers):
+    occasion = _stale_occasion(db, family, member_user)
+    _seed_prompt(
+        db,
+        member_user,
+        occasion,
+        dismissed_until=datetime.now(timezone.utc) + timedelta(days=15),
+    )
+
+    assert _prompts(client, member_headers) == []
+
+
+def test_a_second_dismissal_extends_rather_than_colliding(
+    client, db, family, member_user, member_headers
+):
+    """`UNIQUE (user_id, occasion_id)` makes the write an upsert."""
+    occasion = _stale_occasion(db, family, member_user)
+    _seed_prompt(db, member_user, occasion, dismissed_until=_ago(1))
+
+    assert _dismiss(client, member_headers, occasion).status_code == 204
+
+    rows = db.execute(
+        sqlalchemy.select(OccasionArchivePrompt).where(
+            OccasionArchivePrompt.occasion_id == occasion.id
+        )
+    ).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].dismissed_until > datetime.now(timezone.utc).replace(tzinfo=None)
+    assert _prompts(client, member_headers) == []
+
+
+def test_dismissing_an_occasion_that_is_not_stale_is_still_204(
+    client, db, family, member_user, member_headers
+):
+    """The race is ordinary: the banner renders, somebody shares in, and only
+    then does the user press Not yet. A 409 would fail a button that was on
+    screen, for a reason the user cannot explain."""
+    occasion = _seed_occasion(db, family, member_user)
+
+    assert _dismiss(client, member_headers, occasion).status_code == 204
+
+
+def test_the_creator_may_dismiss_without_organizing(
+    client, db, family, plain_member, plain_member_headers
+):
+    occasion = _stale_occasion(db, family, plain_member)
+
+    assert _dismiss(client, plain_member_headers, occasion).status_code == 204
+
+
+def test_a_member_outside_the_audience_cannot_dismiss(
+    client, db, family, member_user, plain_member_headers
+):
+    occasion = _stale_occasion(db, family, member_user)
+
+    assert _dismiss(client, plain_member_headers, occasion).status_code == 403
+
+
+def test_an_outsider_cannot_dismiss(
+    client, db, family, member_user, outsider_headers
+):
+    occasion = _stale_occasion(db, family, member_user)
+
+    assert _dismiss(client, outsider_headers, occasion).status_code == 403
+
+
+def test_dismissing_an_unknown_occasion_is_404(client, member_headers):
+    response = client.post(
+        "/occasions/999999/archive-prompt/dismiss", headers=member_headers
+    )
+
+    assert response.status_code == 404
+
+
+def test_the_nudge_endpoints_require_authentication(client, db, family, member_user):
+    occasion = _stale_occasion(db, family, member_user)
+
+    assert client.get("/occasions/archive-prompts").status_code == 401
+    assert (
+        client.post(f"/occasions/{occasion.id}/archive-prompt/dismiss").status_code
+        == 401
+    )
+
+
+# --- Archiving widens to the creator (NEU-1294 Decision 4) ------------------
+
+
+def test_the_creator_archives_the_occasion_they_created(
+    client, db, family, plain_member, plain_member_headers
+):
+    """The correctness fix the audience rule forces: a member nudged to archive
+    an occasion must not get a 403 when they press the button."""
+    occasion = _seed_occasion(db, family, plain_member)
+
+    response = client.put(
+        f"/occasions/{occasion.id}",
+        json={"is_archived": True},
+        headers=plain_member_headers,
+    )
+
+    assert response.status_code == 200
+    db.refresh(occasion)
+    assert occasion.is_archived is True
+
+
+def test_the_creator_unarchives_it_too(
+    client, db, family, plain_member, plain_member_headers
+):
+    """The gate is on the field, not the direction."""
+    occasion = _seed_occasion(db, family, plain_member, is_archived=True)
+
+    response = client.put(
+        f"/occasions/{occasion.id}",
+        json={"is_archived": False},
+        headers=plain_member_headers,
+    )
+
+    assert response.status_code == 200
+    db.refresh(occasion)
+    assert occasion.is_archived is False
+
+
+def test_the_creator_still_cannot_rename_it(
+    client, db, family, plain_member, plain_member_headers
+):
+    """A rename changes a label everyone sees and every budget is filed under."""
+    occasion = _seed_occasion(db, family, plain_member)
+
+    response = client.put(
+        f"/occasions/{occasion.id}",
+        json={"name": "Renamed by its creator"},
+        headers=plain_member_headers,
+    )
+
+    assert response.status_code == 403
+    db.refresh(occasion)
+    assert occasion.name == "Christmas 2026"
+
+
+def test_the_creator_cannot_rename_and_archive_in_one_request(
+    client, db, family, plain_member, plain_member_headers
+):
+    """The request contains a rename, so it carries the rename's gate — and
+    nothing is written."""
+    occasion = _seed_occasion(db, family, plain_member)
+
+    response = client.put(
+        f"/occasions/{occasion.id}",
+        json={"name": "Renamed", "is_archived": True},
+        headers=plain_member_headers,
+    )
+
+    assert response.status_code == 403
+    db.refresh(occasion)
+    assert occasion.name == "Christmas 2026"
+    assert occasion.is_archived is False
+
+
+# --- The foreign-key paths --------------------------------------------------
+
+
+def test_deleting_a_family_with_prompt_rows_succeeds(
+    client, db, family, member_user, organizer_headers
+):
+    """SQLite runs with `PRAGMA foreign_keys=ON`, so a prompt row left behind
+    does not orphan itself — it refuses the delete outright."""
+    occasion = _seed_occasion(db, family, member_user)
+    _seed_prompt(
+        db,
+        member_user,
+        occasion,
+        dismissed_until=datetime.now(timezone.utc) + timedelta(days=30),
+    )
+
+    response = client.delete(f"/families/{family.id}", headers=organizer_headers)
+
+    assert response.status_code == 204
+    assert (
+        db.execute(sqlalchemy.select(OccasionArchivePrompt)).first() is None
+    )
+
+
+def test_purging_a_user_takes_their_prompt_rows_with_them(
+    client, db, family, member_user, plain_member, admin_headers
+):
+    """The row outlives the departure by design (a snooze still means what the
+    user meant if they rejoin), which is exactly what would block the purge.
+
+    The user is taken out of the family first, mirroring
+    `test_purging_a_user_takes_their_folder_budget_with_them`: a purge already
+    fails on `family_members.user_id` for anyone still in one, which predates
+    this ticket and is not prompt-shaped.
+    """
+    occasion = _seed_occasion(db, family, member_user)
+    _seed_prompt(
+        db,
+        plain_member,
+        occasion,
+        dismissed_until=datetime.now(timezone.utc) + timedelta(days=30),
+    )
+    db.execute(
+        sqlalchemy.delete(FamilyMember).where(
+            FamilyMember.user_id == plain_member.id
+        )
+    )
+    db.flush()
+
+    response = client.delete(
+        f"/users/{plain_member.id}?purge=true", headers=admin_headers
+    )
+
+    assert response.status_code == 204
+    assert db.execute(sqlalchemy.select(OccasionArchivePrompt)).first() is None
+
+
+def test_a_member_may_no_op_an_occasion_they_can_see(
+    client, db, family, member_user, plain_member_headers
+):
+    """A deliberate consequence of gating per field rather than per endpoint: an
+    empty body touches neither gate, so it is a 200 no-op for any member.
+
+    It was a 403 while the whole endpoint was organizer-only. Nothing is written
+    either way, and the member can already read this occasion through
+    `GET /occasions/{id}`, so the response discloses nothing they did not have.
+    An outsider still gets a 403 — see the unit test of the same name.
+    """
+    occasion = _seed_occasion(db, family, member_user)
+
+    response = client.put(
+        f"/occasions/{occasion.id}", json={}, headers=plain_member_headers
+    )
+
+    assert response.status_code == 200
+    db.refresh(occasion)
+    assert occasion.name == "Christmas 2026"
+    assert occasion.is_archived is False

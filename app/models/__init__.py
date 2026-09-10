@@ -15,6 +15,7 @@ from app.models.family_member import FamilyMember
 from app.models.family_invite import FamilyInvite
 from app.models.occasion import Occasion
 from app.models.budget import Budget
+from app.models.occasion_archive_prompt import OccasionArchivePrompt
 
 __all__ = [
     "User",
@@ -34,4 +35,5 @@ __all__ = [
     "FamilyInvite",
     "Occasion",
     "Budget",
+    "OccasionArchivePrompt",
 ]

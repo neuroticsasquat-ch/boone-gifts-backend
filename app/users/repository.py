@@ -11,6 +11,7 @@ from app.models.gift_list import GiftList
 from app.models.invite import Invite
 from app.models.list_share import ListShare
 from app.models.user import User
+from app.occasions import repository as occasions_repo
 
 
 def get_all_users(db: Session) -> list[User]:
@@ -67,6 +68,11 @@ def cascade_delete_user(db: Session, user: User) -> None:
     # Before the folders below, which `budgets.folder_id` points at; a folder
     # budget is always its owner's, so this clears every one of them.
     budgets_repo.delete_budgets_by_user(db, uid)
+
+    # Every archive prompt this user has snoozed, on any family's occasion. A
+    # prompt is per account, so nobody else's is touched — and the foreign key
+    # into `users` would refuse the delete below if one were left standing.
+    occasions_repo.delete_prompts_by_user(db, uid)
 
     # Remove shares granted TO this user (and folder items referencing those shares)
     shared_list_ids = list(

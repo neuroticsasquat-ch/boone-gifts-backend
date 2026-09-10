@@ -102,9 +102,12 @@ def delete_family(db: Session, family_id: int, user_id: int) -> None:
     # budget has nothing to survive for once its occasion is gone: it is a
     # target for shopping that can no longer be filed anywhere.
     list_occasion_repo.delete_shares_for_family(db, family_id)
-    budgets_repo.delete_budgets_for_occasions(
-        db, occasions_repo.get_occasion_ids_for_family(db, family_id)
-    )
+    occasion_ids = occasions_repo.get_occasion_ids_for_family(db, family_id)
+    budgets_repo.delete_budgets_for_occasions(db, occasion_ids)
+    # Beside the budgets and for the same reason: an archive prompt points at an
+    # occasion that is about to go, and a snooze has nothing to survive for once
+    # the occasion it snoozed does not exist.
+    occasions_repo.delete_prompts_for_occasions(db, occasion_ids)
     occasions_repo.delete_occasions_for_family(db, family_id)
     repo.delete_all_members(db, family_id)
     for i in range(len(member_ids)):

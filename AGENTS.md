@@ -62,7 +62,7 @@ app/
   models/              # user, account_person, invite, gift_list, gift, claim,
                        # list_share, list_occasion_share, connection, folder,
                        # folder_item, password_reset_token, family, family_member,
-                       # family_invite, occasion, budget
+                       # family_invite, occasion, budget, occasion_archive_prompt
   schemas/             # Pydantic request/response models, one module per domain
   services/exceptions.py   # NotFoundError, ForbiddenError, ConflictError, BadRequestError
   account/             # GET/PUT /account — the shared-account flag and its people
@@ -81,7 +81,7 @@ app/
   families/            # /families CRUD, membership, cascade cleanup
   family_invites/      # Family invite create/accept/decline/revoke
   occasions/           # /families/{id}/occasions + /occasions/{id} — the family
-                       # occasion, and its shopping tab
+                       # occasion, its shopping tab, and the archive nudge
   budgets/             # The budget row and the rollup. No router: the endpoints
                        # live under the occasion and folder that gate them
   meta/                # GET /meta — URL metadata with SSRF protection
@@ -169,16 +169,48 @@ A family's shared gifting occasion — "Boone Family · Christmas 2026". The uni
 - `POST /families/{family_id}/occasions` — **any member**, so nobody waits on an absent organizer
   while the family cannot be shared to at all. A second active occasion is **not refused**: the
   response carries `has_other_active` so the client can warn without a second call
-- `PUT /occasions/{id}` (name, `is_archived`) — **organizer only**, 403 otherwise. This is the first
-  place role gates something a member can *see*; renaming changes a label everyone's budgets are
-  filed under. It reuses `_require_organizer` from `app/family_invites/service.py`, passing its own
-  refusal message
+- `PUT /occasions/{id}` (name, `is_archived`) — **gated per field, not per endpoint**: `name` is
+  organizer-only, `is_archived` takes an organizer **or the occasion's creator**. 403 otherwise, and
+  a request carrying both needs the organizer role because it contains a rename. Renaming changes a
+  label everyone's budgets are filed under; archiving is reversible, withdraws no shares and still
+  serves every My shopping tab — and the archive nudge below asks its creator to do exactly that, so
+  the two audiences have to match. The gate is on the field, not the direction: unarchiving carries
+  the same rule
+- `GET /occasions/archive-prompts` and `POST /occasions/{id}/archive-prompt/dismiss` — the archive
+  nudge. See "The archive nudge" below
 - **Deleting a family deletes its occasions**, alongside the members — `delete_family` clears
   everything pointing at the family so the row itself can go. The unwind order matters: the shares
   point at the occasions, which point at the family, and neither FK has an `ondelete`, so anything
   left behind makes the delete fail outright under `PRAGMA foreign_keys=ON`
 - `OccasionUpdate` treats `None` as "leave it alone", so an explicit `null` in the body is a **422**,
   never a write: neither column is nullable
+
+#### The archive nudge
+`is_archived` existed with nothing ever asking anyone to set it, so a finished Christmas kept
+accepting shares until somebody remembered it was there. This is the backend surface for the banner
+row that asks (`CONTEXT.md` term *Archive prompt*).
+- **Table**: `occasion_archive_prompts` (user_id, occasion_id, `dismissed_until` NOT NULL), unique
+  on `(user_id, occasion_id)` — which is what makes the write an upsert and what makes a prompt
+  **per account**: one member's dismissal never silences another's
+- `GET /occasions/archive-prompts` → `ArchivePrompt[]` (`id`, `name`, `family_id`, `family_name`),
+  ordered `id DESC`. Takes **no parameter of any kind**, spans every family the caller belongs to,
+  and answers `200 []` rather than 404. `POST /occasions/{id}/archive-prompt/dismiss` → **204**,
+  no body — the 30 days is the server's rule
+- **Eligibility**: active, idle for `ARCHIVE_PROMPT_IDLE_DAYS` (60) by `shared_activity_at_expr()`,
+  the caller is a **member** of the family, and is an **organizer or the occasion's creator**, and
+  has no live `dismissed_until`
+- **The clock reads no claim at all — not even the caller's own** (ADR 0005's amendment). Under a
+  per-viewer clock a prompt would *vanish* when somebody else claimed from a list the caller owns,
+  which discloses the claim by absence. `shared_activity_at_expr()` takes no `user_id`, and
+  `last_activity_at_expr(user_id)` composes it as its first term so the two cannot drift
+- **Dismissal re-checks the audience, never staleness.** The banner renders, somebody shares in, and
+  only then does the user press Not yet — a 409 there would fail a button that was on screen
+- **Suppression is compared in SQL**, both the snooze and the idle cutoff. SQLAlchemy's SQLite
+  `DATETIME` returns naive values, so a `dismissed_until` compared in Python against an aware `now`
+  raises `TypeError`
+- **Nothing clears a prompt row except the three FK paths** — `delete_family` (beside the budgets,
+  before its occasions), `cascade_delete_user`, and the seed's purge. Archiving and leaving a family
+  both leave the row standing: the query already excludes both, so it is invisible rather than wrong
 
 ### Claims
 A claim is one account's private intent to buy a gift, and now its own row rather than three columns
@@ -330,9 +362,10 @@ money and never see any.
 | `b7e2d4f16c93` | `list_occasion_shares` table; drop `list_family_shares` with **no backfill** |
 | `d4c8a1f92b60` | `claims` table, **backfilled** from `gifts`; drop `gifts.claimed_by_id`, `claimed_at`, `purchased_at` |
 | `c1f9a7d4e260` | `budgets` table |
+| `f6b2c9e41a58` | `occasion_archive_prompts` table |
 
 ## Testing
-- ~744 test functions across 56 files
+- ~1078 test functions across 69 files
 - `tests/unit/` mocks the repository layer and tests service logic in isolation
 - `tests/integration/` runs against `APP_TEST_DATABASE_URL`; each test is wrapped in a transaction that rolls back, so no data persists
 - Conftest fixtures: `db`, `client`, `admin_user`, `member_user`, `admin_headers`, `member_headers`, `sample_list`, `shared_list`, `connection`, `folder`
@@ -341,7 +374,7 @@ money and never see any.
 - CI runs `uv sync --frozen && pytest tests/ -v` with `APP_JWT_SECRET=ci-test-secret`
 
 ## Dev fixtures
-`python -m scripts.seed_dev` (add `--reset` to re-seed, `--purge` to remove) builds the visibility states a single account can't produce: a directly shared list, a list reaching you only through an occasion, a list kept for someone with no account, an archived list, a pending connection request, a shared account with two people, one claim in each of its three money states — taken but not bought, bought with an amount, and bought with the amount skipped — and a family with two archived Christmases plus one active, shared a standing list, which is the only way to see a claim file silently instead of prompting. All fixture users are `@example.com`, and purge only deletes rows reachable from them. Run it with `-m` — executing the file directly puts `scripts/` on `sys.path` instead of `/app`.
+`python -m scripts.seed_dev` (add `--reset` to re-seed, `--purge` to remove) builds the visibility states a single account can't produce: a directly shared list, a list reaching you only through an occasion, a list kept for someone with no account, an archived list, a pending connection request, a shared account with two people, one claim in each of its three money states — taken but not bought, bought with an amount, and bought with the amount skipped — and a family with two archived Christmases plus one active, shared a standing list, which is the only way to see a claim file silently instead of prompting, and two occasions gone quiet past the 60-day threshold — one nudging to be archived, one snoozed — since suppression cannot be seen unless both states are on screen at once. All fixture users are `@example.com`, and purge only deletes rows reachable from them. Run it with `-m` — executing the file directly puts `scripts/` on `sys.path` instead of `/app`.
 
 ## Critical conventions
 - **Router endpoints use `db.flush()`, never `db.commit()`** — the `get_db` dependency commits on success and rolls back on exception. In tests the fixture rolls back. New endpoints must follow this.

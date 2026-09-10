@@ -44,6 +44,7 @@ from app.models.gift_list import GiftList
 from app.models.list_occasion_share import ListOccasionShare
 from app.models.list_share import ListShare
 from app.models.occasion import Occasion
+from app.models.occasion_archive_prompt import OccasionArchivePrompt
 from app.models.user import User
 
 DEFAULT_PASSWORD = "devpass123"
@@ -125,6 +126,14 @@ def purge(db) -> int:
             Budget.occasion_id.in_(occasion_ids)
             | Budget.folder_id.in_(folder_ids)
             | Budget.user_id.in_(user_ids)
+        ).delete(synchronize_session=False)
+    # Archive prompts point at the occasions below and the users above, exactly
+    # as the budgets do, and go by both routes for the same reason: a fixture
+    # user may have dismissed a non-fixture occasion.
+    if occasion_ids or user_ids:
+        db.query(OccasionArchivePrompt).filter(
+            OccasionArchivePrompt.occasion_id.in_(occasion_ids)
+            | OccasionArchivePrompt.user_id.in_(user_ids)
         ).delete(synchronize_session=False)
     if list_ids or occasion_ids:
         db.query(ListOccasionShare).filter(
@@ -372,6 +381,29 @@ def seed(db, password: str) -> None:
     extended_birthday = Occasion(
         family_id=extended.id, name="Gran's 80th", created_by_id=carol.id
     )
+    # Two occasions gone quiet, so the archive nudge is reachable by hand — one
+    # nudging and one snoozed, because suppression cannot be seen unless both
+    # states are on screen at once and no occasion can be in both.
+    #
+    # Extended, and created by Tom, for two reasons. Every other family carries
+    # a load-bearing fixture role: the Boones have exactly one active occasion
+    # (the sharing control's single-click case) and Work Friends deliberately
+    # has none (the disabled row), so adding to either destroys a fixture, while
+    # Extended already has two and only becomes more several. And Tom is a plain
+    # *member* of Extended — any member may create an occasion — so these
+    # exercise the creator arm of the audience rule, and prove he can archive
+    # them only because he made them.
+    #
+    # They get no shares at all: the simplest way to be stale, and the state
+    # §5.1 says most needs action. `occasions.created_at` is a server default,
+    # so the backdating has to be explicit — and if a share is ever added to
+    # one, its own `created_at` must be backdated too or the occasion revives.
+    extended_gone_quiet = Occasion(
+        family_id=extended.id, name="Summer BBQ 2026", created_by_id=tom.id
+    )
+    extended_snoozed = Occasion(
+        family_id=extended.id, name="Easter 2026", created_by_id=tom.id
+    )
     db.add_all(
         [
             boones_christmas,
@@ -379,7 +411,22 @@ def seed(db, password: str) -> None:
             boones_two_years_ago,
             extended_christmas,
             extended_birthday,
+            extended_gone_quiet,
+            extended_snoozed,
         ]
+    )
+    db.flush()
+    for occasion in (extended_gone_quiet, extended_snoozed):
+        occasion.created_at = now - timedelta(days=90)
+    db.flush()
+    # Tom said "not yet" to one of them a fortnight ago, so it stays off his
+    # banner for another fifteen days while its twin keeps nudging.
+    db.add(
+        OccasionArchivePrompt(
+            user_id=tom.id,
+            occasion_id=extended_snoozed.id,
+            dismissed_until=now + timedelta(days=15),
+        )
     )
     db.flush()
 
@@ -479,7 +526,7 @@ def main() -> None:
             sys.exit(1)
 
         seed(db, args.password)
-        print("Seeded 5 users, 11 lists, 3 families, 5 occasions, 2 folders.")
+        print("Seeded 5 users, 11 lists, 3 families, 7 occasions, 2 folders.")
         print(f"Log in as any of: {', '.join(SEED_EMAILS)}")
         print(f"Password: {args.password}")
     finally:
