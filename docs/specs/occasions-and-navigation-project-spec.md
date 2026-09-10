@@ -1,9 +1,9 @@
 # Occasions and navigation — project spec
 
-**Linear project:** not yet created — scaffold with `/projectit` before planning tickets
+**Linear project:** [BG: Occasions and Navigation](https://linear.app/neuroticsasquatch/project/bg-occasions-and-navigation-71dae76f947f)
 **Initiative:** Boone Gifts · **Team:** NEU · **Label:** `b.g v0.6.x`
 **Repos:** `boone-gifts-backend`, `boone-gifts-frontend` (this file is mirrored in both)
-**Status:** shaped 2026-09-09, tickets not yet planned individually
+**Status:** shaped 2026-09-09; scaffolded into Linear 2026-09-10 as 4 milestones / 15 stories / 20 tickets
 
 This is the project-wide spec. `/implementit` falls back to it when a ticket has no per-ticket plan,
 so it is written to be sufficient on its own: every decision below is settled, and anything still
