@@ -1,3 +1,5 @@
+from collections.abc import Sequence
+
 from sqlalchemy.orm import Session
 
 from app.account import service as account_service
@@ -12,8 +14,6 @@ from app.schemas.gift_list import (
     GiftListDetailViewer,
     GiftListRead,
     GiftListViewerRead,
-    SharedVia,
-    SharedViaFamily,
 )
 from app.services.exceptions import BadRequestError, ConflictError
 
@@ -75,6 +75,30 @@ def to_summary(gift_list: GiftList, user_id: int) -> GiftListRead | GiftListView
     )
 
 
+def to_summaries(
+    db: Session, lists: Sequence[GiftList], viewer_id: int
+) -> list[GiftListRead | GiftListViewerRead]:
+    """Serialize list rows for one caller, each carrying its share routes.
+
+    The seam every list-row surface goes through. `to_summary` decides which
+    schema a row gets and has no `Session` to ask about routes with; this adds
+    the one batched query that answers for the whole page, so a surface cannot
+    ship empty `shared_via` arrays by forgetting a step. Four surfaces return
+    list rows — `/lists`, folder detail, occasion detail, a connection's lists —
+    and a fifth inherits the routes by calling this rather than `to_summary`.
+
+    One query for the routes however many rows there are: the mapping is fetched
+    once and read per row.
+    """
+    routes = repo.get_share_routes(db, viewer_id, [gift_list.id for gift_list in lists])
+    for gift_list in lists:
+        # Absent from the mapping means no route: a row the caller owns, or one
+        # they reached some way this endpoint does not report. Either way an
+        # empty array, never null.
+        gift_list.shared_via = routes.get(gift_list.id, [])
+    return [to_summary(gift_list, viewer_id) for gift_list in lists]
+
+
 def get_lists(
     db: Session, user_id: int, filter: str | None = None, archived: bool = False
 ) -> list[GiftListRead | GiftListViewerRead]:
@@ -84,26 +108,25 @@ def get_lists(
         rows = get_shared_lists(db, user_id, archived=archived)
     else:
         rows = repo.get_all_visible_lists(db, user_id, archived=archived)
-    return [to_summary(gift_list, user_id) for gift_list in rows]
+    return to_summaries(db, rows, user_id)
 
 
 def get_shared_lists(db: Session, user_id: int, archived: bool = False) -> list[GiftList]:
-    """Every list someone else has made visible to the caller — directly or through
-    an occasion — each annotated with the `shared_via` source that explains it. This
-    is the one shared scope; there is no separate family view."""
-    rows = repo.get_shared_lists_with_source(db, user_id, archived=archived)
-    lists: list[GiftList] = []
-    for gift_list, kind, source_id, source_name, family_id, family_name in rows:
-        family = (
-            SharedViaFamily(id=family_id, name=family_name)
-            if family_id is not None
-            else None
-        )
-        gift_list.shared_via = SharedVia(
-            kind=kind, id=source_id, name=source_name, family=family
-        )
-        lists.append(gift_list)
-    return lists
+    """Every list someone else has made visible to the caller — directly or
+    through an occasion. This is the one shared scope; there is no separate
+    family view.
+
+    The scope is the set of lists the caller has a route to, so it is taken from
+    `get_share_routes`' keys rather than restated as a second union that could
+    drift from it. The rows themselves are then loaded filtered by `archived`,
+    which the routes say nothing about: an archived list still has routes, it
+    just belongs on the other page.
+
+    `to_summaries` attaches the routes to whichever rows survive that filter, so
+    this returns them bare.
+    """
+    routes = repo.get_share_routes(db, user_id)
+    return repo.get_lists_by_ids(db, list(routes), archived=archived)
 
 
 def get_list(

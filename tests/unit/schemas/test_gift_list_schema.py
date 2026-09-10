@@ -85,7 +85,7 @@ def _row(gifts):
         account_person_name=None,
         is_archived=False,
         gift_count=len(gifts),
-        shared_via=None,
+        shared_via=[],
         gifts=gifts,
         created_at=datetime(2026, 1, 1),
         updated_at=datetime(2026, 1, 1),

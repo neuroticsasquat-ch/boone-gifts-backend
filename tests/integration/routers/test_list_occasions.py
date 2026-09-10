@@ -118,12 +118,13 @@ def test_create_with_occasion_ids_shares_with_exactly_those(client, db, world):
 
     rel_view = client.get("/lists?filter=shared", headers=_auth(world.rel)).json()
     entry = next(l for l in rel_view if l["name"] == "Birthday")
-    assert entry["shared_via"] == {
-        "kind": "occasion",
-        "id": world.boones_xmas.id,
-        "name": "Christmas 2026",
-        "family": {"id": world.boones.id, "name": "The Boones"},
-    }
+    assert entry["shared_via"] == [
+        {
+            "kind": "occasion",
+            "occasion": {"id": world.boones_xmas.id, "name": "Christmas 2026"},
+            "family": {"id": world.boones.id, "name": "The Boones"},
+        }
+    ]
 
     cousin_view = client.get("/lists?filter=shared", headers=_auth(world.cousin)).json()
     assert "Birthday" not in {l["name"] for l in cousin_view}
