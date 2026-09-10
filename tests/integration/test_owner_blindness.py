@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 import pytest
+import sqlalchemy
 
 from app.models.claim import Claim
 from app.models.gift import Gift
@@ -281,3 +282,73 @@ def test_the_occasion_index_is_blind_on_an_occasion_holding_the_owners_list(
     assert row["list_count"] == 1
     assert row["my_claimed_count"] == 0
     assert row["my_bought_count"] == 0
+
+
+def test_the_archive_prompts_carry_no_claim_state(
+    client, db, member_user, member_headers, owned_list_with_a_claim
+):
+    """`GET /occasions/archive-prompts` joins the sweep (NEU-1294).
+
+    The leak the nudge could have had is the inverse of the strip's: not a row
+    that appears, but one that **disappears**. Under any clock that read a
+    claim, the caller's prompt would vanish the moment somebody claimed from the
+    list they own — telling them a present is on its way, by the banner going
+    quiet. So the assertion that matters is that the row is **still here**.
+
+    For that to bite, the claim has to be one a claim term would actually reach:
+    filed under *this* occasion (`claims.occasion_id`), which is the key every
+    occasion-scoped query in this codebase uses, and timestamped recently enough
+    to drag a 61-day-old clock back into the present. The fixture's claim is
+    filed under nothing, so it is re-filed here — without that, an eligibility
+    query could grow an any-user claim term and this test would sail through.
+
+    The caller's *own* claim is the other arm, and it lives in
+    `tests/integration/routers/test_occasions.py::test_my_own_claim_does_not_
+    change_it_either`. This file is about what an owner must not learn from
+    somebody else's shopping, which is this one.
+    """
+    from datetime import timedelta
+
+    from app.models.family import Family
+    from app.models.family_member import FamilyMember
+    from app.models.list_occasion_share import ListOccasionShare
+    from app.models.occasion import Occasion
+
+    stale = datetime.now(timezone.utc) - timedelta(days=61)
+    family = Family(name="Boone Family", created_by_id=member_user.id)
+    db.add(family)
+    db.flush()
+    db.add(
+        FamilyMember(family_id=family.id, user_id=member_user.id, role="organizer")
+    )
+    occasion = Occasion(
+        family_id=family.id, name="Christmas 2019", created_by_id=member_user.id
+    )
+    occasion.created_at = stale
+    db.add(occasion)
+    db.flush()
+    share = ListOccasionShare(
+        list_id=owned_list_with_a_claim.id, occasion_id=occasion.id
+    )
+    db.add(share)
+    db.flush()
+    share.created_at = stale
+    db.flush()
+
+    # File the other user's claim under this occasion and date it now. This is
+    # what makes the assertion below a guard rather than a formality: any claim
+    # term added to the eligibility query would now read a clock of `now`, the
+    # occasion would stop being stale, and the row would disappear.
+    claim = db.execute(
+        sqlalchemy.select(Claim).where(Claim.user_id != member_user.id)
+    ).scalar_one()
+    claim.occasion_id = occasion.id
+    claim.claimed_at = datetime.now(timezone.utc)
+    claim.purchased_at = datetime.now(timezone.utc)
+    db.flush()
+
+    response = client.get("/occasions/archive-prompts", headers=member_headers)
+
+    assert response.status_code == 200
+    _assert_blind(response.json())
+    assert [row["id"] for row in response.json()] == [occasion.id]

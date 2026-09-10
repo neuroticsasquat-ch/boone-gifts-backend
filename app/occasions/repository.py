@@ -1,4 +1,6 @@
-from sqlalchemy import DateTime, Row, delete, func, select
+from datetime import datetime, timedelta, timezone
+
+from sqlalchemy import DateTime, Row, delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models.claim import Claim
@@ -6,6 +8,7 @@ from app.models.family import Family
 from app.models.family_member import FamilyMember
 from app.models.list_occasion_share import ListOccasionShare
 from app.models.occasion import Occasion
+from app.models.occasion_archive_prompt import OccasionArchivePrompt
 
 
 def create_occasion(
@@ -75,19 +78,65 @@ def delete_occasions_for_family(db: Session, family_id: int) -> None:
     db.execute(delete(Occasion).where(Occasion.family_id == family_id))
 
 
+def shared_activity_at_expr():
+    """When an occasion was last busy **for everyone at once** — as SQL.
+
+        max(last share into the occasion, occasion.created_at)
+
+    This is the clock the archive nudge ages an occasion by, and it reads **no
+    claim at all — not even the caller's own**. That is the whole of it, and the
+    absent `user_id` parameter is the guarantee: there is no argument here that
+    could widen this to a claim, and the signature says so at every call site.
+
+    The obvious choice was the per-viewer clock below — ADR 0005 and the M1
+    contract both say the nudge would filter on it — and it is wrong here, for
+    NEU-1292's reason arrived at from the other side. Under the per-viewer
+    clock, eligibility turns on the caller's own claims, so two members disagree
+    about whether the same occasion is stale. That much is defensible. The
+    *shared* half of the disagreement is not: consider a family occasion holding
+    only Gran's own wishlist, untouched for seventy days. Gran is nudged. Tom
+    claims a gift from her list today. If eligibility read anyone else's claims,
+    Gran's prompt would vanish — and Gran would learn that somebody is buying
+    her a present, and roughly when. That is `CONTEXT.md` invariant 1 broken by
+    the *absence* of a banner row, which is exactly as invisible as ADR 0005's
+    sort order and exactly as disclosive.
+
+    Dropping the caller's own claims too costs nothing — they are safe to read —
+    and buys a property worth having: **staleness is one fact about the
+    occasion, identical for everyone eligible.** No user's action can create or
+    destroy another user's prompt, so there is nothing left to infer.
+
+    `created_at` stays the floor for NEU-1292's reason: an occasion created
+    seventy days ago that nothing ever happened to is precisely the dead
+    Christmas the nudge exists for, and a null clock would make the consumer
+    decide what null means.
+    """
+    last_share = (
+        select(func.max(ListOccasionShare.created_at))
+        .where(ListOccasionShare.occasion_id == Occasion.id)
+        .correlate(Occasion)
+        .scalar_subquery()
+    )
+    return func.coalesce(last_share, Occasion.created_at, type_=DateTime())
+
+
 def last_activity_at_expr(user_id: int):
     """When an occasion was last busy **for one viewer** — as SQL, not a value.
 
     The later of the last share into the occasion and *this viewer's own* last
     claim or purchase filed under it, floored at the occasion's creation:
 
-        max(last share in, my last claim, my last purchase, created_at)
+        max(shared activity, my last claim, my last purchase)
 
-    It returns an expression rather than a number because two features need the
-    same clock in two different places — this module's index selects it, and
-    M4's archive nudge filters on it in the database, beside joins this endpoint
-    has no use for. Defining it once is the whole point (ADR 0005): there is one
-    place to read when "does this leak?" is asked again.
+    Its first term is `shared_activity_at_expr()` — the shares-and-creation half
+    above — rather than a second copy of it. The two clocks cannot drift because
+    one is literally built from the other, and the narrower one is the whole of
+    what the archive nudge sees (ADR 0005, amended by NEU-1294).
+
+    It returns an expression rather than a number because it is selected into
+    this module's index alongside joins a plain value could not participate in.
+    Defining it once is the whole point (ADR 0005): there is one place to read
+    when "does this leak?" is asked again.
 
     **It must never read another user's claim.** The strip sorts on this value,
     so an occasion holding only the viewer's own list would rise to the top of
@@ -99,13 +148,14 @@ def last_activity_at_expr(user_id: int):
 
     Two spellings matter and neither is cosmetic:
 
-    * The three terms are **correlated scalar subqueries**, not joins. Joining
+    * The terms are **correlated scalar subqueries**, not joins. Joining
       `list_occasion_shares` and `claims` into one grouped query fans the rows
       out and multiplies the list count by the claim count.
     * Every term is **coalesced to `created_at` before** the comparison, because
       SQLite's scalar `max()` returns NULL if *any* argument is NULL — so the
       naive spelling yields a null clock for precisely the untouched occasion
-      that must never have one.
+      that must never have one. `shared_activity_at_expr()` already carries its
+      own coalesce, which is why the first term below has none of its own.
 
     `claimed_at` and `purchased_at` are two aggregates combined out here rather
     than one nested `max()`: `purchased_at` is nullable and is not guaranteed to
@@ -115,14 +165,8 @@ def last_activity_at_expr(user_id: int):
     The claim half is hand-written here rather than in `app/claims/repository.py`
     — the usual home for claim SQL — because it is one correlated aggregate of a
     query about occasions, and because ADR 0005 asks for the whole definition in
-    a single readable place that M4 embeds verbatim.
+    a single readable place.
     """
-    last_share = (
-        select(func.max(ListOccasionShare.created_at))
-        .where(ListOccasionShare.occasion_id == Occasion.id)
-        .correlate(Occasion)
-        .scalar_subquery()
-    )
     my_last_claim = (
         select(func.max(Claim.claimed_at))
         .where(Claim.occasion_id == Occasion.id, Claim.user_id == user_id)
@@ -136,7 +180,7 @@ def last_activity_at_expr(user_id: int):
         .scalar_subquery()
     )
     return func.max(
-        func.coalesce(last_share, Occasion.created_at),
+        shared_activity_at_expr(),
         func.coalesce(my_last_claim, Occasion.created_at),
         func.coalesce(my_last_purchase, Occasion.created_at),
         type_=DateTime(),
@@ -222,3 +266,135 @@ def get_occasion_summaries(
             .order_by(last_activity_at.desc(), Occasion.id.desc())
         ).all()
     )
+
+
+def get_archive_prompts(
+    db: Session, user_id: int, idle_days: int
+) -> list[Row]:
+    """Every occasion this caller should be asked to archive.
+
+    Across every family they belong to, with no parameter of any kind: like
+    `get_occasion_summaries`, the scope is the shape of the question rather than
+    a check that could be forgotten. A caller with nothing to answer gets an
+    empty list.
+
+    Five terms, and each is here for its own reason:
+
+    * **Not already archived.** The nudge asks a question that has been answered.
+    * **Stale**, by `shared_activity_at_expr()` — which reads no claim, by
+      anyone. See that function: eligibility that moved on somebody else's claim
+      would disclose the claim by the prompt's *disappearance*.
+    * **A member of the occasion's family.** A member can leave and
+      `occasions.created_by_id` keeps pointing at them; leaving withdraws what
+      membership granted, and the banner should never name a family the caller
+      has left. It is also what makes the role term below readable at all.
+    * **An organizer, or the occasion's creator.** Organizer-only would leave a
+      member-created occasion in a family with an absent organizer permanently
+      un-nudged — the dead Christmas the feature exists for — and the creator
+      already had the authority to make it.
+    * **No live dismissal.** A correlated `NOT EXISTS`, evaluated in SQL.
+
+    **The snooze and the idle cutoff are both compared in the database, never in
+    Python.** SQLAlchemy's SQLite `DATETIME` strips tzinfo on the way in and
+    hands back naive values on the way out, so a `dismissed_until` read into
+    Python and compared against `datetime.now(timezone.utc)` raises `TypeError:
+    can't compare offset-naive and offset-aware datetimes`. Bound as parameters
+    both sides are naive UTC strings, which compare correctly — and there is no
+    per-call discipline to remember.
+
+    Ordered `id DESC`: newest first, and stable. There is no clock in the
+    payload to sort on, and there must not be one — a date on a prompt invites
+    the next reader to assume it is `last_activity_at`, which it deliberately is
+    not.
+    """
+    now = datetime.now(timezone.utc)
+    idle_cutoff = now - timedelta(days=idle_days)
+    live_dismissal = (
+        select(OccasionArchivePrompt.id)
+        .where(
+            OccasionArchivePrompt.occasion_id == Occasion.id,
+            OccasionArchivePrompt.user_id == user_id,
+            OccasionArchivePrompt.dismissed_until > now,
+        )
+        .correlate(Occasion)
+        .exists()
+    )
+    return list(
+        db.execute(
+            select(
+                Occasion.id,
+                Occasion.name,
+                Occasion.family_id,
+                Family.name.label("family_name"),
+            )
+            .join(Family, Family.id == Occasion.family_id)
+            .join(FamilyMember, FamilyMember.family_id == Family.id)
+            .where(
+                FamilyMember.user_id == user_id,
+                Occasion.is_archived.is_(False),
+                shared_activity_at_expr() < idle_cutoff,
+                or_(
+                    FamilyMember.role == "organizer",
+                    Occasion.created_by_id == user_id,
+                ),
+                ~live_dismissal,
+            )
+            .order_by(Occasion.id.desc())
+        ).all()
+    )
+
+
+def upsert_dismissal(
+    db: Session, *, user_id: int, occasion_id: int, dismissed_until: datetime
+) -> None:
+    """Record this caller's "not yet" against this occasion, or extend it.
+
+    An upsert rather than an insert because `UNIQUE (user_id, occasion_id)`
+    holds: a second dismissal once the first has lapsed must extend the snooze,
+    not collide with the row that expired.
+    """
+    prompt = db.execute(
+        select(OccasionArchivePrompt).where(
+            OccasionArchivePrompt.user_id == user_id,
+            OccasionArchivePrompt.occasion_id == occasion_id,
+        )
+    ).scalar_one_or_none()
+    if prompt is None:
+        db.add(
+            OccasionArchivePrompt(
+                user_id=user_id,
+                occasion_id=occasion_id,
+                dismissed_until=dismissed_until,
+            )
+        )
+    else:
+        prompt.dismissed_until = dismissed_until
+    db.flush()
+
+
+def delete_prompts_for_occasions(db: Session, occasion_ids: list[int]) -> None:
+    """Every user's prompt row against these occasions.
+
+    Called when a family — and with it its occasions — is deleted. SQLite runs
+    with `PRAGMA foreign_keys=ON`, so a row left behind does not orphan itself:
+    it refuses the delete outright. A snooze has nothing to survive for once its
+    occasion is gone, exactly as a budget has not.
+    """
+    if not occasion_ids:
+        return
+    db.execute(
+        delete(OccasionArchivePrompt).where(
+            OccasionArchivePrompt.occasion_id.in_(occasion_ids)
+        )
+    )
+    db.flush()
+
+
+def delete_prompts_by_user(db: Session, user_id: int) -> None:
+    """Every prompt row this user has dismissed, anywhere."""
+    db.execute(
+        delete(OccasionArchivePrompt).where(
+            OccasionArchivePrompt.user_id == user_id
+        )
+    )
+    db.flush()

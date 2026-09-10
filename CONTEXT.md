@@ -21,7 +21,9 @@ the words mean and what must stay true.
 | **Folder** | An account's private grouping of lists it can see — "Christmas 2026". Was called an *occasion*, and before that a *collection* | `folders`, `folder_items` |
 | **Occasion** | A family's shared gifting occasion — "Boone Family · Christmas 2026". Owned by a family, carries **no dates** | `occasions` |
 | **Active occasion** | An occasion with `is_archived = false` | `occasions.is_archived` |
-| **Occasion activity** | The clock an occasion sorts and ages by: the later of the last share into it and the *viewer's own* claim or purchase filed under it, floored at the occasion's creation. Per-viewer by construction — never another user's claim | computed, `app/occasions/repository.py:last_activity_at_expr` |
+| **Occasion activity** | The clock an occasion sorts by: the later of the last share into it and the *viewer's own* claim or purchase filed under it, floored at the occasion's creation. Per-viewer by construction — never another user's claim | computed, `app/occasions/repository.py:last_activity_at_expr` |
+| **Shared activity** | The clock the archive nudge ages an occasion by: the later of the last share into it and its own creation. Reads no claim, by anyone — so no user's shopping can create or remove another user's prompt. The first term of *Occasion activity*, and the whole of what the nudge sees | computed, `app/occasions/repository.py:shared_activity_at_expr` |
+| **Archive prompt** | A standing question to one account about one occasion that has gone quiet: archive it, or not yet. "Not yet" is a dated snooze, not a permanent dismissal | `occasion_archive_prompts` |
 | **Budget** | What one account means to spend on one occasion, or on one folder. Private to the account that set it; there is no family budget | `budgets` |
 | **Rollup** | A budget with the caller's own spend counted against it — target, spent, remaining, and the bought/total/unpriced counts | computed, `app/budgets/service.py` |
 | **Recipient** | A person with **no account** for whom an account keeps a list | `lists.recipient_name` |
@@ -81,7 +83,11 @@ vacated by the rename precisely so the family concept could claim it.
    someone who will never log in, so its keeper cannot see claims on it and cannot claim from it.
 
 9. **An occasion belongs to exactly one family, and has no dates.** Any member may read and create
-   one; only an organizer may rename or archive one. Creating a second *active* occasion is allowed
+   one; **only an organizer may rename one; an organizer or the occasion's creator may archive or
+   unarchive one.** The split is deliberate: archiving is reversible, withdraws no shares and still
+   serves every My shopping tab, while a rename changes a label everyone sees and everyone's budgets
+   are filed under. It is also what makes the archive nudge coherent — the audience asked to archive
+   an occasion is exactly the audience allowed to. Creating a second *active* occasion is allowed
    and flagged (`has_other_active`), never refused — a family with no active occasion cannot be
    shared to at all, so nobody may be blocked waiting on an absent organizer.
    Deleting the family deletes its occasions, and the shares pointing at them first.
