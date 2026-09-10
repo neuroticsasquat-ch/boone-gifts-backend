@@ -355,3 +355,28 @@ def test_shopping_raises_not_found_for_an_unknown_occasion():
         repo.get_occasion.return_value = None
         with pytest.raises(NotFoundError):
             service.list_shopping(db, occasion_id=5, actor=_make_user())
+
+
+def test_list_all_occasions_passes_the_callers_own_id_and_nothing_else():
+    """The index has no membership gate on purpose: the query is scoped by the
+    caller's memberships, so an occasion they cannot see is a row that never
+    exists rather than one that gets filtered out. What this pins is the other
+    half — the only user id reaching the repository is the caller's."""
+    db = MagicMock()
+    with patch(REPO) as repo:
+        result = service.list_all_occasions(
+            db, actor=_make_user(id=10), archived=False
+        )
+
+    repo.get_occasion_summaries.assert_called_once_with(
+        db, user_id=10, archived=False
+    )
+    assert result is repo.get_occasion_summaries.return_value
+
+
+def test_list_all_occasions_threads_the_archived_flag_through():
+    db = MagicMock()
+    with patch(REPO) as repo:
+        service.list_all_occasions(db, actor=_make_user(id=10), archived=True)
+
+    assert repo.get_occasion_summaries.call_args.kwargs["archived"] is True

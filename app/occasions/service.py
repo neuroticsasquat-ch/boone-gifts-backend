@@ -1,5 +1,6 @@
 from decimal import Decimal
 
+from sqlalchemy import Row
 from sqlalchemy.orm import Session
 
 from app.access import can_view_list
@@ -151,3 +152,19 @@ def clear_budget(db: Session, occasion_id: int, actor: User) -> dict:
     return budgets_service.clear_budget(
         db, user_id=actor.id, occasion_id=occasion_id
     )
+
+
+def list_all_occasions(db: Session, actor: User, archived: bool) -> list[Row]:
+    """Every occasion the caller can see, across every family they belong to.
+
+    Deliberately takes no family and no user parameter. The repository scopes
+    the query by the caller's own memberships and keys both counts and the
+    claim half of the clock on the caller's own id, so "you cannot read anyone
+    else's counts" is the shape of the question rather than a check that could
+    be forgotten (`CONTEXT.md` invariant 1, ADR 0005).
+
+    There is no membership gate here for the same reason: an occasion the
+    caller cannot see is not a row this query filters out, it is a row it never
+    produces. A caller in no families gets an empty list, not a 404.
+    """
+    return repo.get_occasion_summaries(db, user_id=actor.id, archived=archived)

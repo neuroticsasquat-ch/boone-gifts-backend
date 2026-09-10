@@ -8,6 +8,7 @@ from app.schemas.occasion import (
     OccasionCreate,
     OccasionCreateRead,
     OccasionRead,
+    OccasionSummary,
     OccasionUpdate,
 )
 from app.services.exceptions import ForbiddenError, NotFoundError
@@ -54,6 +55,21 @@ def create_occasion(
         **OccasionRead.model_validate(occasion).model_dump(),
         has_other_active=has_other_active,
     )
+
+
+# The occasion index the landing page's strip reads: one request for every
+# occasion in every family the caller belongs to, rather than one per family and
+# another for the counts. No path parameter names a family, and no query
+# parameter names a user — the counts and the activity clock are the caller's by
+# construction (ADR 0005). Declared above `/occasions/{occasion_id}` for reading
+# order; the two paths cannot collide.
+@router.get("/occasions", response_model=list[OccasionSummary])
+def list_all_occasions(
+    user: CurrentUser,
+    db: DbSession,
+    archived: bool = Query(default=False),
+):
+    return occasion_service.list_all_occasions(db, actor=user, archived=archived)
 
 
 @router.get("/occasions/{occasion_id}", response_model=OccasionRead)

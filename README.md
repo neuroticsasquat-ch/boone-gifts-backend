@@ -190,6 +190,7 @@ Creates five `@example.com` users with the list-visibility states a single accou
 - `GET /folders/{id}/shopping` -- Everything you've claimed across the folder
 
 ### Occasions (`/families/{family_id}/occasions`, `/occasions`)
+- `GET /occasions` -- Every occasion across every family you belong to, with your own counts
 - `GET /families/{family_id}/occasions` -- The family's occasions; any member
 - `POST /families/{family_id}/occasions` -- Create one; any member
 - `GET /occasions/{id}` -- Get an occasion; any member of its family
