@@ -4,7 +4,7 @@ This is the first time role gates something a member can *see*, so the member
 and organizer paths are covered explicitly on every endpoint: any member reads
 and creates, only an organizer renames or archives.
 """
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
@@ -68,13 +68,19 @@ def outsider_headers(outsider):
     return {"Authorization": f"Bearer {create_access_token(outsider)}"}
 
 
-def _seed_occasion(db, family, creator, name="Christmas 2026", is_archived=False):
+def _seed_occasion(
+    db, family, creator, name="Christmas 2026", is_archived=False, created_at=None
+):
     occasion = Occasion(
         family_id=family.id,
         name=name,
         created_by_id=creator.id,
         is_archived=is_archived,
     )
+    # Set only when a test pins the clock: `created_at` is a server default, so
+    # assigning None here would write a NULL rather than fall back to it.
+    if created_at is not None:
+        occasion.created_at = created_at
     db.add(occasion)
     db.flush()
     return occasion
@@ -607,6 +613,7 @@ def _seed_claim(
     purchased_at=None,
     amount_paid=None,
     price=None,
+    claimed_at=None,
 ):
     """A gift with a claim standing on it — two rows since ADR 0003."""
     gift = Gift(list_id=gift_list.id, name=name, price=price)
@@ -616,7 +623,7 @@ def _seed_claim(
         gift_id=gift.id,
         user_id=claimer.id,
         occasion_id=occasion.id if occasion is not None else None,
-        claimed_at=datetime.now(timezone.utc),
+        claimed_at=claimed_at or datetime.now(timezone.utc),
         purchased_at=purchased_at,
         amount_paid=amount_paid,
     )
@@ -797,3 +804,341 @@ def test_shopping_requires_authentication(client, db, family, member_user):
     occasion = _seed_occasion(db, family, member_user)
 
     assert client.get(f"/occasions/{occasion.id}/shopping").status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# GET /occasions — the index the landing strip reads (NEU-1292)
+#
+# The clock these rows sort on is per-viewer and never reads another user's
+# claim (ADR 0005). The first three tests below are that rule; everything after
+# them is the rest of the contract.
+# ---------------------------------------------------------------------------
+
+# Far enough from anything the fixtures write that "did the clock move?" cannot
+# turn on which side of a second boundary the test happened to land.
+LATER = datetime(2030, 1, 1, 12, 0, 0)
+LATER_STILL = LATER + timedelta(days=365)
+
+
+def _index(client, headers, **params):
+    response = client.get("/occasions", headers=headers, params=params)
+    assert response.status_code == 200
+    return response.json()
+
+
+def _row(payload, occasion):
+    return next(row for row in payload if row["id"] == occasion.id)
+
+
+@pytest.fixture
+def co_member(db, family):
+    """A second member of the same family — the other user in every leak test."""
+    user = _make_user(db, "occasion_co_member@test.com", "Co Member")
+    db.add(FamilyMember(family_id=family.id, user_id=user.id, role="member"))
+    db.flush()
+    return user
+
+
+def test_another_users_claim_on_my_own_list_moves_nothing(
+    client, db, family, member_user, member_headers, co_member
+):
+    """**The most important test in the project** (spec §13).
+
+    The caller owns the only list on this occasion. When somebody else claims
+    and buys from it, every number the caller reads must be byte-identical to
+    what it was before — the counts *and* the clock. `CONTEXT.md` invariant 1
+    is not only about fields: the strip sorts on `last_activity_at`, so an
+    occasion that climbs the moment a gift is taken tells its owner that
+    someone is buying them a present, and roughly when.
+    """
+    occasion = _seed_occasion(db, family, member_user)
+    my_list = _seed_list(db, member_user, "My Own Wishlist")
+    db.add(ListOccasionShare(list_id=my_list.id, occasion_id=occasion.id))
+    db.flush()
+
+    before = _row(_index(client, member_headers), occasion)
+
+    _seed_claim(
+        db,
+        my_list,
+        co_member,
+        "Wool socks",
+        occasion=occasion,
+        claimed_at=LATER,
+        purchased_at=LATER_STILL,
+        amount_paid=Decimal("20.00"),
+    )
+
+    after = _row(_index(client, member_headers), occasion)
+
+    assert after == before
+    assert after["my_claimed_count"] == 0
+    assert after["my_bought_count"] == 0
+    assert after["last_activity_at"] < LATER.isoformat()
+
+
+def test_another_users_claim_on_a_list_i_do_not_own_moves_nothing_either(
+    client, db, family, member_user, member_headers, co_member
+):
+    """The same guard where the leak would be less alarming but no less real:
+    the clock is the viewer's own activity, not the occasion's."""
+    occasion = _seed_occasion(db, family, member_user)
+    their_list = _seed_list(db, co_member, "Co Member's Wishlist")
+    db.add(ListOccasionShare(list_id=their_list.id, occasion_id=occasion.id))
+    db.flush()
+
+    before = _row(_index(client, member_headers), occasion)
+
+    _seed_claim(
+        db,
+        their_list,
+        co_member,
+        "Something for themselves",
+        occasion=occasion,
+        claimed_at=LATER,
+        purchased_at=LATER_STILL,
+    )
+
+    assert _row(_index(client, member_headers), occasion) == before
+
+
+def test_my_own_claim_and_purchase_move_all_three(
+    client, db, family, member_user, member_headers, co_member
+):
+    """The other half of the rule: hiding another user's shopping must not hide
+    the caller's own, or the clock is useless for the thing it was built for."""
+    occasion = _seed_occasion(db, family, member_user)
+    their_list = _seed_list(db, co_member, "Co Member's Wishlist")
+    db.add(ListOccasionShare(list_id=their_list.id, occasion_id=occasion.id))
+    db.flush()
+
+    before = _row(_index(client, member_headers), occasion)
+    assert before["my_claimed_count"] == 0
+    assert before["my_bought_count"] == 0
+
+    _seed_claim(
+        db,
+        their_list,
+        member_user,
+        "A gift for them",
+        occasion=occasion,
+        claimed_at=LATER,
+    )
+
+    claimed = _row(_index(client, member_headers), occasion)
+    assert claimed["my_claimed_count"] == 1
+    assert claimed["my_bought_count"] == 0
+    assert claimed["last_activity_at"] == LATER.isoformat()
+
+    _seed_claim(
+        db,
+        their_list,
+        member_user,
+        "A second gift",
+        occasion=occasion,
+        claimed_at=LATER,
+        purchased_at=LATER_STILL,
+    )
+
+    bought = _row(_index(client, member_headers), occasion)
+    assert bought["my_claimed_count"] == 2
+    assert bought["my_bought_count"] == 1
+    assert bought["last_activity_at"] == LATER_STILL.isoformat()
+
+
+def test_the_index_spans_every_family_and_keeps_the_empty_occasions(
+    client, db, family, member_user, member_headers
+):
+    """One request, every family — including the occasions with no lists at
+    all, which §5.1 says are the ones most likely to need action."""
+    second = Family(name="Extended Family", created_by_id=member_user.id)
+    db.add(second)
+    db.flush()
+    db.add(
+        FamilyMember(family_id=second.id, user_id=member_user.id, role="member")
+    )
+    db.flush()
+
+    boone = _seed_occasion(db, family, member_user, name="Boone Christmas")
+    extended = _seed_occasion(db, second, member_user, name="Extended Christmas")
+    shared = _seed_list(db, member_user, "A List")
+    db.add(ListOccasionShare(list_id=shared.id, occasion_id=boone.id))
+    db.flush()
+
+    payload = _index(client, member_headers)
+
+    assert {row["id"] for row in payload} == {boone.id, extended.id}
+    assert _row(payload, boone)["family_name"] == "Boone Family"
+    assert _row(payload, boone)["list_count"] == 1
+    assert _row(payload, extended)["family_name"] == "Extended Family"
+    assert _row(payload, extended)["list_count"] == 0
+
+
+def test_an_occasion_nothing_has_happened_to_reads_its_creation(
+    client, db, family, member_user, member_headers
+):
+    """The floor, asserted as a value rather than as truthiness: SQLite's
+    scalar `max()` returns NULL if any argument is NULL, so the uncoalesced
+    spelling regresses to `null` here — on the commonest row of all."""
+    created = datetime(2026, 3, 1, 9, 30, 0)
+    occasion = _seed_occasion(db, family, member_user, created_at=created)
+
+    row = _row(_index(client, member_headers), occasion)
+
+    assert row["last_activity_at"] == created.isoformat()
+
+
+def test_a_share_into_the_occasion_moves_the_clock(
+    client, db, family, member_user, member_headers, co_member
+):
+    """A share is the one activity by another person the clock may read: the
+    list it carries is already visible to every member, so it announces
+    nothing they could not see by looking."""
+    occasion = _seed_occasion(
+        db, family, member_user, created_at=datetime(2026, 3, 1, 9, 30, 0)
+    )
+    their_list = _seed_list(db, co_member, "Co Member's Wishlist")
+    share = ListOccasionShare(list_id=their_list.id, occasion_id=occasion.id)
+    share.created_at = LATER
+    db.add(share)
+    db.flush()
+
+    row = _row(_index(client, member_headers), occasion)
+
+    assert row["last_activity_at"] == LATER.isoformat()
+
+
+def test_rows_are_ordered_by_the_clock_then_by_id(
+    client, db, family, member_user, member_headers
+):
+    occasion = _seed_occasion  # local alias keeps the seeding lines readable
+    quiet = occasion(db, family, member_user, created_at=datetime(2026, 1, 1))
+    busy = occasion(db, family, member_user, created_at=datetime(2026, 6, 1))
+    middling = occasion(db, family, member_user, created_at=datetime(2026, 3, 1))
+
+    ids = [row["id"] for row in _index(client, member_headers)]
+
+    assert ids == [busy.id, middling.id, quiet.id]
+
+
+def test_occasions_that_tie_come_back_by_descending_id_stably(
+    client, db, family, member_user, member_headers
+):
+    """Two occasions created in one transaction share `created_at` to the
+    second, so the tiebreak is what stops "the first four" being whatever the
+    query plan yields — and what stops two members seeing different strips."""
+    tie = datetime(2026, 4, 1, 12, 0, 0)
+    first = _seed_occasion(db, family, member_user, name="One", created_at=tie)
+    second = _seed_occasion(db, family, member_user, name="Two", created_at=tie)
+    third = _seed_occasion(db, family, member_user, name="Three", created_at=tie)
+
+    expected = [third.id, second.id, first.id]
+    assert [row["id"] for row in _index(client, member_headers)] == expected
+    assert [row["id"] for row in _index(client, member_headers)] == expected
+
+
+def test_archived_is_an_exact_match_in_all_three_forms(
+    client, db, family, member_user, member_headers
+):
+    """`archived=true` is the archived ones *only*, never a union — one
+    parameter name meaning one thing across both occasion index endpoints."""
+    active = _seed_occasion(db, family, member_user, name="Active")
+    archived = _seed_occasion(
+        db, family, member_user, name="Archived", is_archived=True
+    )
+
+    assert [row["id"] for row in _index(client, member_headers)] == [active.id]
+    assert [
+        row["id"] for row in _index(client, member_headers, archived="false")
+    ] == [active.id]
+    assert [
+        row["id"] for row in _index(client, member_headers, archived="true")
+    ] == [archived.id]
+
+
+def test_a_caller_in_no_families_gets_an_empty_list(client, outsider_headers):
+    """Not a 404: an occasion the caller cannot see is not a row this query
+    filters out, it is a row it never produces."""
+    assert _index(client, outsider_headers) == []
+
+
+def test_list_count_matches_the_lists_endpoint(
+    client, db, family, member_user, co_member, plain_member, plain_member_headers
+):
+    """Decision 5's guard. `list_count` is a raw aggregate over the share rows
+    rather than a per-list `can_view_list` pass — the two are provably equal
+    here, and this is what fails loudly if that stops being true."""
+    occasion = _seed_occasion(db, family, member_user)
+    for owner, name in (
+        (member_user, "Organizer's List"),
+        (co_member, "Co Member's List"),
+        (plain_member, "My Own List"),
+    ):
+        gift_list = _seed_list(db, owner, name)
+        db.add(ListOccasionShare(list_id=gift_list.id, occasion_id=occasion.id))
+    db.flush()
+
+    from_index = _row(_index(client, plain_member_headers), occasion)["list_count"]
+    from_endpoint = client.get(
+        f"/occasions/{occasion.id}/lists", headers=plain_member_headers
+    )
+
+    assert from_endpoint.status_code == 200
+    assert from_index == len(from_endpoint.json()) == 3
+
+
+def test_several_lists_and_several_claims_do_not_multiply(
+    client, db, family, member_user, member_headers, co_member
+):
+    """Decision 4a: two `LEFT JOIN`s into one grouped query fan the rows out
+    and `list_count` comes back as the product."""
+    occasion = _seed_occasion(db, family, member_user)
+    for index in range(3):
+        gift_list = _seed_list(db, co_member, f"List {index}")
+        db.add(ListOccasionShare(list_id=gift_list.id, occasion_id=occasion.id))
+        db.flush()
+        _seed_claim(db, gift_list, member_user, f"Gift {index}", occasion=occasion)
+
+    row = _row(_index(client, member_headers), occasion)
+
+    assert row["list_count"] == 3
+    assert row["my_claimed_count"] == 3
+
+
+def test_a_claim_survives_its_list_being_unshared(
+    client, db, family, member_user, member_headers, co_member
+):
+    """Decision 1's accepted consequence: filing is stored and never
+    re-derived, so an occasion with no lists left can still report claims."""
+    occasion = _seed_occasion(db, family, member_user)
+    their_list = _seed_list(db, co_member, "Co Member's Wishlist")
+    share = ListOccasionShare(list_id=their_list.id, occasion_id=occasion.id)
+    db.add(share)
+    db.flush()
+    _seed_claim(db, their_list, member_user, "A gift", occasion=occasion)
+    db.delete(share)
+    db.flush()
+
+    row = _row(_index(client, member_headers), occasion)
+
+    assert row["list_count"] == 0
+    assert row["my_claimed_count"] == 1
+
+
+def test_the_index_excludes_a_family_the_caller_does_not_belong_to(
+    client, db, family, member_user, member_headers, co_member
+):
+    """Membership is what scopes the query, so a family the caller is not in
+    contributes no row at all — not a row with blanked counts."""
+    second = Family(name="Someone Else's Family", created_by_id=co_member.id)
+    db.add(second)
+    db.flush()
+    db.add(FamilyMember(family_id=second.id, user_id=co_member.id, role="organizer"))
+    theirs = _seed_occasion(db, second, co_member, name="Not Mine")
+    db.flush()
+
+    assert theirs.id not in {row["id"] for row in _index(client, member_headers)}
+
+
+def test_the_index_requires_authentication(client):
+    assert client.get("/occasions").status_code == 401

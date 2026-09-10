@@ -24,7 +24,7 @@ destructive flag to guard.
 
 import argparse
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from sqlalchemy import select
@@ -204,25 +204,31 @@ def seed(db, password: str) -> None:
         db.add(gift_list)
         return gift_list
 
-    def add_gifts(gift_list, names, claimed_by=None, bought=None):
+    def add_gifts(gift_list, names, claimed_by=None, bought=None, claimed_at=None):
         """Claims land on the first gift only, so every list that has claims also
         has unclaimed gifts to look at.
 
         `bought` is the amount the claimer recorded paying. Pass a Decimal for a
         purchase with a price on it, `SKIPPED` for one where they skipped the
         amount, and leave it None for a claim that has not been bought yet — the
-        three states a budget rollup has to tell apart."""
+        three states a budget rollup has to tell apart.
+
+        `claimed_at` defaults to `now`, which is captured before the occasions
+        and their shares are written and so lands *earlier* than every share's
+        `CURRENT_TIMESTAMP`. Pass a later one where the claim has to be the
+        newest thing that happened in its occasion."""
         for index, name in enumerate(names):
             gift = Gift(list_id=gift_list.id, name=name)
             db.add(gift)
             if claimed_by is not None and index == 0:
                 db.flush()
+                claimed = claimed_at or now
                 db.add(
                     Claim(
                         gift_id=gift.id,
                         user_id=claimed_by.id,
-                        claimed_at=now,
-                        purchased_at=now if bought is not None else None,
+                        claimed_at=claimed,
+                        purchased_at=claimed if bought is not None else None,
                         amount_paid=bought if bought is not SKIPPED else None,
                     )
                 )
@@ -258,7 +264,23 @@ def seed(db, password: str) -> None:
     db.flush()
 
     add_gifts(tom_wishlist, ["Cast iron skillet", "Running shoes", "Coffee grinder"])
-    add_gifts(tom_christmas, ["Wool socks", "Book: Piranesi"])
+    # The one claim in this seed that is *not* Tom's, on a list Tom owns. Every
+    # other claim here is his, so without it the dev database cannot show
+    # NEU-1292's whole point by hand: with the per-viewer clock (ADR 0005) Tom's
+    # Boone Christmas card does not move and his bought line does not change
+    # when Carol takes this; with the obvious "last claim by anyone" it jumps to
+    # the front of his strip the moment the seed runs.
+    #
+    # The explicit later timestamp is what makes that visible. On the shared
+    # `now` the claim predates every occasion share, so both implementations
+    # would leave the strip tied on the shares and ordered by id — identical
+    # whether the clock leaks or not, which is the state this seed exists to end.
+    add_gifts(
+        tom_christmas,
+        ["Wool socks", "Book: Piranesi"],
+        claimed_by=carol,
+        claimed_at=now + timedelta(days=1),
+    )
     add_gifts(beths_list, ["Puzzle", "Slippers"])
     # Tom's three claim states, so every budget case is reachable by hand: taken
     # but not yet bought, bought with an amount, and bought with the amount
@@ -376,21 +398,25 @@ def seed(db, password: str) -> None:
     for occasion in (boones_christmas, boones_last_year, boones_two_years_ago):
         db.add(ListOccasionShare(list_id=standing_list.id, occasion_id=occasion.id))
 
-    # Tom's filings, applied here because the claims above predate the occasions.
+    # The filings, applied here because the claims above predate the occasions.
     # Every shopping tab needs something on it: Boone Christmas gets a purchase
     # with an amount, Extended Christmas one where he skipped it, and last
-    # year's archived Christmas one that must still be served. His claim on
+    # year's archived Christmas one that must still be served. Tom's claim on
     # Jane's list is deliberately left unfiled — a directly shared list belongs
     # to no occasion, and the folder tab is its only route (project spec §9.4).
-    def file_under(gift_list, occasion):
+    def file_under(gift_list, occasion, claimer=tom):
         gift_ids = select(Gift.id).where(Gift.list_id == gift_list.id)
         db.query(Claim).filter(
-            Claim.gift_id.in_(gift_ids), Claim.user_id == tom.id
+            Claim.gift_id.in_(gift_ids), Claim.user_id == claimer.id
         ).update({"occasion_id": occasion.id}, synchronize_session=False)
 
     file_under(carol_wishlist, boones_christmas)
     file_under(grandpa_list, boones_last_year)
     file_under(dave_wishlist, extended_christmas)
+    # Carol's claim on Tom's own list, filed where it does the most good: Boone
+    # Christmas is the card Tom reads, so a leak in the per-viewer clock shows
+    # up on his strip rather than somewhere he would have to go looking.
+    file_under(tom_christmas, boones_christmas, claimer=carol)
 
     christmas = Folder(owner_id=tom.id, name="Christmas 2026 Shopping",
                            description="Everyone I'm buying for")

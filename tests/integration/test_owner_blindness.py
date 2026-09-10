@@ -237,3 +237,47 @@ def test_a_viewer_gets_their_own_unpurchased_count(
     )
     assert row["claimed_count"] == 1
     assert row["my_unpurchased_claim_count"] == 0
+
+
+def test_the_occasion_index_is_blind_on_an_occasion_holding_the_owners_list(
+    client, db, member_user, member_headers, owned_list_with_a_claim
+):
+    """`GET /occasions` sorts on `last_activity_at`, which makes the *order* of
+    this payload a place claim state can leak from even though no field in it
+    is claim-shaped (ADR 0005, NEU-1292).
+
+    The fixture's list is the caller's own and carries the admin's claim, so
+    the sweep below and the two counts must all read as if nothing had been
+    claimed at all.
+    """
+    from app.models.family import Family
+    from app.models.family_member import FamilyMember
+    from app.models.list_occasion_share import ListOccasionShare
+    from app.models.occasion import Occasion
+
+    family = Family(name="Boone Family", created_by_id=member_user.id)
+    db.add(family)
+    db.flush()
+    db.add(
+        FamilyMember(family_id=family.id, user_id=member_user.id, role="organizer")
+    )
+    occasion = Occasion(
+        family_id=family.id, name="Christmas 2026", created_by_id=member_user.id
+    )
+    db.add(occasion)
+    db.flush()
+    db.add(
+        ListOccasionShare(
+            list_id=owned_list_with_a_claim.id, occasion_id=occasion.id
+        )
+    )
+    db.flush()
+
+    response = client.get("/occasions", headers=member_headers)
+    assert response.status_code == 200
+    row = next(r for r in response.json() if r["id"] == occasion.id)
+
+    _assert_blind(response.json())
+    assert row["list_count"] == 1
+    assert row["my_claimed_count"] == 0
+    assert row["my_bought_count"] == 0

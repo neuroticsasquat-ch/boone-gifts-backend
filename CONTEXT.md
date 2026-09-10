@@ -21,6 +21,7 @@ the words mean and what must stay true.
 | **Folder** | An account's private grouping of lists it can see — "Christmas 2026". Was called an *occasion*, and before that a *collection* | `folders`, `folder_items` |
 | **Occasion** | A family's shared gifting occasion — "Boone Family · Christmas 2026". Owned by a family, carries **no dates** | `occasions` |
 | **Active occasion** | An occasion with `is_archived = false` | `occasions.is_archived` |
+| **Occasion activity** | The clock an occasion sorts and ages by: the later of the last share into it and the *viewer's own* claim or purchase filed under it, floored at the occasion's creation. Per-viewer by construction — never another user's claim | computed, `app/occasions/repository.py:last_activity_at_expr` |
 | **Budget** | What one account means to spend on one occasion, or on one folder. Private to the account that set it; there is no family budget | `budgets` |
 | **Rollup** | A budget with the caller's own spend counted against it — target, spent, remaining, and the bought/total/unpriced counts | computed, `app/budgets/service.py` |
 | **Recipient** | A person with **no account** for whom an account keeps a list | `lists.recipient_name` |
@@ -43,7 +44,9 @@ vacated by the rename precisely so the family concept could claim it.
    responses through `to_summaries` rather than naming a schema at the endpoint, and they inherit
    both the right schema and their `shared_via` routes. Every surface that could leak claim state
    to an owner — including the 409 on revoking an occasion share — reveals only *that* claims
-   exist, never counts, gift names, or claimer names.
+   exist, never counts, gift names, claimer names, or **a timestamp that dates one**. The last of
+   those is why the occasion strip's sort key is per-viewer ([ADR 0005](docs/adr/0005-occasion-activity-is-per-viewer.md)):
+   a value nothing claim-shaped appears in can still disclose a claim by the order it imposes.
    `tests/integration/test_owner_blindness.py` sweeps the owner-facing responses for it.
 
 2. **Visibility has exactly one predicate.** `can_view_list` in `app/access.py`: owner, OR a
