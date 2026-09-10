@@ -17,6 +17,7 @@ the words mean and what must stay true.
 | **Direct share** | A grant of one list to one account | `list_shares` |
 | **Family** | A named group of accounts, with organizers and members | `families`, `family_members` |
 | **Occasion share** | A grant of one list to one family occasion. Not implied by co-membership. Was a *family grant*, pointed at the family itself | `list_occasion_shares` |
+| **Share route** | One way a list reached a viewer: a direct share, or an occasion share of a family they belong to. A list can have several, and a viewer's routes to it are computed at read time — never stored | computed, `app/lists/repository.py:get_share_routes` |
 | **Folder** | An account's private grouping of lists it can see — "Christmas 2026". Was called an *occasion*, and before that a *collection* | `folders`, `folder_items` |
 | **Occasion** | A family's shared gifting occasion — "Boone Family · Christmas 2026". Owned by a family, carries **no dates** | `occasions` |
 | **Active occasion** | An occasion with `is_archived = false` | `occasions.is_archived` |
@@ -37,16 +38,18 @@ vacated by the rename precisely so the family concept could claim it.
 1. **The owner never sees claims on their own list.** This is structural, not discipline: the claim
    is its own row and there is nothing claim-shaped left on `gifts`, so an owner-facing serializer
    has nothing to forget (ADR 0003). `claimed_count` and `my_unpurchased_claim_count` live on
-   `GiftListViewerRead`, and `app/lists/service.py:to_summary` is the single place that decides
-   which schema a list row gets — route new list-row responses through it rather than naming a
-   schema at the endpoint. Every surface that could leak claim state to an owner — including the
-   409 on revoking an occasion share — reveals only *that* claims exist, never counts, gift names,
-   or claimer names.
+   `GiftListViewerRead`. `app/lists/service.py:to_summary` is the single place that decides which
+   schema a list row gets, and `to_summaries` is the seam that wraps it — route new list-row
+   responses through `to_summaries` rather than naming a schema at the endpoint, and they inherit
+   both the right schema and their `shared_via` routes. Every surface that could leak claim state
+   to an owner — including the 409 on revoking an occasion share — reveals only *that* claims
+   exist, never counts, gift names, or claimer names.
    `tests/integration/test_owner_blindness.py` sweeps the owner-facing responses for it.
 
 2. **Visibility has exactly one predicate.** `can_view_list` in `app/access.py`: owner, OR a
    `ListShare` row, OR the list is shared to an occasion of a family the viewer belongs to. Claims
-   and folder membership both route through it. A connection alone grants nothing; bare family
+   route through it, and so do folder membership and folder *reads* — a `folder_items` row that
+   outlived the share behind it is not a grant. A connection alone grants nothing; bare family
    co-membership grants nothing. It does **not** consult `occasions.is_archived` — archiving blocks
    new shares and nothing else, so it never withdraws visibility.
 
