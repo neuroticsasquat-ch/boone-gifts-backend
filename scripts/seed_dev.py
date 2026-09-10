@@ -316,8 +316,11 @@ def seed(db, password: str) -> None:
     db.add(ListShare(list_id=jane_wishlist.id, user_id=tom.id))
     db.add(ListShare(list_id=tom_wishlist.id, user_id=jane.id))
 
-    # Carol's list reaches Tom BOTH ways — it is the list that proves the dedupe
-    # rule: one row in the shared scope, labelled with Carol, not the family.
+    # Carol's list reaches Tom BOTH ways — it is the list that proves routes are
+    # plural: one row in the shared scope carrying TWO entries in `shared_via`,
+    # the direct share and the Boones' Christmas. The client labels it "from
+    # Carol" (direct wins, in `ListAttribution`) and still groups it under the
+    # occasion, which is the grouping the old single-route field made impossible.
     db.add(ListShare(list_id=carol_wishlist.id, user_id=tom.id))
 
     # Occasions, in the three states the sharing control has to render: one

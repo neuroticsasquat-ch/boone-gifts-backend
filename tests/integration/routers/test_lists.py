@@ -3,8 +3,11 @@ from types import SimpleNamespace
 import pytest
 
 from app.dependencies import create_access_token
+from app.models.connection import Connection
 from app.models.family import Family
 from app.models.family_member import FamilyMember
+from app.models.folder import Folder
+from app.models.folder_item import FolderItem
 from app.models.gift_list import GiftList
 from app.models.list_occasion_share import ListOccasionShare
 from app.models.list_share import ListShare
@@ -246,44 +249,44 @@ def test_filter_shared_returns_both_paths(client, family_world):
     assert "P's Archived" not in names  # archived excluded by default
 
 
-def test_filter_shared_labels_an_occasion_only_list_with_its_occasion(
+def test_filter_shared_reports_the_occasion_route_with_its_family(
     client, family_world
 ):
     """The occasion arm carries its family alongside it — the viewer needs both
-    to make sense of the label."""
+    to make sense of the route."""
     w = family_world
     row = next(
         l for l in client.get("/lists?filter=shared", headers=_auth(w.u)).json()
         if l["name"] == "Q's List"
     )
-    assert row["shared_via"] == {
-        "kind": "occasion",
-        "id": w.o2.id,
-        "name": "F2 Christmas",
-        "family": {"id": w.f2.id, "name": "F2 Family"},
-    }
+    assert row["shared_via"] == [
+        {
+            "kind": "occasion",
+            "occasion": {"id": w.o2.id, "name": "F2 Christmas"},
+            "family": {"id": w.f2.id, "name": "F2 Family"},
+        }
+    ]
 
 
-def test_filter_shared_dedupes_both_paths_to_the_direct_share(client, family_world):
-    """L_p is shared directly with U *and* to two occasions U can reach: one row,
-    labelled with the owner, because the direct share is the more specific fact."""
+def test_filter_shared_returns_one_row_however_many_routes_it_has(
+    client, family_world
+):
+    """L_p is shared directly with U *and* to two occasions U can reach. The row
+    is still one row — it is the routes that are plural, not the list."""
     w = family_world
     rows = [
         l for l in client.get("/lists?filter=shared", headers=_auth(w.u)).json()
         if l["name"] == "P's List"
     ]
     assert len(rows) == 1
-    assert rows[0]["shared_via"] == {
-        "kind": "user",
-        "id": w.p.id,
-        "name": "Owner P",
-        "family": None,
-    }
+    assert len(rows[0]["shared_via"]) == 3
 
 
-def test_filter_shared_dedupes_a_list_shared_to_two_occasions(client, family_world, db):
-    """P's List is shared to an occasion in each of U's families. Without the
-    direct share it is still one row, carrying one of them."""
+def test_filter_shared_reports_both_occasions_each_with_its_own_family(
+    client, family_world, db
+):
+    """P's List is shared to an occasion in each of U's families. Both routes
+    come back, and each names the family behind its own occasion."""
     w = family_world
     db.query(ListShare).filter(ListShare.list_id == w.l_p.id).delete()
     db.flush()
@@ -293,23 +296,34 @@ def test_filter_shared_dedupes_a_list_shared_to_two_occasions(client, family_wor
         if l["name"] == "P's List"
     ]
     assert len(rows) == 1
-    assert rows[0]["shared_via"]["kind"] == "occasion"
-    # The lower occasion id wins — arbitrary, but stable, so the label does not
-    # flicker between requests.
-    assert rows[0]["shared_via"]["id"] == min(w.o1.id, w.o2.id)
+    assert rows[0]["shared_via"] == [
+        {
+            "kind": "occasion",
+            "occasion": {"id": w.o1.id, "name": "F1 Christmas"},
+            "family": {"id": w.f1.id, "name": "F1 Family"},
+        },
+        {
+            "kind": "occasion",
+            "occasion": {"id": w.o2.id, "name": "F2 Christmas"},
+            "family": {"id": w.f2.id, "name": "F2 Family"},
+        },
+    ]
 
 
-def test_filter_shared_direct_only_list_is_labelled_with_its_owner(
+def test_filter_shared_direct_only_list_reports_one_direct_route(
     client, admin_user, admin_headers, shared_list, member_user
 ):
+    """The direct arm names the list's owner. Redundant with `owner_name` on
+    purpose: `shared_via` is the authoritative statement of how a list arrived,
+    and the client reads attribution off it alone."""
     data = client.get("/lists?filter=shared", headers=admin_headers).json()
     assert len(data) == 1
-    assert data[0]["shared_via"] == {
-        "kind": "user",
-        "id": member_user.id,
-        "name": member_user.name,
-        "family": None,
-    }
+    assert data[0]["shared_via"] == [
+        {
+            "kind": "direct",
+            "person": {"id": member_user.id, "name": member_user.name},
+        }
+    ]
 
 
 def test_filter_shared_excludes_own_list_shared_to_own_occasion(
@@ -333,12 +347,13 @@ def test_filter_shared_archived_returns_archived_only(client, family_world):
     assert resp.status_code == 200
     data = resp.json()
     assert {l["name"] for l in data} == {"P's Archived"}
-    assert data[0]["shared_via"] == {
-        "kind": "occasion",
-        "id": w.o1.id,
-        "name": "F1 Christmas",
-        "family": {"id": w.f1.id, "name": "F1 Family"},
-    }
+    assert data[0]["shared_via"] == [
+        {
+            "kind": "occasion",
+            "occasion": {"id": w.o1.id, "name": "F1 Christmas"},
+            "family": {"id": w.f1.id, "name": "F1 Family"},
+        }
+    ]
 
 
 def test_filter_shared_drops_a_list_whose_occasion_share_was_revoked(
@@ -369,7 +384,7 @@ def test_filter_shared_keeps_a_list_whose_occasion_was_archived(
         l for l in client.get("/lists?filter=shared", headers=_auth(w.u)).json()
         if l["name"] == "Q's List"
     )
-    assert row["shared_via"]["id"] == w.o2.id
+    assert [r["occasion"]["id"] for r in row["shared_via"]] == [w.o2.id]
 
 
 def test_filter_shared_orders_most_recently_updated_first(client, family_world):
@@ -386,10 +401,12 @@ def test_filter_shared_empty_for_a_user_with_no_shares(client, member_headers):
     assert resp.json() == []
 
 
-def test_owned_lists_carry_no_shared_via(client, member_headers, sample_list):
+def test_owned_lists_carry_an_empty_route_list(client, member_headers, sample_list):
+    """An owned row reached the caller no way at all — an empty array, asserted
+    as an array. `shared_via` is never absent and never null."""
     resp = client.get("/lists?filter=owned", headers=member_headers)
     assert resp.status_code == 200
-    assert resp.json()[0]["shared_via"] is None
+    assert resp.json()[0]["shared_via"] == []
 
 
 def test_filter_family_is_gone(client, member_headers):
@@ -954,5 +971,192 @@ def test_the_badge_reaches_a_claim_on_a_directly_shared_list(client, db, family_
     response = client.get("/lists?filter=shared", headers=_auth(w.u))
     assert response.status_code == 200
     row = _row(response, direct_only.id)
-    assert row["shared_via"]["kind"] == "user", "this list is reachable no other way"
+    assert [r["kind"] for r in row["shared_via"]] == [
+        "direct"
+    ], "this list is reachable no other way"
     assert row["my_unpurchased_claim_count"] == 1
+
+
+def test_filter_shared_reports_both_routes_for_a_both_ways_list(client, family_world):
+    """L_p reaches U directly *and* through two occasions. Every route is
+    reported — the discard is the regression this project exists to fix."""
+    w = family_world
+    rows = [
+        l for l in client.get("/lists?filter=shared", headers=_auth(w.u)).json()
+        if l["name"] == "P's List"
+    ]
+    assert len(rows) == 1
+    assert rows[0]["shared_via"] == [
+        {"kind": "direct", "person": {"id": w.p.id, "name": "Owner P"}},
+        {
+            "kind": "occasion",
+            "occasion": {"id": w.o1.id, "name": "F1 Christmas"},
+            "family": {"id": w.f1.id, "name": "F1 Family"},
+        },
+        {
+            "kind": "occasion",
+            "occasion": {"id": w.o2.id, "name": "F2 Christmas"},
+            "family": {"id": w.f2.id, "name": "F2 Family"},
+        },
+    ]
+
+
+def test_filter_shared_orders_routes_direct_first_then_by_occasion_id(
+    client, family_world
+):
+    """A literal, and the same literal twice: the order exists so a response is
+    byte-stable across requests, not so the client can read `routes[0]`."""
+    w = family_world
+
+    def routes():
+        return next(
+            l for l in client.get("/lists?filter=shared", headers=_auth(w.u)).json()
+            if l["name"] == "P's List"
+        )["shared_via"]
+
+    first = routes()
+    assert [
+        (r["kind"], r.get("occasion", {}).get("id")) for r in first
+    ] == [("direct", None), ("occasion", w.o1.id), ("occasion", w.o2.id)]
+    assert routes() == first
+
+
+def test_unfiltered_lists_includes_an_occasion_only_shared_list(client, family_world):
+    """The unfiltered scope is `can_view_list`'s three terms, the occasion one
+    included. It matched owner-OR-`ListShare` only, so it disagreed with the
+    codebase's one visibility predicate (`CONTEXT.md` invariant 2)."""
+    w = family_world
+    names = {l["name"] for l in client.get("/lists", headers=_auth(w.u)).json()}
+    assert "Q's List" in names, "reaches U only through F2's occasion"
+    assert names == {"U's List", "P's List", "Q's List"}
+
+
+def test_the_same_list_carries_the_same_routes_on_every_surface(
+    client, family_world, db
+):
+    """`/lists`, a folder page, an occasion page and a connection's lists all
+    return list rows, and they must agree about how a list arrived — NEU-1286's
+    "same attribution on /lists and on a folder page" is exactly this."""
+    w = family_world
+    db.add(Connection(requester_id=w.u.id, addressee_id=w.p.id, status="accepted"))
+    folder = Folder(name="Christmas 2026", owner_id=w.u.id)
+    db.add(folder)
+    db.flush()
+    db.add(FolderItem(folder_id=folder.id, list_id=w.l_p.id))
+    db.flush()
+    connection = db.query(Connection).filter(
+        Connection.requester_id == w.u.id
+    ).one()
+
+    def routes_from(payload):
+        return next(row for row in payload if row["id"] == w.l_p.id)["shared_via"]
+
+    headers = _auth(w.u)
+    on_lists = routes_from(client.get("/lists?filter=shared", headers=headers).json())
+    on_folder = routes_from(
+        client.get(f"/folders/{folder.id}", headers=headers).json()["lists"]
+    )
+    on_occasion = routes_from(
+        client.get(f"/occasions/{w.o1.id}/lists", headers=headers).json()
+    )
+    on_connection = routes_from(
+        client.get(f"/connections/{connection.id}/lists", headers=headers).json()
+    )
+
+    assert len(on_lists) == 3
+    assert on_folder == on_lists
+    assert on_occasion == on_lists
+    assert on_connection == on_lists
+
+
+def test_a_folder_drops_a_list_whose_share_was_revoked(client, family_world, db):
+    """Revoking a share does not remove folder items, so a `folder_items` row
+    can outlive the grant behind it. The folder reads through `can_view_list`,
+    so the row is gone rather than served with no attribution at all."""
+    w = family_world
+    folder = Folder(name="Christmas 2026", owner_id=w.u.id)
+    db.add(folder)
+    db.flush()
+    db.add_all(
+        [
+            FolderItem(folder_id=folder.id, list_id=w.l_p.id),
+            FolderItem(folder_id=folder.id, list_id=w.l_q.id),
+        ]
+    )
+    db.flush()
+
+    # Q's List reached U only through F2's occasion. Withdraw it.
+    db.query(ListOccasionShare).filter(
+        ListOccasionShare.list_id == w.l_q.id
+    ).delete()
+    db.flush()
+
+    rows = client.get(f"/folders/{folder.id}", headers=_auth(w.u)).json()["lists"]
+    assert [row["id"] for row in rows] == [w.l_p.id]
+
+
+def test_shared_scope_costs_no_query_per_row(client, family_world, db):
+    """The routes are fetched for the whole page in one query, so the response
+    does not cost a query per row as the shared scope grows."""
+    from sqlalchemy import event
+
+    w = family_world
+    engine = db.get_bind()
+
+    def count_queries():
+        seen = []
+
+        @event.listens_for(engine, "before_cursor_execute")
+        def record(conn, cursor, statement, *args):
+            seen.append(statement)
+
+        try:
+            resp = client.get("/lists?filter=shared", headers=_auth(w.u))
+            assert resp.status_code == 200
+            return len(seen), len(resp.json())
+        finally:
+            event.remove(engine, "before_cursor_execute", record)
+
+    before, rows_before = count_queries()
+
+    # Six more lists of Q's, each shared to F2's occasion, so each arrives with
+    # a route of its own to assemble.
+    for n in range(6):
+        extra = GiftList(name=f"Q's Extra {n}", owner_id=w.q.id)
+        db.add(extra)
+        db.flush()
+        db.add(ListOccasionShare(list_id=extra.id, occasion_id=w.o2.id))
+    db.flush()
+
+    after, rows_after = count_queries()
+    assert rows_after == rows_before + 6, "the extra lists should be in scope"
+    assert after == before, (
+        f"query count grew with the row count ({before} → {after}): "
+        "the routes are being fetched per row"
+    )
+
+
+def test_owned_lists_cost_no_route_query_at_all(client, family_world, db):
+    """Every row on `?filter=owned` is the caller's own, and an owned row cannot
+    carry a route — so the page asks about routes not once, rather than once for
+    an answer it already knows."""
+    from sqlalchemy import event
+
+    w = family_world
+    engine = db.get_bind()
+    seen = []
+
+    @event.listens_for(engine, "before_cursor_execute")
+    def record(conn, cursor, statement, *args):
+        seen.append(statement)
+
+    try:
+        resp = client.get("/lists?filter=owned", headers=_auth(w.u))
+    finally:
+        event.remove(engine, "before_cursor_execute", record)
+
+    assert resp.status_code == 200
+    assert [row["shared_via"] for row in resp.json()] == [[]]
+    assert not [s for s in seen if "list_occasion_shares" in s], (
+        "the owned page ran a share-route query, which can only return nothing"
+    )

@@ -23,17 +23,31 @@ def list_folders(db: Session, owner_id: int, archived: bool = False) -> list[Fol
     return repo.get_folders_for_user(db, owner_id, archived=archived)
 
 
-def get_folder_detail(db: Session, folder: Folder, viewer_id: int) -> dict:
+def get_folder_detail(db: Session, folder: Folder, viewer: User) -> dict:
     # A folder groups lists its owner mostly does *not* own, so each row is
     # serialized for them individually — the shared ones keep `claimed_count`
     # and the caller's own `my_unpurchased_claim_count`, the caller's own lists
     # carry no claim state at all. Serialized for the *caller*, not for
     # `folder.owner_id`: `OwnedFolder` currently makes those the same user, but
     # the counts are per-caller facts, so the argument says which one it means.
-    lists = [
-        list_service.to_summary(gift_list, viewer_id)
-        for gift_list in repo.get_lists_for_folder(db, folder)
-    ]
+    #
+    # Every row goes through `can_view_list` on the way out. Revoking a share
+    # does not remove folder items, so `folder_items` can outlive the grant
+    # behind it — and a row that outlived its grant is not itself a grant
+    # (`CONTEXT.md` invariant 2). Filtering on "no share routes" instead would
+    # be cheaper and wrong: it would make `get_share_routes` a second visibility
+    # predicate, and a term added to `can_view_list` later would not reach it.
+    # The cost is one query per row, which `occasions/service.py:list_lists`
+    # already accepts for the same reason.
+    lists = list_service.to_summaries(
+        db,
+        [
+            gift_list
+            for gift_list in repo.get_lists_for_folder(db, folder)
+            if can_view_list(db, viewer, gift_list)
+        ],
+        viewer.id,
+    )
     return {
         "id": folder.id,
         "name": folder.name,

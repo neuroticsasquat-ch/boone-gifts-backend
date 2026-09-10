@@ -85,7 +85,7 @@ def update_occasion(
 
 # No `response_model`: the service picks the schema per row, and declaring one
 # here would re-widen owned rows or narrow viewer rows. See
-# `app/lists/service.py:to_summary`.
+# `app/lists/service.py:to_summaries`.
 @router.get("/occasions/{occasion_id}/lists")
 def list_occasion_lists(occasion_id: int, user: CurrentUser, db: DbSession):
     try:
