@@ -323,6 +323,22 @@ def test_to_summaries_annotates_each_row_with_its_routes(mock_routes):
 
 
 @patch(f"{REPO}.get_share_routes", return_value={})
+def test_to_summaries_does_not_ask_about_rows_the_caller_owns(mock_routes):
+    """Both arms of the union exclude the caller's own lists, so a route query
+    about an owned row can only come back empty. Only the rest are asked about."""
+    db = MagicMock()
+    owned = _make_gift_list(id=10, owner_id=5)
+    shared = _make_gift_list(id=20, owner_id=2)
+
+    result = service.to_summaries(db, [owned, shared], viewer_id=5)
+
+    mock_routes.assert_called_once_with(db, 5, [20])
+    # The owned row still gets its empty array — it is skipped in the query, not
+    # in the annotation.
+    assert result[0].shared_via == []
+
+
+@patch(f"{REPO}.get_share_routes", return_value={})
 def test_to_summaries_still_picks_the_schema_per_row(mock_routes):
     """It wraps `to_summary` rather than replacing it: the owner-vs-viewer
     choice stays in one place (ADR 0003)."""

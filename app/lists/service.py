@@ -95,9 +95,17 @@ def to_summaries(
     no help from it.
 
     One query for the routes however many rows there are: the mapping is fetched
-    once and read per row.
+    once and read per row — and none at all for a page the caller owns outright.
     """
-    routes = repo.get_share_routes(db, viewer_id, [gift_list.id for gift_list in lists])
+    # Both arms of the union exclude the caller's own lists, so a route query
+    # about one is a question whose answer is already known. Asking only about
+    # the rest means `?filter=owned`, where every row is owned, makes no route
+    # query at all rather than one guaranteed to come back empty — and it is the
+    # same predicate the SQL already applies, not a second one to keep in step.
+    foreign_ids = [
+        gift_list.id for gift_list in lists if gift_list.owner_id != viewer_id
+    ]
+    routes = repo.get_share_routes(db, viewer_id, foreign_ids)
     for gift_list in lists:
         # Absent from the mapping means no route: a row the caller owns, or one
         # they reached some way this endpoint does not report. Either way an

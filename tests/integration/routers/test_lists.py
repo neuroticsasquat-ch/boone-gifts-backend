@@ -1134,3 +1134,29 @@ def test_shared_scope_costs_no_query_per_row(client, family_world, db):
         f"query count grew with the row count ({before} → {after}): "
         "the routes are being fetched per row"
     )
+
+
+def test_owned_lists_cost_no_route_query_at_all(client, family_world, db):
+    """Every row on `?filter=owned` is the caller's own, and an owned row cannot
+    carry a route — so the page asks about routes not once, rather than once for
+    an answer it already knows."""
+    from sqlalchemy import event
+
+    w = family_world
+    engine = db.get_bind()
+    seen = []
+
+    @event.listens_for(engine, "before_cursor_execute")
+    def record(conn, cursor, statement, *args):
+        seen.append(statement)
+
+    try:
+        resp = client.get("/lists?filter=owned", headers=_auth(w.u))
+    finally:
+        event.remove(engine, "before_cursor_execute", record)
+
+    assert resp.status_code == 200
+    assert [row["shared_via"] for row in resp.json()] == [[]]
+    assert not [s for s in seen if "list_occasion_shares" in s], (
+        "the owned page ran a share-route query, which can only return nothing"
+    )
