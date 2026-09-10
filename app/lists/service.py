@@ -80,12 +80,19 @@ def to_summaries(
 ) -> list[GiftListRead | GiftListViewerRead]:
     """Serialize list rows for one caller, each carrying its share routes.
 
-    The seam every list-row surface goes through. `to_summary` decides which
-    schema a row gets and has no `Session` to ask about routes with; this adds
-    the one batched query that answers for the whole page, so a surface cannot
-    ship empty `shared_via` arrays by forgetting a step. Four surfaces return
-    list rows — `/lists`, folder detail, occasion detail, a connection's lists —
-    and a fifth inherits the routes by calling this rather than `to_summary`.
+    The seam the list-row surfaces go through. `to_summary` decides which schema
+    a row gets and has no `Session` to ask about routes with; this adds the one
+    batched query that answers for the whole page, so a surface that calls it
+    cannot ship empty `shared_via` arrays by forgetting a step. Four do —
+    `/lists`, folder detail, occasion detail, a connection's lists — and a fifth
+    inherits the routes by calling this rather than `to_summary`.
+
+    It is a convention, not an enforced one: `UserRead.lists` (admin-only
+    `/users`) serializes the ORM relationship straight through `GiftListRead`
+    and so always answers `[]`. That is the right answer there — the
+    relationship is the user's *own* lists, which have no routes by definition —
+    but it is not this function's doing, and a surface that skips this seam gets
+    no help from it.
 
     One query for the routes however many rows there are: the mapping is fetched
     once and read per row.
@@ -123,7 +130,13 @@ def get_shared_lists(db: Session, user_id: int, archived: bool = False) -> list[
     just belongs on the other page.
 
     `to_summaries` attaches the routes to whichever rows survive that filter, so
-    this returns them bare.
+    this returns them bare. That does mean the union runs twice on this path —
+    once here for the scope, once there for the rows that survived `archived`.
+    The alternative is threading the mapping fetched here through `get_lists`
+    into `to_summaries`, which buys one query back at the cost of a parameter
+    every other caller has to pass correctly, and of a second way for routes to
+    reach a row. Both queries are constant in the number of rows, so the cost
+    does not grow with the page.
     """
     routes = repo.get_share_routes(db, user_id)
     return repo.get_lists_by_ids(db, list(routes), archived=archived)
