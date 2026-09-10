@@ -1,9 +1,10 @@
 from datetime import datetime
 from decimal import Decimal
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import (
     BaseModel,
+    Field,
     ValidationInfo,
     field_validator,
     model_validator,
@@ -12,35 +13,43 @@ from pydantic import (
 from app.schemas.claim import OccasionCandidate
 
 
-class SharedViaFamily(BaseModel):
-    """The family behind an occasion the list reached the viewer through. Derived
-    from `occasions.family_id`, never stored on the share row (ADR 0002)."""
+class NamedRef(BaseModel):
+    """Something a share route points at, named so the client can render it
+    without a second request: a person, an occasion, or a family."""
 
     id: int
     name: str
 
 
-class SharedVia(BaseModel):
-    """How a shared list reached the viewer: the owner who shared it directly, or
-    the occasion it was shared to. Absent on a list the viewer owns.
+class DirectShareRoute(BaseModel):
+    """The list was shared straight to the viewer. `person` is the list's owner
+    — the same account already on the row as `owner_id`/`owner_name`, restated
+    because `shared_via` is the authoritative statement of how a list arrived,
+    and the client reads attribution off it alone."""
 
-    `family` rides along on the occasion arm only — the viewer needs to know
-    which family an occasion belongs to, and it is one join away from a fact the
-    query already has.
-    """
+    kind: Literal["direct"]
+    person: NamedRef
 
-    kind: Literal["user", "occasion"]
-    id: int
-    name: str
-    family: SharedViaFamily | None = None
 
-    @model_validator(mode="after")
-    def _family_belongs_to_the_occasion_arm(self) -> "SharedVia":
-        if self.kind == "occasion" and self.family is None:
-            raise ValueError("An occasion share must carry its family.")
-        if self.kind == "user" and self.family is not None:
-            raise ValueError("A direct share has no family behind it.")
-        return self
+class OccasionShareRoute(BaseModel):
+    """The list was shared to an occasion of a family the viewer belongs to.
+    `family` is derived from `occasions.family_id`, never stored on the share
+    row (ADR 0002), and rides along because the viewer needs both names to make
+    sense of the route."""
+
+    kind: Literal["occasion"]
+    occasion: NamedRef
+    family: NamedRef
+
+
+# The two arms carry different payloads, so `kind` discriminates rather than a
+# validator rejecting the combinations a flat model would allow. The old flat
+# `SharedVia` needed one to refuse a `family` on the direct arm and demand it on
+# the occasion arm; the union cannot represent either state, so the rule has one
+# home instead of two.
+ShareRoute = Annotated[
+    DirectShareRoute | OccasionShareRoute, Field(discriminator="kind")
+]
 
 
 class RecipientFields(BaseModel):
@@ -178,7 +187,12 @@ class GiftListRead(BaseModel):
     account_person_name: str | None = None
     is_archived: bool
     gift_count: int = 0
-    shared_via: SharedVia | None = None
+    # Every route by which this list reached the caller, direct-first then by
+    # ascending occasion id. Empty on a row the caller owns, and never null:
+    # a row that reached the viewer no way this endpoint reports still has an
+    # array to iterate. The array is not a ranking — direct-wins is the
+    # client's rule, applied in `ListAttribution` (NEU-1290 decision 4).
+    shared_via: list[ShareRoute] = []
     created_at: datetime
     updated_at: datetime
 

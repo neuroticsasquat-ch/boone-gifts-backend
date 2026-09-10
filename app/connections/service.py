@@ -131,12 +131,13 @@ def get_connection_lists(
         if connection.requester_id == user_id
         else connection.requester_id
     )
-    return [
-        list_service.to_summary(gift_list, user_id)
-        for gift_list in list_repo.get_lists_shared_by_user(
+    return list_service.to_summaries(
+        db,
+        list_repo.get_lists_shared_by_user(
             db, owner_id=other_id, shared_with_user_id=user_id
-        )
-    ]
+        ),
+        user_id,
+    )
 
 
 def cascade_disconnect(db: Session, user_a_id: int, user_b_id: int) -> None:

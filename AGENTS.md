@@ -100,11 +100,11 @@ tests/
 - **Registration is invite-only** — the email comes from the invite record (admin or family invite), never the request body
 - **List access**: `get_list_for_owner` (403 if not owner); `get_list_for_viewer` goes through `can_view_list`
 - **Gift responses**: owners get `GiftOwnerRead` (no claim fields), shared viewers get `GiftRead` (with them, read through `Gift.claim`)
-- **List-row responses**: owners get `GiftListRead`, viewers get `GiftListViewerRead` (which adds `claimed_count` and `my_unpurchased_claim_count`). `app/lists/service.py:to_summary` chooses, and passes it the caller as `context={"viewer_id": ...}` because the second count is about that one caller; endpoints returning a mix declare no `response_model`
+- **List-row responses**: owners get `GiftListRead`, viewers get `GiftListViewerRead` (which adds `claimed_count` and `my_unpurchased_claim_count`). `app/lists/service.py:to_summary` chooses, and passes it the caller as `context={"viewer_id": ...}` because the second count is about that one caller; endpoints returning a mix declare no `response_model`. **Route new list-row responses through `to_summaries`**, the plural seam that wraps it: it makes the one batched `get_share_routes` query for the page, so a surface inherits both the right schema and its `shared_via` routes instead of shipping empty arrays by forgetting a step
 
 ## Visibility model
 
-`can_view_list` in `app/access.py` is the single predicate: **owner OR a `ListShare` row OR the list is shared to an occasion of a family the viewer belongs to.** A connection alone does not grant visibility, and neither does bare family co-membership. Claims and folder-item gating both route through it, so occasion-visible lists work for those operations without special cases. It deliberately does **not** consult `occasions.is_archived` — archiving is not unsharing.
+`can_view_list` in `app/access.py` is the single predicate: **owner OR a `ListShare` row OR the list is shared to an occasion of a family the viewer belongs to.** A connection alone does not grant visibility, and neither does bare family co-membership. Claims route through it, and so do folder membership and folder *reads* — a `folder_items` row that outlived the share behind it is not a grant — so occasion-visible lists work for those operations without special cases. It deliberately does **not** consult `occasions.is_archived` — archiving is not unsharing.
 
 `users_share_access` answers a different question — "is there a standing relationship" — and is deliberately **not** gated on shares.
 
@@ -149,9 +149,14 @@ Family visibility is an explicit per-(list, occasion) `ListOccasionShare` row, n
 - `GET /occasions/{id}/shopping` — see "Shopping tabs" below
 - `GET /lists?filter=shared` — **the one shared scope**: every list another account has made
   visible to the caller, by a direct `ListShare` **or** an occasion share. Each row carries
-  `shared_via` — `{kind: "user", id, name}` or `{kind: "occasion", id, name, family: {id, name}}`;
-  a list reachable both ways appears once, as `kind: user`. An archived occasion still appears. The
-  caller's own lists are never in it. There is no `?filter=family`
+  `shared_via`, an **array of every route** the list reached the caller by —
+  `{kind: "direct", person: {id, name}}` or
+  `{kind: "occasion", occasion: {id, name}, family: {id, name}}`. A list reachable both ways is one
+  row carrying two routes; nothing is ranked away, and the direct-wins label rule is the client's,
+  in `ListAttribution`. Order is direct first then ascending occasion id — stable so responses do
+  not churn, **not** a ranking to read `routes[0]` from. An owned row carries `[]`; the field is
+  never absent and never null. An archived occasion still yields its route. The caller's own lists
+  are never in it. There is no `?filter=family`
 
 **A share row implies the owner is still a member of the occasion's family.** Read queries rely on that and don't re-check, so every membership departure (`remove_member`, `delete_family`) deletes the affected shares — across *every* occasion of that family.
 

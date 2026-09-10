@@ -95,13 +95,17 @@ def list_lists(
     one query per list on the occasion.
     """
     _load_for_member(db, occasion_id, actor)
-    return [
-        list_service.to_summary(gift_list, actor.id)
-        for gift_list in list_occasions_repo.get_lists_shared_to_occasion(
-            db, occasion_id
-        )
-        if can_view_list(db, actor, gift_list)
-    ]
+    return list_service.to_summaries(
+        db,
+        [
+            gift_list
+            for gift_list in list_occasions_repo.get_lists_shared_to_occasion(
+                db, occasion_id
+            )
+            if can_view_list(db, actor, gift_list)
+        ],
+        actor.id,
+    )
 
 
 def list_shopping(db: Session, occasion_id: int, actor: User) -> dict:

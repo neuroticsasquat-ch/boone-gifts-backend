@@ -8,11 +8,12 @@ from pydantic import ValidationError
 from app.lists import service
 from app.models.gift_list import GiftList
 from app.schemas.gift_list import (
+    DirectShareRoute,
     GiftListDetailOwner,
     GiftListDetailViewer,
     GiftListRead,
-    SharedVia,
-    SharedViaFamily,
+    NamedRef,
+    OccasionShareRoute,
 )
 
 
@@ -37,7 +38,7 @@ def _make_gift_list(
     gl.account_person_name = None
     gl.is_archived = False
     gl.gift_count = 0
-    gl.shared_via = None
+    gl.shared_via = []
     gl.created_at = datetime(2026, 1, 1)
     gl.updated_at = datetime(2026, 1, 1)
     return gl
@@ -46,6 +47,14 @@ def _make_gift_list(
 REPO = "app.lists.service.repo"
 CLAIMS_REPO = "app.lists.service.claims_repo"
 LIST_OCCASION_SVC = "app.lists.service.list_occasion_service"
+
+
+@pytest.fixture
+def no_routes():
+    """`to_summaries` asks the repository for share routes on every list-row
+    response. Tests about anything else stub it away rather than restate it."""
+    with patch(f"{REPO}.get_share_routes", return_value={}) as mock:
+        yield mock
 
 
 # --- create_list ---
@@ -91,7 +100,7 @@ def test_create_list_without_occasion_ids_passes_empty_list(mock_create, mock_sh
 
 
 @patch(f"{REPO}.get_lists_by_owner")
-def test_get_lists_owned(mock_get_owned):
+def test_get_lists_owned(mock_get_owned, no_routes):
     db = MagicMock()
     lists = [_make_gift_list(id=1), _make_gift_list(id=2)]
     mock_get_owned.return_value = lists
@@ -102,21 +111,21 @@ def test_get_lists_owned(mock_get_owned):
     assert len(result) == 2
 
 
-@patch(f"{REPO}.get_shared_lists_with_source")
-def test_get_lists_shared(mock_get_shared):
+@patch(f"{REPO}.get_lists_by_ids")
+@patch(f"{REPO}.get_share_routes", return_value={3: []})
+def test_get_lists_shared(mock_routes, mock_by_ids):
     db = MagicMock()
-    mock_get_shared.return_value = [
-        (_make_gift_list(id=3, owner_id=2), "user", 2, "Jane", None, None)
-    ]
+    mock_by_ids.return_value = [_make_gift_list(id=3, owner_id=2)]
 
     result = service.get_lists(db, user_id=1, filter="shared")
 
-    mock_get_shared.assert_called_once_with(db, 1, archived=False)
+    # The scope comes from the route keys, not from a second union.
+    mock_by_ids.assert_called_once_with(db, [3], archived=False)
     assert len(result) == 1
 
 
 @patch(f"{REPO}.get_all_visible_lists")
-def test_get_lists_all(mock_get_all):
+def test_get_lists_all(mock_get_all, no_routes):
     db = MagicMock()
     lists = [_make_gift_list(id=1), _make_gift_list(id=3, owner_id=2)]
     mock_get_all.return_value = lists
@@ -208,7 +217,7 @@ def test_delete_list_blocked_by_claims(mock_has_claims):
         service.delete_list(db, gift_list)
 
 
-# --- GiftListRead.shared_via annotation ---
+# --- GiftListRead.shared_via (a list of routes) ---
 
 
 def _read_source(shared_via=None):
@@ -233,109 +242,150 @@ def _read_source(shared_via=None):
     return obj
 
 
-def test_gift_list_read_includes_shared_via():
+def test_gift_list_read_includes_every_route():
+    """A list reaching the viewer both ways reports both routes — the discard
+    this ticket removes."""
     obj = _read_source(
-        shared_via={
-            "kind": "occasion",
-            "id": 3,
-            "name": "Christmas 2026",
-            "family": {"id": 1, "name": "Boone Family"},
-        }
+        shared_via=[
+            {"kind": "direct", "person": {"id": 2, "name": "Jane Boone"}},
+            {
+                "kind": "occasion",
+                "occasion": {"id": 3, "name": "Christmas 2026"},
+                "family": {"id": 1, "name": "Boone Family"},
+            },
+        ]
     )
     result = GiftListRead.model_validate(obj)
-    assert result.shared_via.kind == "occasion"
-    assert (result.shared_via.id, result.shared_via.name) == (3, "Christmas 2026")
-    assert (result.shared_via.family.id, result.shared_via.family.name) == (
-        1,
-        "Boone Family",
+    direct, occasion = result.shared_via
+    assert (direct.person.id, direct.person.name) == (2, "Jane Boone")
+    assert (occasion.occasion.id, occasion.occasion.name) == (3, "Christmas 2026")
+    assert (occasion.family.id, occasion.family.name) == (1, "Boone Family")
+
+
+def test_kind_discriminates_which_route_a_payload_becomes():
+    """The arms carry different payloads, so `kind` picks the model. The flat
+    schema needed a validator to refuse the mismatched combinations; the union
+    cannot represent them."""
+    result = GiftListRead.model_validate(
+        _read_source(
+            shared_via=[{"kind": "direct", "person": {"id": 2, "name": "Jane"}}]
+        )
     )
+    assert isinstance(result.shared_via[0], DirectShareRoute)
 
 
-def test_shared_via_occasion_arm_requires_its_family():
-    """The spec's occasion arm always carries `family: {id, name}`; a null one
-    would be a shape the client cannot render."""
+def test_an_occasion_route_without_its_family_is_refused():
+    """The occasion arm always carries `family: {id, name}`; a missing one would
+    be a shape the client cannot render."""
     with pytest.raises(ValidationError):
-        SharedVia(kind="occasion", id=3, name="Christmas 2026")
-
-
-def test_shared_via_user_arm_refuses_a_family():
-    """There is no occasion behind a direct share, so there is no family either."""
-    with pytest.raises(ValidationError):
-        SharedVia(
-            kind="user",
-            id=2,
-            name="Jane Boone",
-            family=SharedViaFamily(id=1, name="Boone Family"),
+        OccasionShareRoute(
+            kind="occasion", occasion=NamedRef(id=3, name="Christmas 2026")
         )
 
 
-def test_gift_list_read_shared_via_defaults_none():
+def test_a_direct_route_has_no_family_field_to_set():
+    """There is no occasion behind a direct share, so there is no family
+    either — and no way to attach one."""
+    route = DirectShareRoute(
+        kind="direct", person=NamedRef(id=2, name="Jane Boone")
+    )
+    assert "family" not in route.model_dump()
+
+
+def test_gift_list_read_shared_via_defaults_to_an_empty_list():
     obj = _read_source()  # no shared_via attribute set — an owned list
     result = GiftListRead.model_validate(obj)
-    assert result.shared_via is None
+    assert result.shared_via == []
 
 
-# --- get_shared_lists (source annotation) ---
+# --- to_summaries (the seam that annotates every list row) ---
 
 
-@patch(f"{REPO}.get_shared_lists_with_source")
-def test_get_shared_lists_annotates_direct_share(mock_rows):
+@patch(f"{REPO}.get_share_routes")
+def test_to_summaries_annotates_each_row_with_its_routes(mock_routes):
     db = MagicMock()
-    gl = SimpleNamespace(id=10)
-    mock_rows.return_value = [(gl, "user", 2, "Jane Boone", None, None)]
-
-    result = service.get_shared_lists(db, user_id=5)
-
-    mock_rows.assert_called_once_with(db, 5, archived=False)
-    assert result == [gl]
-    # The direct arm carries no family — there is no occasion behind it.
-    assert result[0].shared_via == SharedVia(kind="user", id=2, name="Jane Boone")
-    assert result[0].shared_via.family is None
-
-
-@patch(f"{REPO}.get_shared_lists_with_source")
-def test_get_shared_lists_annotates_occasion_share(mock_rows):
-    db = MagicMock()
-    gl = SimpleNamespace(id=10)
-    mock_rows.return_value = [(gl, "occasion", 3, "Christmas 2026", 1, "Boone Family")]
-
-    result = service.get_shared_lists(db, user_id=5)
-
-    assert result[0].shared_via == SharedVia(
+    gl1, gl2 = _make_gift_list(id=10, owner_id=2), _make_gift_list(id=20, owner_id=2)
+    direct = DirectShareRoute(kind="direct", person=NamedRef(id=2, name="Jane Boone"))
+    occasion = OccasionShareRoute(
         kind="occasion",
-        id=3,
-        name="Christmas 2026",
-        family=SharedViaFamily(id=1, name="Boone Family"),
+        occasion=NamedRef(id=3, name="Christmas 2026"),
+        family=NamedRef(id=1, name="Boone Family"),
     )
+    mock_routes.return_value = {10: [direct, occasion]}
+
+    result = service.to_summaries(db, [gl1, gl2], viewer_id=5)
+
+    # One batched call for the whole page, not one per row.
+    mock_routes.assert_called_once_with(db, 5, [10, 20])
+    assert result[0].shared_via == [direct, occasion]
+    # Absent from the mapping is an empty array, never null.
+    assert result[1].shared_via == []
 
 
-@patch(f"{REPO}.get_shared_lists_with_source")
-def test_get_shared_lists_preserves_repository_order(mock_rows):
+@patch(f"{REPO}.get_share_routes", return_value={})
+def test_to_summaries_does_not_ask_about_rows_the_caller_owns(mock_routes):
+    """Both arms of the union exclude the caller's own lists, so a route query
+    about an owned row can only come back empty. Only the rest are asked about."""
     db = MagicMock()
-    gl1, gl2 = SimpleNamespace(id=10), SimpleNamespace(id=20)
-    mock_rows.return_value = [
-        (gl1, "user", 2, "Jane", None, None),
-        (gl2, "occasion", 3, "Christmas 2026", 1, "Boones"),
-    ]
+    owned = _make_gift_list(id=10, owner_id=5)
+    shared = _make_gift_list(id=20, owner_id=2)
+
+    result = service.to_summaries(db, [owned, shared], viewer_id=5)
+
+    mock_routes.assert_called_once_with(db, 5, [20])
+    # The owned row still gets its empty array — it is skipped in the query, not
+    # in the annotation.
+    assert result[0].shared_via == []
+
+
+@patch(f"{REPO}.get_share_routes", return_value={})
+def test_to_summaries_still_picks_the_schema_per_row(mock_routes):
+    """It wraps `to_summary` rather than replacing it: the owner-vs-viewer
+    choice stays in one place (ADR 0003)."""
+    db = MagicMock()
+    owned, shared = _make_gift_list(id=10, owner_id=5), _make_gift_list(id=20, owner_id=2)
+
+    result = service.to_summaries(db, [owned, shared], viewer_id=5)
+
+    assert not hasattr(result[0], "claimed_count")
+    assert result[1].claimed_count == 0
+
+
+# --- get_shared_lists (the scope comes from the routes) ---
+
+
+@patch(f"{REPO}.get_lists_by_ids")
+@patch(f"{REPO}.get_share_routes")
+def test_get_shared_lists_takes_its_scope_from_the_route_keys(
+    mock_routes, mock_by_ids
+):
+    db = MagicMock()
+    direct = DirectShareRoute(kind="direct", person=NamedRef(id=2, name="Jane Boone"))
+    mock_routes.return_value = {10: [direct], 20: [direct]}
+    mock_by_ids.return_value = ["rows"]
 
     result = service.get_shared_lists(db, user_id=5)
 
-    assert [l.id for l in result] == [10, 20]
+    # `list_ids=None` — the whole shared scope, so the union defining it is
+    # written once and cannot drift from a second copy.
+    mock_routes.assert_called_once_with(db, 5)
+    mock_by_ids.assert_called_once_with(db, [10, 20], archived=False)
+    assert result == ["rows"]
 
 
-@patch(f"{REPO}.get_shared_lists_with_source")
-def test_get_shared_lists_empty(mock_rows):
+@patch(f"{REPO}.get_lists_by_ids", return_value=[])
+@patch(f"{REPO}.get_share_routes", return_value={})
+def test_get_shared_lists_empty(mock_routes, mock_by_ids):
+    assert service.get_shared_lists(MagicMock(), user_id=5) == []
+
+
+@patch(f"{REPO}.get_lists_by_ids", return_value=[])
+@patch(f"{REPO}.get_share_routes", return_value={10: []})
+def test_get_lists_shared_archived_passthrough(mock_routes, mock_by_ids):
+    """Routes say nothing about `archived`: an archived list still has them, it
+    just belongs on the other page, so the flag is applied when the rows load."""
     db = MagicMock()
-    mock_rows.return_value = []
-
-    assert service.get_shared_lists(db, user_id=5) == []
-
-
-@patch(f"{REPO}.get_shared_lists_with_source")
-def test_get_lists_shared_archived_passthrough(mock_rows):
-    db = MagicMock()
-    mock_rows.return_value = []
 
     service.get_lists(db, user_id=5, filter="shared", archived=True)
 
-    mock_rows.assert_called_once_with(db, 5, archived=True)
+    mock_by_ids.assert_called_once_with(db, [10], archived=True)
