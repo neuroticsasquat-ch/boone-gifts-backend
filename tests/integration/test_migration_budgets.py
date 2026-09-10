@@ -10,65 +10,61 @@ never set. What is worth proving is the shape — the two unique constraints hol
 one budget per scope, and *neither* refuses the NULL that the other scope leaves
 behind.
 """
-import os
-import subprocess
-from pathlib import Path
+
+import shutil
 
 import pytest
 from sqlalchemy import create_engine, text
 
+from tests.integration.migration_support import alembic as _alembic
+from tests.integration.migration_support import build_template
+
 PREVIOUS_REVISION = "d4c8a1f92b60"
 REVISION = "c1f9a7d4e260"
-REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-def _alembic(command: str, target: str, db_path: Path) -> None:
-    env = dict(os.environ, APP_DATABASE_URL=f"sqlite:///{db_path}")
-    result = subprocess.run(
-        ["alembic", command, target],
-        cwd=REPO_ROOT,
-        env=env,
-        capture_output=True,
-        text=True,
+def _seed(conn):
+    conn.execute(
+        text(
+            "INSERT INTO users (id, email, name, password_hash, role, is_active) "
+            "VALUES (1, 'a@t.com', 'A', 'x', 'member', 1), "
+            "       (2, 'b@t.com', 'B', 'x', 'member', 1)"
+        )
     )
-    assert result.returncode == 0, result.stderr
+    conn.execute(
+        text(
+            "INSERT INTO families (id, name, created_by_id) "
+            "VALUES (1, 'Boone Family', 1)"
+        )
+    )
+    conn.execute(
+        text(
+            "INSERT INTO occasions (id, family_id, name, is_archived, "
+            "created_by_id) VALUES (1, 1, 'Christmas 2026', 0, 1)"
+        )
+    )
+    conn.execute(
+        text(
+            "INSERT INTO folders (id, owner_id, name, is_archived) "
+            "VALUES (1, 1, 'Gran', 0)"
+        )
+    )
+
+
+@pytest.fixture(scope="module")
+def _template(tmp_path_factory):
+    """The schema at the previous revision, seeded — built once for the
+    module, so the revision chain is replayed once instead of per test."""
+    return build_template(tmp_path_factory, PREVIOUS_REVISION, _seed)
 
 
 @pytest.fixture
-def seeded(tmp_path):
+def seeded(tmp_path, _template):
     """The schema one revision back, with two users, a family occasion and a
     folder — the two scopes a budget can hang off."""
     db_path = tmp_path / "migration_test.db"
-    _alembic("upgrade", PREVIOUS_REVISION, db_path)
+    shutil.copy(_template, db_path)
     engine = create_engine(f"sqlite:///{db_path}")
-
-    with engine.begin() as conn:
-        conn.execute(
-            text(
-                "INSERT INTO users (id, email, name, password_hash, role, is_active) "
-                "VALUES (1, 'a@t.com', 'A', 'x', 'member', 1), "
-                "       (2, 'b@t.com', 'B', 'x', 'member', 1)"
-            )
-        )
-        conn.execute(
-            text(
-                "INSERT INTO families (id, name, created_by_id) "
-                "VALUES (1, 'Boone Family', 1)"
-            )
-        )
-        conn.execute(
-            text(
-                "INSERT INTO occasions (id, family_id, name, is_archived, "
-                "created_by_id) VALUES (1, 1, 'Christmas 2026', 0, 1)"
-            )
-        )
-        conn.execute(
-            text(
-                "INSERT INTO folders (id, owner_id, name, is_archived) "
-                "VALUES (1, 1, 'Gran', 0)"
-            )
-        )
-
     yield engine, db_path
     engine.dispose()
 

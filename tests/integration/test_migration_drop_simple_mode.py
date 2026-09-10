@@ -7,28 +7,17 @@ drop leaves every row's remaining data intact and that this revision touches no
 existing grant. (A later revision drops the grants wholesale when shares move to
 occasions — project spec §12 — but retiring the mode must not pre-empt it.)
 """
-import os
-import subprocess
+import shutil
 from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine, event, inspect, text
 
+from tests.integration.migration_support import alembic as _alembic
+from tests.integration.migration_support import build_template
+
 PREVIOUS_HEAD = "c9d4e7a2f180"
 REVISION = "f1a6b3c80d27"
-REPO_ROOT = Path(__file__).resolve().parents[2]
-
-
-def _alembic(command: str, target: str, db_path: Path) -> None:
-    env = dict(os.environ, APP_DATABASE_URL=f"sqlite:///{db_path}")
-    result = subprocess.run(
-        ["alembic", command, target],
-        cwd=REPO_ROOT,
-        env=env,
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stderr
 
 
 def _engine(db_path: Path):
@@ -43,48 +32,55 @@ def _engine(db_path: Path):
     return engine
 
 
+def _seed(conn):
+    conn.execute(
+        text(
+            "INSERT INTO users (id, email, name, password_hash, role, is_active, "
+            "simple_mode) VALUES "
+            "(1, 'simple@t.com', 'Simple', 'x', 'member', 1, 1), "
+            "(2, 'full@t.com', 'Full', 'x', 'member', 1, 0)"
+        )
+    )
+    conn.execute(
+        text(
+            "INSERT INTO families (id, name, created_by_id) VALUES (1, 'Boones', 2)"
+        )
+    )
+    conn.execute(
+        text(
+            "INSERT INTO family_invites (id, family_id, email, role, simple_mode, "
+            "token, invited_by_id, expires_at) VALUES "
+            "(1, 1, 'a@t.com', 'member', 1, 'tok-a', 2, '2030-01-01 00:00:00'), "
+            "(2, 1, 'b@t.com', 'organizer', 0, 'tok-b', 2, '2030-01-01 00:00:00')"
+        )
+    )
+    conn.execute(
+        text(
+            "INSERT INTO lists (id, name, owner_id, is_archived) "
+            "VALUES (1, 'Simple List', 1, 0)"
+        )
+    )
+    conn.execute(
+        text(
+            "INSERT INTO list_family_shares (list_id, family_id) VALUES (1, 1)"
+        )
+    )
+
+
+@pytest.fixture(scope="module")
+def _template(tmp_path_factory):
+    """The schema at the previous head, seeded — built once for the module,
+    so the revision chain is replayed once instead of per test."""
+    return build_template(tmp_path_factory, PREVIOUS_HEAD, _seed, _engine)
+
+
 @pytest.fixture
-def db_path(tmp_path):
+def db_path(tmp_path, _template):
     """A database at the previous head with a simple-mode user and a full-mode
     one, an invite of each kind, and a grant belonging to the simple-mode user —
     the row whose survival is the whole point of the no-backfill decision."""
     path = tmp_path / "drop_simple_mode.db"
-    _alembic("upgrade", PREVIOUS_HEAD, path)
-    engine = _engine(path)
-    with engine.begin() as conn:
-        conn.execute(
-            text(
-                "INSERT INTO users (id, email, name, password_hash, role, is_active, "
-                "simple_mode) VALUES "
-                "(1, 'simple@t.com', 'Simple', 'x', 'member', 1, 1), "
-                "(2, 'full@t.com', 'Full', 'x', 'member', 1, 0)"
-            )
-        )
-        conn.execute(
-            text(
-                "INSERT INTO families (id, name, created_by_id) VALUES (1, 'Boones', 2)"
-            )
-        )
-        conn.execute(
-            text(
-                "INSERT INTO family_invites (id, family_id, email, role, simple_mode, "
-                "token, invited_by_id, expires_at) VALUES "
-                "(1, 1, 'a@t.com', 'member', 1, 'tok-a', 2, '2030-01-01 00:00:00'), "
-                "(2, 1, 'b@t.com', 'organizer', 0, 'tok-b', 2, '2030-01-01 00:00:00')"
-            )
-        )
-        conn.execute(
-            text(
-                "INSERT INTO lists (id, name, owner_id, is_archived) "
-                "VALUES (1, 'Simple List', 1, 0)"
-            )
-        )
-        conn.execute(
-            text(
-                "INSERT INTO list_family_shares (list_id, family_id) VALUES (1, 1)"
-            )
-        )
-    engine.dispose()
+    shutil.copy(_template, path)
     return path
 
 

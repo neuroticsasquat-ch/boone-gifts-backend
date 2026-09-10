@@ -4,67 +4,63 @@ Runs the real Alembic migration against a throwaway SQLite file: seeds the
 schema at the previous head with occasions and their items, upgrades, and
 checks that every row survived under the new names.
 """
-import os
-import subprocess
-from pathlib import Path
+import shutil
 
 import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import IntegrityError
 
+from tests.integration.migration_support import alembic as _alembic
+from tests.integration.migration_support import build_template
+
 PREVIOUS_HEAD = "e2b7d4a91c53"
 REVISION = "c9d4e7a2f180"
-REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-def _alembic(command: str, target: str, db_path: Path) -> None:
-    env = dict(os.environ, APP_DATABASE_URL=f"sqlite:///{db_path}")
-    result = subprocess.run(
-        ["alembic", command, target],
-        cwd=REPO_ROOT,
-        env=env,
-        capture_output=True,
-        text=True,
+def _seed(conn):
+    conn.execute(
+        text(
+            "INSERT INTO users (id, email, name, password_hash, role, is_active) "
+            "VALUES (1, 'a@t.com', 'A', 'x', 'member', 1)"
+        )
     )
-    assert result.returncode == 0, result.stderr
+    conn.execute(
+        text(
+            "INSERT INTO lists (id, name, owner_id, is_archived) VALUES "
+            "(1, 'L1', 1, 0), (2, 'L2', 1, 0)"
+        )
+    )
+    conn.execute(
+        text(
+            "INSERT INTO occasions (id, owner_id, name, description, is_archived) "
+            "VALUES (1, 1, 'Christmas', 'gifts', 0), (2, 1, 'Birthdays', NULL, 1)"
+        )
+    )
+    conn.execute(
+        text(
+            "INSERT INTO occasion_items (id, occasion_id, list_id) VALUES "
+            "(1, 1, 1), (2, 1, 2), (3, 2, 2)"
+        )
+    )
+
+
+@pytest.fixture(scope="module")
+def _template(tmp_path_factory):
+    """The schema at the previous head, seeded — built once for the module."""
+    return build_template(tmp_path_factory, PREVIOUS_HEAD, _seed)
 
 
 @pytest.fixture
-def db_path(tmp_path):
-    return tmp_path / "migration_test.db"
+def db_path(tmp_path, _template):
+    """A private copy of the template, for this test to migrate as it likes."""
+    path = tmp_path / "migration_test.db"
+    shutil.copy(_template, path)
+    return path
 
 
 @pytest.fixture
 def seeded(db_path):
-    _alembic("upgrade", PREVIOUS_HEAD, db_path)
     engine = create_engine(f"sqlite:///{db_path}")
-
-    with engine.begin() as conn:
-        conn.execute(
-            text(
-                "INSERT INTO users (id, email, name, password_hash, role, is_active) "
-                "VALUES (1, 'a@t.com', 'A', 'x', 'member', 1)"
-            )
-        )
-        conn.execute(
-            text(
-                "INSERT INTO lists (id, name, owner_id, is_archived) VALUES "
-                "(1, 'L1', 1, 0), (2, 'L2', 1, 0)"
-            )
-        )
-        conn.execute(
-            text(
-                "INSERT INTO occasions (id, owner_id, name, description, is_archived) "
-                "VALUES (1, 1, 'Christmas', 'gifts', 0), (2, 1, 'Birthdays', NULL, 1)"
-            )
-        )
-        conn.execute(
-            text(
-                "INSERT INTO occasion_items (id, occasion_id, list_id) VALUES "
-                "(1, 1, 1), (2, 1, 2), (3, 2, 2)"
-            )
-        )
-
     yield engine
     engine.dispose()
 
