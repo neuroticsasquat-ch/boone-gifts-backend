@@ -131,7 +131,6 @@ Creates five `@example.com` users with the list-visibility states a single accou
 - `GET /connections/requests` -- List pending incoming requests
 - `POST /connections/{id}/accept` -- Accept a request
 - `DELETE /connections/{id}` -- Remove connection, reject, or cancel request
-- `GET /connections/{id}/lists` -- Lists that connection has shared with you
 
 ### Lists (`/lists`)
 - `POST /lists` -- Create a gift list (accepts `family_ids` in full mode)

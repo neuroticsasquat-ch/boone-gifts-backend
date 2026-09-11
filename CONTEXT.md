@@ -55,8 +55,11 @@ vacated by the rename precisely so the family concept could claim it.
    `ListShare` row, OR the list is shared to an occasion of a family the viewer belongs to. Claims
    route through it, and so do folder membership and folder *reads* — a `folder_items` row that
    outlived the share behind it is not a grant. A connection alone grants nothing; bare family
-   co-membership grants nothing. It does **not** consult `occasions.is_archived` — archiving blocks
-   new shares and nothing else, so it never withdraws visibility.
+   co-membership grants nothing. It follows that the shared scope is the only per-person read there
+   is — `GET /connections/{id}/lists` was retired in v0.6.0 because it answered a narrower question
+   (direct shares only) than the one predicate, and there is no server-side index of one person's
+   lists to replace it. It does **not** consult `occasions.is_archived` — archiving blocks new
+   shares and nothing else, so it never withdraws visibility.
 
 3. **An occasion share row implies the owner is still a member of the occasion's family.** Read
    queries rely on this and do not re-check it, so every membership departure deletes the affected

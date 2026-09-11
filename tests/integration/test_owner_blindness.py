@@ -151,23 +151,6 @@ def test_a_viewer_sees_the_claim_on_the_gift(
     assert claimed["amount_paid"] == "31.50"
 
 
-def test_a_connections_lists_carry_the_count(
-    client, admin_headers, connection, owned_list_with_a_claim
-):
-    response = client.get(
-        f"/connections/{connection.id}/lists", headers=admin_headers
-    )
-    assert response.status_code == 200
-    row = next(
-        row for row in response.json() if row["id"] == owned_list_with_a_claim.id
-    )
-    assert row["claimed_count"] == 1
-    # The admin's one claim here is already bought, so nothing is left to buy —
-    # but the field is required on the viewer schema, so its presence is proof
-    # the count was computed for this endpoint rather than defaulted.
-    assert row["my_unpurchased_claim_count"] == 0
-
-
 def test_a_folders_rows_keep_the_count_for_the_lists_it_does_not_own(
     client, db, admin_user, admin_headers, owned_list_with_a_claim
 ):
