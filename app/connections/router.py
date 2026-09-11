@@ -62,16 +62,3 @@ def delete_connection(connection_id: int, user: CurrentUser, db: DbSession) -> N
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     except ForbiddenError:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
-
-
-# No `response_model`: the service picks the schema per row, and declaring one
-# here would re-widen owned rows or narrow viewer rows. See
-# `app/lists/service.py:to_summaries`.
-@router.get("/{connection_id}/lists")
-def connection_lists(connection_id: int, user: CurrentUser, db: DbSession):
-    try:
-        return connection_service.get_connection_lists(db, connection_id, user.id)
-    except NotFoundError:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
-    except ForbiddenError:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)

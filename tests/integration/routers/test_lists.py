@@ -3,7 +3,6 @@ from types import SimpleNamespace
 import pytest
 
 from app.dependencies import create_access_token
-from app.models.connection import Connection
 from app.models.family import Family
 from app.models.family_member import FamilyMember
 from app.models.folder import Folder
@@ -1034,19 +1033,15 @@ def test_unfiltered_lists_includes_an_occasion_only_shared_list(client, family_w
 def test_the_same_list_carries_the_same_routes_on_every_surface(
     client, family_world, db
 ):
-    """`/lists`, a folder page, an occasion page and a connection's lists all
-    return list rows, and they must agree about how a list arrived — NEU-1286's
-    "same attribution on /lists and on a folder page" is exactly this."""
+    """`/lists`, a folder page and an occasion page all return list rows, and
+    they must agree about how a list arrived — NEU-1286's "same attribution on
+    /lists and on a folder page" is exactly this."""
     w = family_world
-    db.add(Connection(requester_id=w.u.id, addressee_id=w.p.id, status="accepted"))
     folder = Folder(name="Christmas 2026", owner_id=w.u.id)
     db.add(folder)
     db.flush()
     db.add(FolderItem(folder_id=folder.id, list_id=w.l_p.id))
     db.flush()
-    connection = db.query(Connection).filter(
-        Connection.requester_id == w.u.id
-    ).one()
 
     def routes_from(payload):
         return next(row for row in payload if row["id"] == w.l_p.id)["shared_via"]
@@ -1059,14 +1054,10 @@ def test_the_same_list_carries_the_same_routes_on_every_surface(
     on_occasion = routes_from(
         client.get(f"/occasions/{w.o1.id}/lists", headers=headers).json()
     )
-    on_connection = routes_from(
-        client.get(f"/connections/{connection.id}/lists", headers=headers).json()
-    )
 
     assert len(on_lists) == 3
     assert on_folder == on_lists
     assert on_occasion == on_lists
-    assert on_connection == on_lists
 
 
 def test_a_folder_drops_a_list_whose_share_was_revoked(client, family_world, db):
