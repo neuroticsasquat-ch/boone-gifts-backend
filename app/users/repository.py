@@ -1,14 +1,17 @@
-from sqlalchemy import delete, or_, select, update
+from sqlalchemy import delete, or_, select
 from sqlalchemy.orm import Session
 
-from app.models.collection import Collection
-from app.models.collection_item import CollectionItem
+from app.budgets import repository as budgets_repo
+from app.claims import repository as claims_repo
+from app.models.folder import Folder
+from app.models.folder_item import FolderItem
 from app.models.connection import Connection
 from app.models.gift import Gift
 from app.models.gift_list import GiftList
 from app.models.invite import Invite
 from app.models.list_share import ListShare
 from app.models.user import User
+from app.occasions import repository as occasions_repo
 
 
 def get_all_users(db: Session) -> list[User]:
@@ -56,14 +59,22 @@ def delete_user(db: Session, user: User) -> None:
 def cascade_delete_user(db: Session, user: User) -> None:
     uid = user.id
 
-    # Unclaim gifts this user claimed on others' lists
-    db.execute(
-        update(Gift)
-        .where(Gift.claimed_by_id == uid)
-        .values(claimed_by_id=None, claimed_at=None, purchased_at=None)
-    )
+    # Release every claim this user holds on other people's lists. The rows go,
+    # taking the purchase state and the amount paid with them.
+    claims_repo.delete_claims_by_user(db, uid)
 
-    # Remove shares granted TO this user (and collection items referencing those shares)
+    # Every budget this user set, on their own folders and on other people's
+    # occasions alike — budgets are per-user, so nobody else's are touched.
+    # Before the folders below, which `budgets.folder_id` points at; a folder
+    # budget is always its owner's, so this clears every one of them.
+    budgets_repo.delete_budgets_by_user(db, uid)
+
+    # Every archive prompt this user has snoozed, on any family's occasion. A
+    # prompt is per account, so nobody else's is touched — and the foreign key
+    # into `users` would refuse the delete below if one were left standing.
+    occasions_repo.delete_prompts_by_user(db, uid)
+
+    # Remove shares granted TO this user (and folder items referencing those shares)
     shared_list_ids = list(
         db.execute(
             select(ListShare.list_id).where(ListShare.user_id == uid)
@@ -71,8 +82,8 @@ def cascade_delete_user(db: Session, user: User) -> None:
     )
     if shared_list_ids:
         db.execute(
-            delete(CollectionItem).where(
-                CollectionItem.list_id.in_(shared_list_ids)
+            delete(FolderItem).where(
+                FolderItem.list_id.in_(shared_list_ids)
             )
         )
     db.execute(delete(ListShare).where(ListShare.user_id == uid))
@@ -84,38 +95,35 @@ def cascade_delete_user(db: Session, user: User) -> None:
         ).scalars().all()
     )
     if owned_list_ids:
-        # Unclaim gifts on this user's lists
-        db.execute(
-            update(Gift)
-            .where(Gift.list_id.in_(owned_list_ids), Gift.claimed_by_id.isnot(None))
-            .values(claimed_by_id=None, claimed_at=None, purchased_at=None)
-        )
+        # Other people's claims on this user's gifts. Claims hold a foreign key
+        # into `gifts`, so they go before the gifts do.
+        claims_repo.delete_claims_on_lists(db, owned_list_ids)
         db.execute(
             delete(ListShare).where(ListShare.list_id.in_(owned_list_ids))
         )
-        # Remove collection items referencing this user's lists
+        # Remove folder items referencing this user's lists
         db.execute(
-            delete(CollectionItem).where(
-                CollectionItem.list_id.in_(owned_list_ids)
+            delete(FolderItem).where(
+                FolderItem.list_id.in_(owned_list_ids)
             )
         )
         # Delete gifts then lists
         db.execute(delete(Gift).where(Gift.list_id.in_(owned_list_ids)))
         db.execute(delete(GiftList).where(GiftList.owner_id == uid))
 
-    # Delete collections (items cascade via relationship)
-    owned_collection_ids = list(
+    # Delete folders (items cascade via relationship)
+    owned_folder_ids = list(
         db.execute(
-            select(Collection.id).where(Collection.owner_id == uid)
+            select(Folder.id).where(Folder.owner_id == uid)
         ).scalars().all()
     )
-    if owned_collection_ids:
+    if owned_folder_ids:
         db.execute(
-            delete(CollectionItem).where(
-                CollectionItem.collection_id.in_(owned_collection_ids)
+            delete(FolderItem).where(
+                FolderItem.folder_id.in_(owned_folder_ids)
             )
         )
-        db.execute(delete(Collection).where(Collection.owner_id == uid))
+        db.execute(delete(Folder).where(Folder.owner_id == uid))
 
     # Delete connections (both directions)
     db.execute(

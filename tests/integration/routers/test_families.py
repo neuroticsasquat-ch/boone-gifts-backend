@@ -1,10 +1,13 @@
+from datetime import datetime, timezone
+
 import pytest
 from fastapi import status
 from sqlalchemy import select
 
 from app.dependencies import create_access_token
-from app.models.collection import Collection
-from app.models.collection_item import CollectionItem
+from app.models.claim import Claim
+from app.models.folder import Folder
+from app.models.folder_item import FolderItem
 from app.models.family import Family
 from app.models.family_member import FamilyMember
 from app.models.gift import Gift
@@ -78,25 +81,30 @@ def third_user(db):
 
 
 def _seed_cross_artifacts(db, user_a, user_b):
-    """Reciprocal claims + collection items between two users.
+    """Reciprocal claims + folder items between two users.
     Returns (gift_on_a_claimed_by_b, gift_on_b_claimed_by_a, item_a, item_b)."""
     list_a = GiftList(name=f"{user_a.id}'s List", owner_id=user_a.id)
     list_b = GiftList(name=f"{user_b.id}'s List", owner_id=user_b.id)
     db.add_all([list_a, list_b])
     db.flush()
 
-    gift_a = Gift(list_id=list_a.id, name="On A's list", claimed_by_id=user_b.id)
-    gift_b = Gift(list_id=list_b.id, name="On B's list", claimed_by_id=user_a.id)
+    gift_a = Gift(list_id=list_a.id, name="On A's list")
+    gift_b = Gift(list_id=list_b.id, name="On B's list")
     db.add_all([gift_a, gift_b])
     db.flush()
+    db.add_all([
+        Claim(gift_id=gift_a.id, user_id=user_b.id, claimed_at=datetime.now(timezone.utc)),
+        Claim(gift_id=gift_b.id, user_id=user_a.id, claimed_at=datetime.now(timezone.utc)),
+    ])
+    db.flush()
 
-    coll_a = Collection(name=f"{user_a.id}'s Collection", owner_id=user_a.id)
-    coll_b = Collection(name=f"{user_b.id}'s Collection", owner_id=user_b.id)
+    coll_a = Folder(name=f"{user_a.id}'s Folder", owner_id=user_a.id)
+    coll_b = Folder(name=f"{user_b.id}'s Folder", owner_id=user_b.id)
     db.add_all([coll_a, coll_b])
     db.flush()
 
-    item_a = CollectionItem(collection_id=coll_a.id, list_id=list_b.id)
-    item_b = CollectionItem(collection_id=coll_b.id, list_id=list_a.id)
+    item_a = FolderItem(folder_id=coll_a.id, list_id=list_b.id)
+    item_b = FolderItem(folder_id=coll_b.id, list_id=list_a.id)
     db.add_all([item_a, item_b])
     db.flush()
 
@@ -105,14 +113,14 @@ def _seed_cross_artifacts(db, user_a, user_b):
 
 def _is_claimed(db, gift):
     row = db.execute(
-        select(Gift.claimed_by_id).where(Gift.id == gift.id)
+        select(Claim.id).where(Claim.gift_id == gift.id)
     ).scalar_one_or_none()
     return row is not None
 
 
 def _item_exists(db, item_id):
     return db.execute(
-        select(CollectionItem).where(CollectionItem.id == item_id)
+        select(FolderItem).where(FolderItem.id == item_id)
     ).scalar_one_or_none() is not None
 
 
@@ -535,7 +543,7 @@ def test_get_member_user_ids_empty_for_unknown_family(db):
 # ---------------------------------------------------------------------------
 
 
-def test_leave_cleans_claims_and_collection_items_both_ways(
+def test_leave_cleans_claims_and_folder_items_both_ways(
     db, client, member_user, second_user, second_headers, family_with_second_member
 ):
     fam = family_with_second_member  # member_user (organizer) + second_user (member), no other tie
@@ -788,7 +796,7 @@ def test_bidirectional_cleanup_depth_explicit(
 
     gift_a, gift_b, item_a, item_b = _seed_cross_artifacts(db, member_user, second_user)
     # gift_a is on A's list, claimed by B; gift_b is on B's list, claimed by A
-    # item_a is in A's collection pointing at B's list; item_b is in B's collection pointing at A's list
+    # item_a is in A's folder pointing at B's list; item_b is in B's folder pointing at A's list
 
     resp = client.delete(
         f"/families/{fam.id}/members/{second_user.id}", headers=second_headers
@@ -799,10 +807,10 @@ def test_bidirectional_cleanup_depth_explicit(
     assert not _is_claimed(db, gift_a), "A's gift should be unclaimed after B leaves"
     # Direction 2: B's gift claimed by A → unclaimed
     assert not _is_claimed(db, gift_b), "B's gift should be unclaimed after B leaves"
-    # Direction 3: A's collection item → B's list → deleted
-    assert not _item_exists(db, item_a.id), "A's collection item pointing to B's list should be deleted"
-    # Direction 4: B's collection item → A's list → deleted
-    assert not _item_exists(db, item_b.id), "B's collection item pointing to A's list should be deleted"
+    # Direction 3: A's folder item → B's list → deleted
+    assert not _item_exists(db, item_a.id), "A's folder item pointing to B's list should be deleted"
+    # Direction 4: B's folder item → A's list → deleted
+    assert not _item_exists(db, item_b.id), "B's folder item pointing to A's list should be deleted"
 
     # List share must be untouched
     remaining_share = db.execute(
@@ -817,7 +825,7 @@ def test_third_party_not_affected_when_still_has_access(
     db, client, member_user, member_headers, second_user, third_user
 ):
     """Scenario 4 — User D (third_user) still shares a different family with A.
-    After B leaves A's family, D's claim on A's gift and D's collection item → UNTOUCHED."""
+    After B leaves A's family, D's claim on A's gift and D's folder item → UNTOUCHED."""
     # F_ab: A+B share (no other tie between A and B)
     f_ab = Family(name="AB Family", created_by_id=member_user.id)
     db.add(f_ab)
@@ -841,17 +849,25 @@ def test_third_party_not_affected_when_still_has_access(
     # Seed cross-artifacts between A and B (will be cleaned)
     gift_ab, gift_ba, item_ab, item_ba = _seed_cross_artifacts(db, member_user, second_user)
 
-    # D claims A's gift and has a collection item pointing at A's list
+    # D claims A's gift and has a folder item pointing at A's list
     list_a = GiftList(name="A's Extra List", owner_id=member_user.id)
     db.add(list_a)
     db.flush()
-    gift_a_for_d = Gift(list_id=list_a.id, name="A gift for D to claim", claimed_by_id=third_user.id)
+    gift_a_for_d = Gift(list_id=list_a.id, name="A gift for D to claim")
     db.add(gift_a_for_d)
     db.flush()
-    coll_d = Collection(name="D's Collection", owner_id=third_user.id)
+    db.add(
+        Claim(
+            gift_id=gift_a_for_d.id,
+            user_id=third_user.id,
+            claimed_at=datetime.now(timezone.utc),
+        )
+    )
+    db.flush()
+    coll_d = Folder(name="D's Folder", owner_id=third_user.id)
     db.add(coll_d)
     db.flush()
-    item_d_on_a_list = CollectionItem(collection_id=coll_d.id, list_id=list_a.id)
+    item_d_on_a_list = FolderItem(folder_id=coll_d.id, list_id=list_a.id)
     db.add(item_d_on_a_list)
     db.flush()
 
@@ -869,7 +885,7 @@ def test_third_party_not_affected_when_still_has_access(
 
     # D's artifacts: UNTOUCHED (D still has access via F_ad)
     assert _is_claimed(db, gift_a_for_d), "D's claim on A's gift must not be removed"
-    assert _item_exists(db, item_d_on_a_list.id), "D's collection item must not be removed"
+    assert _item_exists(db, item_d_on_a_list.id), "D's folder item must not be removed"
 
 
 def test_delete_family_overlap_with_connection_preserves_connected_pair(

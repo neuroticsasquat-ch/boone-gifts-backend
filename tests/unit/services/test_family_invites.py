@@ -86,7 +86,7 @@ def test_create_invite_new_user(
     actor = _make_user(id=10, name="Alice")
 
     result = service.create_invite(
-        db, family_id=1, actor=actor, email="new@test.com", role="member", simple_mode=False
+        db, family_id=1, actor=actor, email="new@test.com", role="member"
     )
 
     assert result is invite
@@ -114,7 +114,7 @@ def test_create_invite_existing_user_not_member(
     actor = _make_user(id=10, name="Alice")
 
     service.create_invite(
-        db, family_id=1, actor=actor, email="bob@test.com", role="member", simple_mode=False
+        db, family_id=1, actor=actor, email="bob@test.com", role="member"
     )
 
     mock_create.assert_called_once()
@@ -139,7 +139,7 @@ def test_create_invite_already_member(
 
     with pytest.raises(ConflictError):
         service.create_invite(
-            db, family_id=1, actor=actor, email="bob@test.com", role="member", simple_mode=False
+            db, family_id=1, actor=actor, email="bob@test.com", role="member"
         )
 
     mock_create.assert_not_called()
@@ -160,7 +160,7 @@ def test_create_invite_duplicate_pending(
 
     with pytest.raises(ConflictError):
         service.create_invite(
-            db, family_id=1, actor=actor, email="new@test.com", role="member", simple_mode=False
+            db, family_id=1, actor=actor, email="new@test.com", role="member"
         )
 
     mock_create.assert_not_called()
@@ -184,7 +184,7 @@ def test_create_invite_replaces_expired(
     actor = _make_user(id=10)
 
     service.create_invite(
-        db, family_id=1, actor=actor, email="new@test.com", role="member", simple_mode=False
+        db, family_id=1, actor=actor, email="new@test.com", role="member"
     )
 
     mock_delete.assert_called_once_with(db, expired)
@@ -201,7 +201,7 @@ def test_create_invite_not_organizer(mock_get_family, mock_get_member, mock_find
 
     with pytest.raises(ForbiddenError, match="organizer"):
         service.create_invite(
-            db, family_id=1, actor=actor, email="x@test.com", role="member", simple_mode=False
+            db, family_id=1, actor=actor, email="x@test.com", role="member"
         )
 
     mock_find_user.assert_not_called()
@@ -212,7 +212,7 @@ def test_create_invite_family_not_found(mock_get_family, db):
     actor = _make_user(id=10)
     with pytest.raises(NotFoundError):
         service.create_invite(
-            db, family_id=99, actor=actor, email="x@test.com", role="member", simple_mode=False
+            db, family_id=99, actor=actor, email="x@test.com", role="member"
         )
 
 
@@ -232,7 +232,7 @@ def test_create_invite_email_failure_swallowed(
     actor = _make_user(id=10)
 
     result = service.create_invite(
-        db, family_id=1, actor=actor, email="new@test.com", role="member", simple_mode=False
+        db, family_id=1, actor=actor, email="new@test.com", role="member"
     )
 
     assert result is invite  # email failure did not propagate

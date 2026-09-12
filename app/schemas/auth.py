@@ -39,7 +39,6 @@ class ChangePasswordRequest(BaseModel):
 
 class UpdateProfileRequest(BaseModel):
     name: str | None = None
-    simple_mode: bool | None = None
 
 
 class GenericMessageResponse(BaseModel):

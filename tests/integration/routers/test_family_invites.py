@@ -70,7 +70,6 @@ def _seed_invite(
         family_id=family_id,
         email=email,
         role=role,
-        simple_mode=False,
         token=token,
         invited_by_id=invited_by_id,
         expires_at=datetime.now(timezone.utc) + timedelta(days=expires_in_days),
@@ -353,20 +352,6 @@ def test_accept_invite_creates_membership(client, outsider_headers, family, memb
 
     invite = db.query(FamilyInvite).filter_by(token="acc-1").one()
     assert invite.accepted_at is not None
-
-
-def test_accept_invite_does_not_change_simple_mode(client, outsider_headers, family, member_user, db, outsider):
-    # User prefers simple mode (True); the invite carries simple_mode=False.
-    # Accepting must NOT overwrite the user's existing preference.
-    outsider.simple_mode = True
-    db.flush()
-    _seed_invite(
-        db, family_id=family.id, invited_by_id=member_user.id,
-        email=outsider.email, token="acc-sm",  # _seed_invite hardcodes simple_mode=False
-    )
-    assert client.post("/families/invites/acc-sm/accept", headers=outsider_headers).status_code == 200
-    db.refresh(outsider)
-    assert outsider.simple_mode is True
 
 
 def test_accept_invite_wrong_recipient(client, outsider_headers, family, member_user, db):

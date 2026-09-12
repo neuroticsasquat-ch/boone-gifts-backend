@@ -1,6 +1,8 @@
 # Boone Gifts Backend
 
-REST API for Boone Gifts, a gift list and wishlist platform. Users create gift lists, share them with connections, and claim gifts from shared lists.
+REST API for Boone Gifts, a gift list and wishlist platform. Users create gift lists, share them with connections and with families they belong to, and claim gifts from lists shared with them — without the list's owner seeing who claimed what.
+
+For architecture, conventions, and the visibility model, see [`AGENTS.md`](AGENTS.md).
 
 ## Tech Stack
 
@@ -9,19 +11,20 @@ REST API for Boone Gifts, a gift list and wishlist platform. Users create gift l
 - **SQLite** (file-based database)
 - **Pydantic v2** (validation & serialization)
 - **PyJWT** + **bcrypt** (auth)
-- **Docker Compose** + **Traefik** (reverse proxy)
+- **Docker Compose** (api, web and a Mailpit mail catcher)
 - **uv** (package management)
 - **go-task** (task runner)
 
 ## Prerequisites
 
-- Docker Desktop
+- Docker
 - [go-task](https://taskfile.dev/)
-- A running Traefik instance on the same `proxy` network
+
+The compose file lives one directory up and starts the whole stack — this API, the frontend, and Mailpit — so the backend does not run its own compose project.
 
 ## Setup
 
-1. Clone the repo and copy the environment template:
+1. Copy the environment template:
 
    ```
    cp .env.example .env
@@ -35,7 +38,7 @@ REST API for Boone Gifts, a gift list and wishlist platform. Users create gift l
 
    The app refuses to start with an empty or placeholder secret. The default SQLite paths work for local development.
 
-3. Build and start the container:
+3. Start the stack (from the workspace root, or with `task -d ..` from here):
 
    ```
    task up
@@ -53,18 +56,30 @@ REST API for Boone Gifts, a gift list and wishlist platform. Users create gift l
    task create-admin
    ```
 
-The API is available at `https://boone-gifts-api.localhost` (via Traefik).
+The API is available at `http://localhost:8000` (frontend on `http://localhost:5173`, Mailpit on `http://localhost:8025`). On a remote workspace, use the api and web subdomains it publishes instead, and make sure the web origin is in `APP_CORS_ORIGINS`.
 
 ## Development
 
+Stack lifecycle lives in the workspace root Taskfile:
+
 ```
-task up              # Build image and start container (runs uvicorn)
-task logs            # Follow container logs
-task restart         # Restart the container
-task test            # Run test suite
-task test-file -- <path>  # Run a specific test file
-task migrate         # Apply database migrations
+task up                  # Start db, mail, api, web
+task down                # Stop the stack
+task ps                  # Service status
+task logs -- api         # Follow one service's logs
+task restart -- api      # Restart one service
+task rebuild -- api      # Rebuild and recreate one service
+task shell -- api        # Shell into a service
+```
+
+Repo tasks run inside the api container — from this directory, or prefixed `be:` from the root:
+
+```
+task test                        # Run test suite
+task test-file -- <path>         # Run a specific test file or test function
+task migrate                     # Apply database migrations
 task migration -- 'description'  # Generate a new migration
+task create-admin                # Create an admin user
 ```
 
 ### Dependency Management
@@ -75,18 +90,35 @@ task remove -- <package>   # Remove a package
 task lock                  # Regenerate lock file
 ```
 
+### Dev fixtures
+
+```
+python -m scripts.seed_dev           # inside the api container
+python -m scripts.seed_dev --reset   # re-seed
+python -m scripts.seed_dev --purge   # remove
+```
+
+Creates five `@example.com` users with the list-visibility states a single account can't produce on its own: a directly shared list, a list reaching you only through a family, a list kept for someone with no account, an archived list, a claimed gift, a pending connection request, and a shared account with two people. Purge only deletes rows reachable from those users.
+
 ## API Overview
 
 ### Auth (`/auth`)
 - `POST /auth/login` -- Login with email and password
-- `POST /auth/register` -- Register with an invite token
-- `POST /auth/refresh` -- Refresh an access token
+- `POST /auth/register` -- Register with an admin or family invite token
+- `GET /auth/invite-info` -- Look up an invite token before registering
+- `POST /auth/refresh` -- Refresh an access token (rotates the refresh cookie)
+- `POST /auth/logout` -- Clear the refresh cookie
+- `POST /auth/forgot-password` -- Request a password reset email
+- `POST /auth/reset-password` -- Consume a reset token and set a new password
+- `POST /auth/change-password` -- Change password while logged in
+- `PUT /auth/profile` -- Update display name
 
-### Users (`/users`) -- admin only
-- `GET /users` -- List all users
-- `GET /users/{id}` -- Get user details
-- `PUT /users/{id}` -- Update a user
-- `DELETE /users/{id}` -- Delete a user
+### Users (`/users`)
+- `GET /users/search?q=` -- Search users by name or email (any signed-in user; used when adding a connection)
+- `GET /users` -- List all users *(admin only)*
+- `GET /users/{id}` -- Get user details *(admin only)*
+- `PUT /users/{id}` -- Update a user *(admin only)*
+- `DELETE /users/{id}` -- Delete a user *(admin only)*
 
 ### Invites (`/invites`) -- admin only
 - `POST /invites` -- Create an invite
@@ -101,9 +133,12 @@ task lock                  # Regenerate lock file
 - `DELETE /connections/{id}` -- Remove connection, reject, or cancel request
 
 ### Lists (`/lists`)
-- `POST /lists` -- Create a gift list
-- `GET /lists` -- List your owned and shared lists
-- `GET /lists/{id}` -- Get list with gifts
+- `POST /lists` -- Create a gift list (accepts `family_ids` in full mode)
+- `GET /lists` -- Your lists; `?filter=owned|shared`, `?archived=true`. `shared` is the one
+  scope for lists others made visible to you, direct or via a family; each row carries
+  `shared_via`
+- `GET /lists/unseen-count` -- Count of newly shared lists you haven't opened
+- `GET /lists/{id}` -- Get list with gifts (owner view or viewer view)
 - `PUT /lists/{id}` -- Update a list
 - `DELETE /lists/{id}` -- Delete a list
 
@@ -111,34 +146,75 @@ task lock                  # Regenerate lock file
 - `POST /lists/{id}/gifts` -- Add a gift
 - `PUT /lists/{id}/gifts/{gift_id}` -- Update a gift
 - `DELETE /lists/{id}/gifts/{gift_id}` -- Delete a gift
-- `POST /lists/{id}/gifts/{gift_id}/claim` -- Claim a gift
-- `DELETE /lists/{id}/gifts/{gift_id}/claim` -- Unclaim a gift
+- `POST` / `DELETE /lists/{id}/gifts/{gift_id}/claim` -- Claim or unclaim
+- `POST` / `DELETE /lists/{id}/gifts/{gift_id}/purchase` -- Mark purchased or not
 
 ### Shares (`/lists/{list_id}/shares`)
-- `POST /lists/{id}/shares` -- Share a list (requires connection)
+- `POST /lists/{id}/shares` -- Share a list with a connection
 - `GET /lists/{id}/shares` -- List shares
+- `GET /lists/{id}/shares/users` -- Connections available to share with
 - `DELETE /lists/{id}/shares/{user_id}` -- Revoke a share
 
-### Collections (`/collections`)
-- `POST /collections` -- Create a collection
-- `GET /collections` -- List your collections
-- `GET /collections/{id}` -- Get collection with its lists
-- `PUT /collections/{id}` -- Update a collection
-- `DELETE /collections/{id}` -- Delete a collection
-- `POST /collections/{id}/items` -- Add a list to a collection
-- `DELETE /collections/{id}/items/{list_id}` -- Remove a list from a collection
+### Per-family list sharing (`/lists/{list_id}/families`)
+- `GET /lists/{id}/families` -- Every family the owner belongs to, each with a `shared` flag
+- `PUT /lists/{id}/families/{family_id}` -- Grant the family access
+- `DELETE /lists/{id}/families/{family_id}?claims=release|keep` -- Revoke; returns `409` when a member losing access holds a claim and no choice was given
+
+### Families (`/families`)
+- `POST /families` -- Create a family (caller becomes organizer)
+- `GET /families` -- Families you belong to
+- `GET /families/{id}` -- Family detail with members
+- `PUT /families/{id}` -- Rename (organizer only)
+- `DELETE /families/{id}` -- Delete with cascade cleanup (organizer only)
+- `DELETE /families/{id}/members/{user_id}` -- Leave, or remove a member
+- `PUT /families/{id}/members/{user_id}/role` -- Promote or demote
+
+### Family invites
+- `POST /families/{id}/invites` -- Invite by email (organizer only)
+- `GET /families/{id}/invites` -- Pending outgoing invites (organizer only)
+- `DELETE /families/{id}/invites/{invite_id}` -- Revoke an invite
+- `GET /families/invites` -- Your incoming invites
+- `POST /families/invites/{token}/accept` -- Join the family
+- `POST /families/invites/{token}/decline` -- Decline
+
+### Folders (`/folders`)
+- `POST /folders` -- Create a folder
+- `GET /folders` -- List your folders
+- `GET /folders/for-list/{list_id}` -- Folders containing a given list
+- `GET /folders/{id}` -- Get folder with its lists
+- `PUT /folders/{id}` -- Update a folder
+- `DELETE /folders/{id}` -- Delete a folder
+- `POST /folders/{id}/items` -- Add a list to a folder
+- `DELETE /folders/{id}/items/{list_id}` -- Remove a list from a folder
+- `GET /folders/{id}/shopping` -- Everything you've claimed across the folder
+
+### Occasions (`/families/{family_id}/occasions`, `/occasions`)
+- `GET /occasions` -- Every occasion across every family you belong to, with your own counts
+- `GET /families/{family_id}/occasions` -- The family's occasions; any member
+- `POST /families/{family_id}/occasions` -- Create one; any member
+- `GET /occasions/{id}` -- Get an occasion; any member of its family
+- `PUT /occasions/{id}` -- Rename or archive; organizers only
+- `GET /occasions/{id}/lists` -- The lists shared to it that you can see
+- `GET /occasions/{id}/shopping` -- Everything *you* have claimed under it
 
 ### Meta (`/meta`)
 - `GET /meta` -- Fetch URL metadata (title, description, price, image)
 
+### Health
+- `GET /health` -- Runs `SELECT 1`; returns 503 when the database is unreachable
+
 ## Environment Variables
+
+See [`.env.example`](.env.example) for the full annotated set. The ones you must think about:
 
 | Variable | Description |
 |---|---|
-| `APP_DATABASE_URL` | SQLite connection string (e.g., `sqlite:///./data/boone_gifts.db`) |
+| `APP_JWT_SECRET` | Required — the app refuses to start without a real value |
+| `APP_DATABASE_URL` | SQLite connection string |
 | `APP_TEST_DATABASE_URL` | SQLite connection string for tests |
-| `APP_JWT_SECRET` | Secret key for JWT signing |
-| `APP_CORS_ORIGINS` | Allowed CORS origins (JSON array) |
+| `APP_CORS_ORIGINS` | Allowed browser origins, JSON array — the *web* origin, not the API's |
+| `APP_FRONTEND_URL` | Base URL used in email links |
+| `APP_EMAIL_PROVIDER` | `log` prints to stdout; `smtp` delivers (Mailpit in dev) |
 
 ## Testing
 
@@ -146,4 +222,4 @@ task lock                  # Regenerate lock file
 task test
 ```
 
-145 tests run against a separate test database. Each test is wrapped in a transaction that rolls back, leaving no persistent data.
+~659 tests run against a separate test database. Each is wrapped in a transaction that rolls back, leaving no persistent data.

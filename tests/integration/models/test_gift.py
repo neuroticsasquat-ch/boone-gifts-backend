@@ -1,5 +1,7 @@
+from datetime import datetime, timezone
 from decimal import Decimal
 
+from app.models.claim import Claim
 from app.models.gift import Gift
 from app.models.gift_list import GiftList
 from app.models.user import User
@@ -31,8 +33,7 @@ def test_create_gift(db):
     assert gift.description == "A good book"
     assert gift.url == "https://example.com/book"
     assert gift.price == Decimal("19.99")
-    assert gift.claimed_by_id is None
-    assert gift.claimed_at is None
+    assert gift.claim is None
     assert gift.created_at is not None
     assert gift.updated_at is not None
 
@@ -58,7 +59,7 @@ def test_create_gift_minimal(db):
 
 
 def test_claim_gift(db):
-    """Test claiming a gift by setting claimed_by_id."""
+    """A claim is its own row hanging off the gift, never a column on it."""
     owner = User(email="owner3@test.com", name="Owner", password_hash="h")
     claimer = User(email="claimer@test.com", name="Claimer", password_hash="h")
     db.add_all([owner, claimer])
@@ -72,9 +73,15 @@ def test_claim_gift(db):
     db.add(gift)
     db.flush()
 
-    assert gift.claimed_by_id is None
+    assert gift.claim is None
 
-    gift.claimed_by_id = claimer.id
+    db.add(
+        Claim(
+            gift_id=gift.id, user_id=claimer.id, claimed_at=datetime.now(timezone.utc)
+        )
+    )
     db.flush()
+    db.refresh(gift)
 
-    assert gift.claimed_by_id == claimer.id
+    assert gift.claim is not None
+    assert gift.claim.user_id == claimer.id

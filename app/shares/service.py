@@ -42,6 +42,7 @@ def create_share(
             sharer_name=sharer.name,
             list_name=gift_list.name,
             list_url=list_url,
+            recipient_name=gift_list.recipient_name,
         )
         send_email(to=recipient.email, subject=subject, html=html, text=text)
 
@@ -63,6 +64,6 @@ def delete_share(db: Session, list_id: int, user_id: int) -> None:
 
     repo.delete_share(db, share)
 
-    items = repo.find_collection_items_for_unshare(db, list_id, user_id)
+    items = repo.find_folder_items_for_unshare(db, list_id, user_id)
     for item in items:
-        repo.delete_collection_item(db, item)
+        repo.delete_folder_item(db, item)

@@ -1,21 +1,23 @@
 from sqlalchemy.orm import Session
 
 from app.access import users_share_access
-from app.connections.repository import (
-    delete_collection_items_between,
-    unclaim_gifts_between,
-)
+from app.budgets import repository as budgets_repo
+from app.claims.repository import unclaim_gifts_between
+from app.connections.repository import delete_folder_items_between
 from app.families import repository as repo
+from app.list_occasions import repository as list_occasion_repo
+from app.models.user import User
+from app.occasions import repository as occasions_repo
 from app.services.exceptions import ConflictError, ForbiddenError, NotFoundError
 
 
 def _cleanup_if_dropped(db: Session, a_id: int, b_id: int) -> None:
     """If two users no longer share any access path, unclaim gifts both
-    directions and drop collection items referencing each other's lists.
+    directions and drop folder items referencing each other's lists.
     Shares are intentionally left untouched (see design §2)."""
     if not users_share_access(db, a_id, b_id):
         unclaim_gifts_between(db, a_id, b_id)
-        delete_collection_items_between(db, a_id, b_id)
+        delete_folder_items_between(db, a_id, b_id)
 
 
 def _build_family_detail(db: Session, family_id: int) -> dict:
@@ -34,9 +36,9 @@ def _build_family_detail(db: Session, family_id: int) -> dict:
     }
 
 
-def create_family(db: Session, name: str, creator_id: int) -> dict:
-    family = repo.create_family(db, name=name, created_by_id=creator_id)
-    repo.create_family_member(db, family_id=family.id, user_id=creator_id, role="organizer")
+def create_family(db: Session, name: str, creator: User) -> dict:
+    family = repo.create_family(db, name=name, created_by_id=creator.id)
+    repo.create_family_member(db, family_id=family.id, user_id=creator.id, role="organizer")
     return _build_family_detail(db, family.id)
 
 
@@ -95,6 +97,18 @@ def delete_family(db: Session, family_id: int, user_id: int) -> None:
         raise ForbiddenError("Only organizers can delete the family.")
 
     member_ids = repo.get_member_user_ids(db, family_id)
+    # Shares and budgets point at the occasions, which point at the family, so
+    # they unwind in that order — the FK would otherwise refuse the delete. A
+    # budget has nothing to survive for once its occasion is gone: it is a
+    # target for shopping that can no longer be filed anywhere.
+    list_occasion_repo.delete_shares_for_family(db, family_id)
+    occasion_ids = occasions_repo.get_occasion_ids_for_family(db, family_id)
+    budgets_repo.delete_budgets_for_occasions(db, occasion_ids)
+    # Beside the budgets and for the same reason: an archive prompt points at an
+    # occasion that is about to go, and a snooze has nothing to survive for once
+    # the occasion it snoozed does not exist.
+    occasions_repo.delete_prompts_for_occasions(db, occasion_ids)
+    occasions_repo.delete_occasions_for_family(db, family_id)
     repo.delete_all_members(db, family_id)
     for i in range(len(member_ids)):
         for j in range(i + 1, len(member_ids)):
@@ -126,6 +140,9 @@ def remove_member(db: Session, family_id: int, actor_id: int, target_user_id: in
     co_member_ids = [
         uid for uid in repo.get_member_user_ids(db, family_id) if uid != target_user_id
     ]
+    list_occasion_repo.delete_shares_for_owner_in_family(
+        db, owner_id=target_user_id, family_id=family_id
+    )
     repo.delete_family_member(db, target)
     for other_id in co_member_ids:
         _cleanup_if_dropped(db, target_user_id, other_id)

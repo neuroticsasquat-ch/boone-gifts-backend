@@ -1,8 +1,8 @@
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models.collection import Collection
-from app.models.collection_item import CollectionItem
+from app.models.folder import Folder
+from app.models.folder_item import FolderItem
 from app.models.list_share import ListShare
 from app.models.user import User
 
@@ -45,15 +45,15 @@ def delete_share(db: Session, share: ListShare) -> None:
     db.flush()
 
 
-def find_collection_items_for_unshare(
+def find_folder_items_for_unshare(
     db: Session, list_id: int, user_id: int
-) -> list[CollectionItem]:
-    collection_ids = select(Collection.id).where(Collection.owner_id == user_id)
+) -> list[FolderItem]:
+    folder_ids = select(Folder.id).where(Folder.owner_id == user_id)
     return list(
         db.execute(
-            select(CollectionItem).where(
-                CollectionItem.collection_id.in_(collection_ids),
-                CollectionItem.list_id == list_id,
+            select(FolderItem).where(
+                FolderItem.folder_id.in_(folder_ids),
+                FolderItem.list_id == list_id,
             )
         )
         .scalars()
@@ -61,5 +61,5 @@ def find_collection_items_for_unshare(
     )
 
 
-def delete_collection_item(db: Session, item: CollectionItem) -> None:
+def delete_folder_item(db: Session, item: FolderItem) -> None:
     db.delete(item)

@@ -76,7 +76,7 @@ def test_create_family_happy_path(
     mock_get_family.return_value = family
     mock_get_members.return_value = [(member, user)]
 
-    result = service.create_family(db, name="Smith Family", creator_id=10)
+    result = service.create_family(db, name="Smith Family", creator=user)
 
     mock_create_family.assert_called_once_with(db, name="Smith Family", created_by_id=10)
     mock_create_member.assert_called_once_with(db, family_id=1, user_id=10, role="organizer")
@@ -674,7 +674,7 @@ def test_users_share_family_no_memberships_returns_false():
 # ---------------------------------------------------------------------------
 
 
-@patch(f"{SVC}.delete_collection_items_between")
+@patch(f"{SVC}.delete_folder_items_between")
 @patch(f"{SVC}.unclaim_gifts_between")
 @patch(f"{SVC}.users_share_access", return_value=False)
 def test_cleanup_if_dropped_runs_when_no_shared_access(
@@ -686,7 +686,7 @@ def test_cleanup_if_dropped_runs_when_no_shared_access(
     mock_items.assert_called_once_with(db, 10, 20)
 
 
-@patch(f"{SVC}.delete_collection_items_between")
+@patch(f"{SVC}.delete_folder_items_between")
 @patch(f"{SVC}.unclaim_gifts_between")
 @patch(f"{SVC}.users_share_access", return_value=True)
 def test_cleanup_if_dropped_skips_when_access_remains(

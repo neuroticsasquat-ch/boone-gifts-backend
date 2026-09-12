@@ -111,7 +111,6 @@ def register(
             name=name,
             role="member",
             password=password,
-            simple_mode=family_invite.simple_mode,
         )
         families_repo.create_family_member(
             db,
@@ -207,20 +206,14 @@ def change_password(
     }
 
 
-def update_profile(
-    db: Session, user, name: str | None = None, simple_mode: bool | None = None
-) -> dict:
-    """Update a profile name and/or simple_mode and issue fresh tokens.
+def update_profile(db: Session, user, name: str | None = None) -> dict:
+    """Update a profile name and issue fresh tokens.
 
-    Both fields are optional so the frontend can send partial updates (e.g.
-    toggling simple_mode without resubmitting the name). Returns new access +
-    refresh tokens so the frontend can decode the updated claims without
-    waiting for the next refresh cycle.
+    Returns new access + refresh tokens so the frontend can decode the updated
+    claims without waiting for the next refresh cycle.
     """
     if name is not None:
         user.name = name
-    if simple_mode is not None:
-        user.simple_mode = simple_mode
     db.flush()
 
     return {

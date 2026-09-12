@@ -205,37 +205,6 @@ def test_delete_connection_not_found(client, member_headers):
     assert response.status_code == 404
 
 
-def test_connection_lists(client, admin_user, member_user, admin_headers, connection, shared_list):
-    response = client.get(f"/connections/{connection.id}/lists", headers=admin_headers)
-    assert response.status_code == 200
-    data = response.json()
-    assert len(data) == 1
-    assert data[0]["name"] == shared_list.name
-
-
-def test_connection_lists_not_party(client, admin_user, member_user, member_headers, connection, db):
-    from app.models.user import User
-    other = User(email="other@test.com", name="Other", role="member", password_hash="x")
-    other.set_password("pass")
-    db.add(other)
-    db.flush()
-    from app.dependencies import create_access_token
-    other_token = create_access_token(other)
-    other_headers = {"Authorization": f"Bearer {other_token}"}
-
-    response = client.get(f"/connections/{connection.id}/lists", headers=other_headers)
-    assert response.status_code == 403
-
-
-def test_connection_lists_excludes_archived(client, admin_user, member_user, admin_headers, connection, shared_list, db):
-    shared_list.is_archived = True
-    db.flush()
-
-    response = client.get(f"/connections/{connection.id}/lists", headers=admin_headers)
-    assert response.status_code == 200
-    assert len(response.json()) == 0
-
-
 def test_disconnect_revokes_shares(
     client, member_user, member_headers, admin_user, connection, db
 ):
@@ -270,6 +239,9 @@ def test_disconnect_revokes_shares(
 def test_disconnect_unclaims_gifts(
     client, member_user, member_headers, admin_user, connection, db
 ):
+    from datetime import datetime, timezone
+
+    from app.models.claim import Claim
     from app.models.gift_list import GiftList
     from app.models.gift import Gift
     from app.models.list_share import ListShare
@@ -282,12 +254,14 @@ def test_disconnect_unclaims_gifts(
     db.add(share)
     db.flush()
 
-    gift = Gift(
-        list_id=gift_list.id,
-        name="Claimed Gift",
-        claimed_by_id=admin_user.id,
-    )
+    gift = Gift(list_id=gift_list.id, name="Claimed Gift")
     db.add(gift)
+    db.flush()
+    db.add(
+        Claim(
+            gift_id=gift.id, user_id=admin_user.id, claimed_at=datetime.now(timezone.utc)
+        )
+    )
     db.flush()
 
     response = client.delete(
@@ -296,18 +270,18 @@ def test_disconnect_unclaims_gifts(
     )
     assert response.status_code == 204
 
+    # The claim row goes, so the purchase state and amount go with it.
     db.refresh(gift)
-    assert gift.claimed_by_id is None
-    assert gift.claimed_at is None
+    assert gift.claim is None
 
 
-def test_disconnect_removes_collection_items(
+def test_disconnect_removes_folder_items(
     client, member_user, member_headers, admin_user, connection, db
 ):
     from app.models.gift_list import GiftList
     from app.models.list_share import ListShare
-    from app.models.collection import Collection
-    from app.models.collection_item import CollectionItem
+    from app.models.folder import Folder
+    from app.models.folder_item import FolderItem
 
     admin_list = GiftList(name="Admin's List", owner_id=admin_user.id)
     db.add(admin_list)
@@ -317,14 +291,14 @@ def test_disconnect_removes_collection_items(
     db.add(share)
     db.flush()
 
-    member_collection = Collection(
-        name="Member Collection", owner_id=member_user.id
+    member_folder = Folder(
+        name="Member Folder", owner_id=member_user.id
     )
-    db.add(member_collection)
+    db.add(member_folder)
     db.flush()
 
-    item = CollectionItem(
-        collection_id=member_collection.id, list_id=admin_list.id
+    item = FolderItem(
+        folder_id=member_folder.id, list_id=admin_list.id
     )
     db.add(item)
     db.flush()
@@ -338,9 +312,9 @@ def test_disconnect_removes_collection_items(
     from sqlalchemy import select
 
     remaining = db.execute(
-        select(CollectionItem).where(
-            CollectionItem.collection_id == member_collection.id,
-            CollectionItem.list_id == admin_list.id,
+        select(FolderItem).where(
+            FolderItem.folder_id == member_folder.id,
+            FolderItem.list_id == admin_list.id,
         )
     ).scalar_one_or_none()
     assert remaining is None
