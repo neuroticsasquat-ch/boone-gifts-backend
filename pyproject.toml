@@ -10,10 +10,10 @@ dependencies = [
     "pydantic-settings>=2.15.0",
     "pyjwt>=2.13.0",
     "bcrypt>=5.0.0",
-    "alembic>=1.19.1",
+    "alembic>=1.19.2",
     "httpx>=0.28.1",
     "slowapi>=0.1.10",
-    "sentry-sdk[fastapi]>=2.68.1",
+    "sentry-sdk[fastapi]>=2.69.1",
 ]
 
 [tool.pytest.ini_options]
@@ -29,5 +29,5 @@ filterwarnings = [
 dev = [
     "pyright[nodejs]>=1.1.411",
     "pytest>=9.1.1",
-    "ruff>=0.16.5",
+    "ruff>=0.16.6",
 ]
