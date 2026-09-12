@@ -10,6 +10,7 @@ from app.claims import repository as claims_repo
 from app.families import repository as families_repo
 from app.list_occasions import repository as list_occasions_repo
 from app.lists import service as list_service
+from app.models.family import Family
 from app.models.family_member import FamilyMember
 from app.models.occasion import Occasion
 from app.models.user import User
@@ -29,8 +30,17 @@ ARCHIVE_PROMPT_IDLE_DAYS = 60
 ARCHIVE_PROMPT_SNOOZE_DAYS = 30
 
 
-def _require_member(db: Session, family_id: int, actor: User) -> FamilyMember:
-    """Any member of the family may read and create its occasions (ADR 0002)."""
+def _require_member(
+    db: Session, family_id: int, actor: User
+) -> tuple[Family, FamilyMember]:
+    """Any member of the family may read and create its occasions (ADR 0002).
+
+    Returns the family as well as the membership because the existence check
+    above has already loaded that row and every occasion read already pays for
+    it. The occasion page names its family (NEU-1321), and handing the row back
+    is what makes that field free rather than a second query for a string this
+    function had in hand.
+    """
     family = families_repo.get_family(db, family_id)
     if family is None:
         raise NotFoundError("Family not found.")
@@ -39,15 +49,17 @@ def _require_member(db: Session, family_id: int, actor: User) -> FamilyMember:
     )
     if membership is None:
         raise ForbiddenError("Not a member of this family.")
-    return membership
+    return family, membership
 
 
-def _load_for_member(db: Session, occasion_id: int, actor: User) -> Occasion:
+def _load_for_member(
+    db: Session, occasion_id: int, actor: User
+) -> tuple[Occasion, Family]:
     occasion = repo.get_occasion(db, occasion_id)
     if occasion is None:
         raise NotFoundError("Occasion not found.")
-    _require_member(db, occasion.family_id, actor)
-    return occasion
+    family, _ = _require_member(db, occasion.family_id, actor)
+    return occasion, family
 
 
 def _may_archive(membership: FamilyMember, occasion: Occasion, actor: User) -> bool:
@@ -86,7 +98,14 @@ def create_occasion(
     return occasion, has_other_active
 
 
-def get_occasion(db: Session, occasion_id: int, actor: User) -> Occasion:
+def get_occasion(
+    db: Session, occasion_id: int, actor: User
+) -> tuple[Occasion, Family]:
+    """The occasion and the family that owns it.
+
+    The family rides along because the page's heading names it and the row is
+    already loaded by the membership gate — see `_require_member` (NEU-1321).
+    """
     return _load_for_member(db, occasion_id, actor)
 
 
@@ -121,7 +140,7 @@ def update_occasion(
     occasion = repo.get_occasion(db, occasion_id)
     if occasion is None:
         raise NotFoundError("Occasion not found.")
-    membership = _require_member(db, occasion.family_id, actor)
+    _, membership = _require_member(db, occasion.family_id, actor)
     if "name" in update_data and membership.role != "organizer":
         raise ForbiddenError(ORGANIZER_ONLY)
     if "is_archived" in update_data and not _may_archive(
@@ -253,7 +272,7 @@ def dismiss_archive_prompt(db: Session, occasion_id: int, actor: User) -> None:
     occasion = repo.get_occasion(db, occasion_id)
     if occasion is None:
         raise NotFoundError("Occasion not found.")
-    membership = _require_member(db, occasion.family_id, actor)
+    _, membership = _require_member(db, occasion.family_id, actor)
     if not _may_archive(membership, occasion, actor):
         raise ForbiddenError(ORGANIZER_OR_CREATOR)
     repo.upsert_dismissal(
