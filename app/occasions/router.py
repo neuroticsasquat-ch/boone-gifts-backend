@@ -8,6 +8,7 @@ from app.schemas.occasion import (
     ArchivePrompt,
     OccasionCreate,
     OccasionCreateRead,
+    OccasionDetailRead,
     OccasionRead,
     OccasionSummary,
     OccasionUpdate,
@@ -87,14 +88,23 @@ def list_archive_prompts(user: CurrentUser, db: DbSession):
     return occasion_service.list_archive_prompts(db, actor=user)
 
 
-@router.get("/occasions/{occasion_id}", response_model=OccasionRead)
+# The one occasion payload that names its family, composed the way `create`
+# composes `has_other_active`. `PUT` below deliberately stays on `OccasionRead`
+# — see `OccasionDetailRead`.
+@router.get("/occasions/{occasion_id}", response_model=OccasionDetailRead)
 def get_occasion(occasion_id: int, user: CurrentUser, db: DbSession):
     try:
-        return occasion_service.get_occasion(db, occasion_id=occasion_id, actor=user)
+        occasion, family = occasion_service.get_occasion(
+            db, occasion_id=occasion_id, actor=user
+        )
     except NotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     except ForbiddenError:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+    return OccasionDetailRead(
+        **OccasionRead.model_validate(occasion).model_dump(),
+        family_name=family.name,
+    )
 
 
 @router.put("/occasions/{occasion_id}", response_model=OccasionRead)

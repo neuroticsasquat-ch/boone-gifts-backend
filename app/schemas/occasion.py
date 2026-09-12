@@ -61,6 +61,27 @@ class OccasionCreateRead(OccasionRead):
     has_other_active: bool
 
 
+class OccasionDetailRead(OccasionRead):
+    """The detail read, naming the family that owns the occasion.
+
+    A sibling of `OccasionSummary` rather than a field on `OccasionRead`,
+    which answers four endpoints: putting `family_name` on the base would
+    oblige `GET /families/{family_id}/occasions` to resolve a name its own
+    route already carries. The two `family_name` declarations are duplicated
+    deliberately — the index and the page are separate contracts with
+    separate callers, and collapsing them into an inheritance chain to save a
+    line would couple the strip's payload to the page's.
+
+    The occasion page's heading reads "Boone Family · Christmas 2026", so the
+    name has to arrive with the occasion itself: the page's family query does
+    not fire until the occasion has resolved, and deriving the heading from it
+    would paint the occasion name first and shove it sideways a round trip
+    later (NEU-1321).
+    """
+
+    family_name: str
+
+
 class OccasionSummary(OccasionRead):
     """One row of the occasion index — the occasion plus what a card needs.
 

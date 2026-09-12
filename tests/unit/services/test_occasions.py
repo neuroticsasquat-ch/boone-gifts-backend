@@ -174,15 +174,23 @@ def test_has_other_active_is_read_before_the_new_row_exists():
 # ---------------------------------------------------------------------------
 
 
-def test_get_occasion_returns_it_for_a_member():
+def test_get_occasion_returns_it_with_its_family_for_a_member():
+    """The family comes back too — the page's heading names it (NEU-1321), and
+    it is the row the membership gate has already loaded, not a second read."""
     db = MagicMock()
     occasion = _make_occasion()
+    family = _make_family()
     with patch(FAMILIES_REPO) as families_repo, patch(REPO) as repo:
         repo.get_occasion.return_value = occasion
-        families_repo.get_family.return_value = _make_family()
+        families_repo.get_family.return_value = family
         families_repo.get_family_member.return_value = _make_member("member")
 
-        assert service.get_occasion(db, occasion_id=5, actor=_make_user()) is occasion
+        assert service.get_occasion(db, occasion_id=5, actor=_make_user()) == (
+            occasion,
+            family,
+        )
+
+    families_repo.get_family.assert_called_once_with(db, occasion.family_id)
 
 
 def test_get_occasion_raises_not_found_for_an_unknown_id():
