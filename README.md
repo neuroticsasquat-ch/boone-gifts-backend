@@ -131,7 +131,6 @@ Creates five `@example.com` users with the list-visibility states a single accou
 - `GET /connections/requests` -- List pending incoming requests
 - `POST /connections/{id}/accept` -- Accept a request
 - `DELETE /connections/{id}` -- Remove connection, reject, or cancel request
-- `GET /connections/{id}/lists` -- Lists that connection has shared with you
 
 ### Lists (`/lists`)
 - `POST /lists` -- Create a gift list (accepts `family_ids` in full mode)
@@ -190,6 +189,7 @@ Creates five `@example.com` users with the list-visibility states a single accou
 - `GET /folders/{id}/shopping` -- Everything you've claimed across the folder
 
 ### Occasions (`/families/{family_id}/occasions`, `/occasions`)
+- `GET /occasions` -- Every occasion across every family you belong to, with your own counts
 - `GET /families/{family_id}/occasions` -- The family's occasions; any member
 - `POST /families/{family_id}/occasions` -- Create one; any member
 - `GET /occasions/{id}` -- Get an occasion; any member of its family

@@ -1,4 +1,6 @@
-from sqlalchemy import Integer, String, cast, delete, func, literal, null, or_, select
+from collections.abc import Sequence
+
+from sqlalchemy import Integer, String, cast, delete, literal, null, or_, select
 from sqlalchemy.orm import Session, aliased
 
 from app.claims import repository as claims_repo
@@ -11,6 +13,12 @@ from app.models.list_occasion_share import ListOccasionShare
 from app.models.list_share import ListShare
 from app.models.occasion import Occasion
 from app.models.user import User
+from app.schemas.gift_list import (
+    DirectShareRoute,
+    NamedRef,
+    OccasionShareRoute,
+    ShareRoute,
+)
 
 
 def create_list(
@@ -41,30 +49,44 @@ def get_lists_by_owner(db: Session, owner_id: int, archived: bool = False) -> li
     return list(db.execute(query).scalars().all())
 
 
-def get_shared_lists_with_source(
-    db: Session, user_id: int, archived: bool = False
-) -> list[tuple[GiftList, str, int, str, int | None, str | None]]:
-    """Every list (matching the `archived` flag) someone else has made visible to
-    the caller, by either path: a direct `ListShare`, or a share to an occasion of
-    a family the caller belongs to. One row per list, carrying the source that
-    explains it — `("user", owner id, owner name, None, None)` or
-    `("occasion", occasion id, occasion name, family id, family name)`.
+def get_share_routes(
+    db: Session, viewer_id: int, list_ids: Sequence[int] | None = None
+) -> dict[int, list[ShareRoute]]:
+    """Every route by which a list reached the viewer, keyed by list id.
 
-    A list reachable both ways reports the direct share: it is the more specific
-    fact, and the one the viewer can act on. A list shared to two occasions the
-    caller can reach reports the lower occasion id — arbitrary but stable, so the
-    label does not flicker between requests.
+    A route is one way the list became visible: a direct `ListShare`, or a share
+    to an occasion of a family the viewer belongs to. A list can have several —
+    shared directly *and* to an occasion, or to two occasions of two different
+    families — and every one of them is reported. Nothing is ranked away here;
+    the label rule (direct wins) lives in the client.
 
-    An archived occasion still appears: archiving blocks new shares and nothing
-    else, so it never withdraws visibility (ADR 0002 §5.4).
+    `list_ids=None` means the viewer's whole shared scope, so the union defining
+    that scope is written once: `app/lists/service.py:get_shared_lists` takes
+    the scope from the keys rather than restating the query and drifting from it.
 
-    The caller's own lists are never in scope, however they were shared.
+    Lists with no route are simply absent from the mapping — callers read it with
+    `.get(list_id, [])`, so an owned row and a row the viewer can no longer see
+    both come back as an empty array.
+
+    Order within a list is direct first, then occasions by ascending occasion id
+    — the same order the ranking used to break ties with, kept so a response is
+    byte-stable across requests and tests can assert a literal. It is
+    deliberately **not** a contract the client may read `routes[0]` from: giving
+    direct-wins a second home here is what NEU-1290 set out to stop.
+
+    The exclusions are load-bearing and unchanged: the viewer's own lists are
+    never in scope however they were shared, and an archived occasion still
+    yields a route, because archiving blocks new shares and never withdraws
+    visibility (ADR 0002 §5.4, `CONTEXT.md` invariant 2).
     """
+    if list_ids is not None and not list_ids:
+        return {}
+
     owner = aliased(User)
     direct = (
         select(
             ListShare.list_id.label("list_id"),
-            literal("user").label("kind"),
+            literal("direct").label("kind"),
             owner.id.label("source_id"),
             owner.name.label("source_name"),
             cast(null(), Integer).label("family_id"),
@@ -74,9 +96,8 @@ def get_shared_lists_with_source(
         .join(GiftList, GiftList.id == ListShare.list_id)
         .join(owner, owner.id == GiftList.owner_id)
         .where(
-            ListShare.user_id == user_id,
-            GiftList.owner_id != user_id,
-            GiftList.is_archived == archived,
+            ListShare.user_id == viewer_id,
+            GiftList.owner_id != viewer_id,
         )
     )
     via_occasion = (
@@ -94,52 +115,78 @@ def get_shared_lists_with_source(
         .join(Family, Family.id == Occasion.family_id)
         .join(FamilyMember, FamilyMember.family_id == Occasion.family_id)
         .where(
-            FamilyMember.user_id == user_id,
-            GiftList.owner_id != user_id,
+            FamilyMember.user_id == viewer_id,
+            GiftList.owner_id != viewer_id,
+        )
+    )
+    if list_ids is not None:
+        direct = direct.where(ListShare.list_id.in_(list_ids))
+        via_occasion = via_occasion.where(ListOccasionShare.list_id.in_(list_ids))
+
+    routes = direct.union_all(via_occasion).subquery()
+    query = select(routes).order_by(
+        routes.c.list_id, routes.c.priority, routes.c.source_id
+    )
+
+    by_list: dict[int, list[ShareRoute]] = {}
+    for row in db.execute(query).all():
+        if row.kind == "direct":
+            route: ShareRoute = DirectShareRoute(
+                kind="direct",
+                person=NamedRef(id=row.source_id, name=row.source_name),
+            )
+        else:
+            route = OccasionShareRoute(
+                kind="occasion",
+                occasion=NamedRef(id=row.source_id, name=row.source_name),
+                family=NamedRef(id=row.family_id, name=row.family_name),
+            )
+        by_list.setdefault(row.list_id, []).append(route)
+    return by_list
+
+
+def get_lists_by_ids(
+    db: Session, list_ids: Sequence[int], archived: bool = False
+) -> list[GiftList]:
+    """The lists with these ids, matching the `archived` flag.
+
+    `updated_at` is second-resolution, so lists touched in the same second tie;
+    id breaks it, keeping the order stable across requests.
+    """
+    if not list_ids:
+        return []
+    query = (
+        select(GiftList)
+        .where(
+            GiftList.id.in_(list_ids),
             GiftList.is_archived == archived,
         )
-    )
-    sources = direct.union_all(via_occasion).subquery()
-    # Rank the sources of each list so the dedupe stays in the query: a direct
-    # share outranks any occasion share, and occasion shares break ties by id.
-    ranked = select(
-        sources.c.list_id,
-        sources.c.kind,
-        sources.c.source_id,
-        sources.c.source_name,
-        sources.c.family_id,
-        sources.c.family_name,
-        func.row_number()
-        .over(
-            partition_by=sources.c.list_id,
-            order_by=(sources.c.priority, sources.c.source_id),
-        )
-        .label("rank"),
-    ).subquery()
-    query = (
-        select(
-            GiftList,
-            ranked.c.kind,
-            ranked.c.source_id,
-            ranked.c.source_name,
-            ranked.c.family_id,
-            ranked.c.family_name,
-        )
-        .join(ranked, ranked.c.list_id == GiftList.id)
-        .where(ranked.c.rank == 1)
-        # `updated_at` is second-resolution, so lists touched in the same second
-        # tie; id breaks it, keeping the order stable across requests.
         .order_by(GiftList.updated_at.desc(), GiftList.id.desc())
     )
-    return [tuple(row) for row in db.execute(query).all()]
+    return list(db.execute(query).scalars().all())
 
 
 def get_all_visible_lists(db: Session, user_id: int, archived: bool = False) -> list[GiftList]:
+    """Every list the caller may see, by any path — the third term included.
+
+    The three terms are `can_view_list`'s, restated as a query because this one
+    answers for a whole scope rather than one row. Leaving the occasion term out
+    made this disagree with the codebase's one visibility predicate
+    (`CONTEXT.md` invariant 2), which is exactly the divergence the invariant
+    exists to prevent.
+    """
     shared_list_ids = select(ListShare.list_id).where(ListShare.user_id == user_id)
+    occasion_list_ids = (
+        select(ListOccasionShare.list_id)
+        .join(Occasion, Occasion.id == ListOccasionShare.occasion_id)
+        .join(FamilyMember, FamilyMember.family_id == Occasion.family_id)
+        .where(FamilyMember.user_id == user_id)
+    )
     query = select(GiftList).where(
         or_(
             GiftList.owner_id == user_id,
             GiftList.id.in_(shared_list_ids),
+            GiftList.id.in_(occasion_list_ids),
         ),
         GiftList.is_archived == archived,
     ).order_by(GiftList.updated_at.desc())
@@ -177,24 +224,6 @@ def get_unseen_share_count(db: Session, user_id: int) -> int:
         .where(ListShare.user_id == user_id, ListShare.seen_at.is_(None))
     ).scalar()
     return result or 0
-
-
-def get_lists_shared_by_user(
-    db: Session, owner_id: int, shared_with_user_id: int
-) -> list[GiftList]:
-    shared_list_ids = select(ListShare.list_id).where(
-        ListShare.user_id == shared_with_user_id
-    )
-    query = (
-        select(GiftList)
-        .where(
-            GiftList.owner_id == owner_id,
-            GiftList.id.in_(shared_list_ids),
-            GiftList.is_archived == False,
-        )
-        .order_by(GiftList.updated_at.desc())
-    )
-    return list(db.execute(query).scalars().all())
 
 
 def mark_share_seen(db: Session, list_id: int, user_id: int) -> None:

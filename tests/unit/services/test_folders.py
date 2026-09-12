@@ -13,6 +13,30 @@ from app.schemas.gift_list import GiftListRead, GiftListViewerRead
 from app.services.exceptions import ConflictError, ForbiddenError, NotFoundError
 
 
+@pytest.fixture
+def viewer():
+    """`can_view_list` reads `user.id`, so the folder's rows are filtered for a
+    user rather than a bare id."""
+    return SimpleNamespace(id=5)
+
+
+@pytest.fixture
+def visible():
+    """Every row passes the visibility predicate unless a test says otherwise."""
+    with patch("app.folders.service.can_view_list", return_value=True) as mock:
+        yield mock
+
+
+@pytest.fixture
+def no_routes():
+    """`to_summaries` asks the lists repository for share routes on every
+    list-row response. Tests about anything else stub it away."""
+    with patch(
+        "app.lists.service.repo.get_share_routes", return_value={}
+    ) as mock:
+        yield mock
+
+
 def _make_folder(
     id: int = 1,
     name: str = "My Folder",
@@ -43,7 +67,7 @@ def _make_gift_list(id: int = 10, owner_id: int = 1) -> MagicMock:
     gl.is_archived = False
     gl.gifts = []
     gl.gift_count = 0
-    gl.shared_via = None
+    gl.shared_via = []
     gl.created_at = datetime(2026, 1, 1)
     gl.updated_at = datetime(2026, 1, 1)
     return gl
@@ -98,13 +122,13 @@ def test_list_folders(mock_get):
 
 
 @patch(f"{REPO}.get_lists_for_folder")
-def test_get_folder_detail(mock_get_lists):
+def test_get_folder_detail(mock_get_lists, viewer, visible, no_routes):
     db = MagicMock()
     col = _make_folder(id=1, name="Wishlist", description="Holiday", owner_id=5)
     gift_list = _make_gift_list(id=10, owner_id=5)
     mock_get_lists.return_value = [gift_list]
 
-    result = service.get_folder_detail(db, col, viewer_id=5)
+    result = service.get_folder_detail(db, col, viewer=viewer)
 
     mock_get_lists.assert_called_once_with(db, col)
     assert result["id"] == 1
@@ -117,7 +141,9 @@ def test_get_folder_detail(mock_get_lists):
 
 
 @patch(f"{REPO}.get_lists_for_folder")
-def test_get_folder_detail_serializes_each_row_for_the_folders_owner(mock_get_lists):
+def test_get_folder_detail_serializes_each_row_for_the_folders_owner(
+    mock_get_lists, viewer, visible, no_routes
+):
     """A folder holds lists its owner mostly does not own, so the row schema is
     chosen per list: their own carry no claim state, everyone else's do."""
     db = MagicMock()
@@ -126,10 +152,34 @@ def test_get_folder_detail_serializes_each_row_for_the_folders_owner(mock_get_li
     someone_elses = _make_gift_list(id=11, owner_id=6)
     mock_get_lists.return_value = [own, someone_elses]
 
-    rows = service.get_folder_detail(db, col, viewer_id=5)["lists"]
+    rows = service.get_folder_detail(db, col, viewer=viewer)["lists"]
 
     assert type(rows[0]) is GiftListRead
     assert type(rows[1]) is GiftListViewerRead
+
+
+@patch(f"{REPO}.get_lists_for_folder")
+def test_get_folder_detail_drops_a_row_the_caller_can_no_longer_view(
+    mock_get_lists, viewer, no_routes
+):
+    """Revoking a share does not remove folder items, so a `folder_items` row
+    can outlive the grant behind it — and a row that outlived its grant is not
+    itself a grant (`CONTEXT.md` invariant 2). The folder reads through
+    `can_view_list`, so it is filtered out rather than served without
+    attribution."""
+    db = MagicMock()
+    col = _make_folder(id=1, owner_id=5)
+    still_shared = _make_gift_list(id=10, owner_id=6)
+    revoked = _make_gift_list(id=11, owner_id=6)
+    mock_get_lists.return_value = [still_shared, revoked]
+
+    with patch(
+        "app.folders.service.can_view_list",
+        side_effect=lambda db, user, gl: gl is still_shared,
+    ):
+        rows = service.get_folder_detail(db, col, viewer=viewer)["lists"]
+
+    assert [row.id for row in rows] == [10]
 
 
 # --- update_folder ---

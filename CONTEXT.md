@@ -17,9 +17,13 @@ the words mean and what must stay true.
 | **Direct share** | A grant of one list to one account | `list_shares` |
 | **Family** | A named group of accounts, with organizers and members | `families`, `family_members` |
 | **Occasion share** | A grant of one list to one family occasion. Not implied by co-membership. Was a *family grant*, pointed at the family itself | `list_occasion_shares` |
+| **Share route** | One way a list reached a viewer: a direct share, or an occasion share of a family they belong to. A list can have several, and a viewer's routes to it are computed at read time — never stored | computed, `app/lists/repository.py:get_share_routes` |
 | **Folder** | An account's private grouping of lists it can see — "Christmas 2026". Was called an *occasion*, and before that a *collection* | `folders`, `folder_items` |
 | **Occasion** | A family's shared gifting occasion — "Boone Family · Christmas 2026". Owned by a family, carries **no dates** | `occasions` |
 | **Active occasion** | An occasion with `is_archived = false` | `occasions.is_archived` |
+| **Occasion activity** | The clock an occasion sorts by: the later of the last share into it and the *viewer's own* claim or purchase filed under it, floored at the occasion's creation. Per-viewer by construction — never another user's claim | computed, `app/occasions/repository.py:last_activity_at_expr` |
+| **Shared activity** | The clock the archive nudge ages an occasion by: the later of the last share into it and its own creation. Reads no claim, by anyone — so no user's shopping can create or remove another user's prompt. The first term of *Occasion activity*, and the whole of what the nudge sees | computed, `app/occasions/repository.py:shared_activity_at_expr` |
+| **Archive prompt** | A standing question to one account about one occasion that has gone quiet: archive it, or not yet. "Not yet" is a dated snooze, not a permanent dismissal | `occasion_archive_prompts` |
 | **Budget** | What one account means to spend on one occasion, or on one folder. Private to the account that set it; there is no family budget | `budgets` |
 | **Rollup** | A budget with the caller's own spend counted against it — target, spent, remaining, and the bought/total/unpriced counts | computed, `app/budgets/service.py` |
 | **Recipient** | A person with **no account** for whom an account keeps a list | `lists.recipient_name` |
@@ -37,18 +41,25 @@ vacated by the rename precisely so the family concept could claim it.
 1. **The owner never sees claims on their own list.** This is structural, not discipline: the claim
    is its own row and there is nothing claim-shaped left on `gifts`, so an owner-facing serializer
    has nothing to forget (ADR 0003). `claimed_count` and `my_unpurchased_claim_count` live on
-   `GiftListViewerRead`, and `app/lists/service.py:to_summary` is the single place that decides
-   which schema a list row gets — route new list-row responses through it rather than naming a
-   schema at the endpoint. Every surface that could leak claim state to an owner — including the
-   409 on revoking an occasion share — reveals only *that* claims exist, never counts, gift names,
-   or claimer names.
+   `GiftListViewerRead`. `app/lists/service.py:to_summary` is the single place that decides which
+   schema a list row gets, and `to_summaries` is the seam that wraps it — route new list-row
+   responses through `to_summaries` rather than naming a schema at the endpoint, and they inherit
+   both the right schema and their `shared_via` routes. Every surface that could leak claim state
+   to an owner — including the 409 on revoking an occasion share — reveals only *that* claims
+   exist, never counts, gift names, claimer names, or **a timestamp that dates one**. The last of
+   those is why the occasion strip's sort key is per-viewer ([ADR 0005](docs/adr/0005-occasion-activity-is-per-viewer.md)):
+   a value nothing claim-shaped appears in can still disclose a claim by the order it imposes.
    `tests/integration/test_owner_blindness.py` sweeps the owner-facing responses for it.
 
 2. **Visibility has exactly one predicate.** `can_view_list` in `app/access.py`: owner, OR a
    `ListShare` row, OR the list is shared to an occasion of a family the viewer belongs to. Claims
-   and folder membership both route through it. A connection alone grants nothing; bare family
-   co-membership grants nothing. It does **not** consult `occasions.is_archived` — archiving blocks
-   new shares and nothing else, so it never withdraws visibility.
+   route through it, and so do folder membership and folder *reads* — a `folder_items` row that
+   outlived the share behind it is not a grant. A connection alone grants nothing; bare family
+   co-membership grants nothing. It follows that the shared scope is the only per-person read there
+   is — `GET /connections/{id}/lists` was retired in v0.6.0 because it answered a narrower question
+   (direct shares only) than the one predicate, and there is no server-side index of one person's
+   lists to replace it. It does **not** consult `occasions.is_archived` — archiving blocks new
+   shares and nothing else, so it never withdraws visibility.
 
 3. **An occasion share row implies the owner is still a member of the occasion's family.** Read
    queries rely on this and do not re-check it, so every membership departure deletes the affected
@@ -75,7 +86,11 @@ vacated by the rename precisely so the family concept could claim it.
    someone who will never log in, so its keeper cannot see claims on it and cannot claim from it.
 
 9. **An occasion belongs to exactly one family, and has no dates.** Any member may read and create
-   one; only an organizer may rename or archive one. Creating a second *active* occasion is allowed
+   one; **only an organizer may rename one; an organizer or the occasion's creator may archive or
+   unarchive one.** The split is deliberate: archiving is reversible, withdraws no shares and still
+   serves every My shopping tab, while a rename changes a label everyone sees and everyone's budgets
+   are filed under. It is also what makes the archive nudge coherent — the audience asked to archive
+   an occasion is exactly the audience allowed to. Creating a second *active* occasion is allowed
    and flagged (`has_other_active`), never refused — a family with no active occasion cannot be
    shared to at all, so nobody may be blocked waiting on an absent organizer.
    Deleting the family deletes its occasions, and the shares pointing at them first.

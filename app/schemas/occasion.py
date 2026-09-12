@@ -11,7 +11,13 @@ class OccasionCreate(BaseModel):
 
 
 class OccasionUpdate(BaseModel):
-    """Schema for renaming or (un)archiving an occasion. Organizer-only.
+    """Schema for renaming or (un)archiving an occasion.
+
+    The two fields carry **different gates**, applied in `app/occasions/service.py`
+    rather than here: `name` is organizer-only, `is_archived` takes an organizer
+    or the occasion's creator (`CONTEXT.md` invariant 9). A body setting both
+    therefore needs the organizer role. This schema cannot express that — it
+    validates shape, and the role belongs to the caller, not the payload.
 
     Both fields are optional to *supply*, never nullable: `None` is the "leave
     it alone" sentinel the router reads through `exclude_unset`, and neither
@@ -53,3 +59,53 @@ class OccasionCreateRead(OccasionRead):
     """
 
     has_other_active: bool
+
+
+class OccasionSummary(OccasionRead):
+    """One row of the occasion index — the occasion plus what a card needs.
+
+    Every added field is about the caller and nobody else. `my_claimed_count`
+    and `my_bought_count` count the caller's own claims, and `last_activity_at`
+    is the per-viewer clock of ADR 0005: the later of the last share into the
+    occasion and the caller's *own* claim or purchase filed under it, floored at
+    the occasion's creation so it is never null.
+
+    It deliberately does **not** carry another user's claim, because the strip
+    sorts on it — an occasion holding only the caller's own list rising to the
+    top the moment somebody claimed from it is a badge by another name, and
+    `CONTEXT.md` invariant 1 forbids it.
+    """
+
+    family_name: str
+    list_count: int
+    my_claimed_count: int
+    my_bought_count: int
+    last_activity_at: datetime
+
+
+class ArchivePrompt(BaseModel):
+    """One occasion the caller is being asked to archive, and nothing else.
+
+    Purpose-built rather than derived from `OccasionRead` or `OccasionSummary`.
+    The banner that consumes it names the occasion and its family and no more —
+    no counts, no claimers, no gifts — and the narrowness is the guarantee:
+    subclassing would put `my_claimed_count` and `my_bought_count` on a banner
+    payload and drag `list_count` and both claim subqueries into a query that
+    needs none of them. There is no field here that could ever carry claim
+    state.
+
+    `id`, not `occasion_id`: it matches every other occasion payload, and it is
+    what the dismiss and archive calls take.
+
+    **No `quiet_since`.** Now that the clock reads no claim at all a date would
+    be safe to expose, but the banner does not want one — and a `datetime` on a
+    prompt invites the next reader to assume it is `last_activity_at`, which it
+    deliberately is not.
+    """
+
+    id: int
+    name: str
+    family_id: int
+    family_name: str
+
+    model_config = {"from_attributes": True}

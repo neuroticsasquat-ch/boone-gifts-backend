@@ -1,5 +1,24 @@
 # Release notes
 
+## 0.6.0 — 2026-09-12
+
+### Connections
+
+- Retire the connection-lists endpoint ([NEU-1317](https://linear.app/neuroticsasquatch/issue/NEU-1317)) ([#190](https://github.com/neuroticsasquat-ch/boone-gifts-backend/pull/190))
+
+### Lists
+
+- Report every route a shared list reached the viewer by ([NEU-1290](https://linear.app/neuroticsasquatch/issue/NEU-1290)) ([#186](https://github.com/neuroticsasquat-ch/boone-gifts-backend/pull/186))
+
+### Occasions
+
+- Index every occasion you can see, with your own counts ([NEU-1292](https://linear.app/neuroticsasquatch/issue/NEU-1292)) ([#187](https://github.com/neuroticsasquat-ch/boone-gifts-backend/pull/187))
+- Ask about occasions that have gone quiet ([NEU-1294](https://linear.app/neuroticsasquatch/issue/NEU-1294)) ([#189](https://github.com/neuroticsasquat-ch/boone-gifts-backend/pull/189))
+
+### Sharing
+
+- Carry each family's member ids on the share targets ([NEU-1285](https://linear.app/neuroticsasquatch/issue/NEU-1285))
+
 ## 0.5.0 — 2026-09-09
 
 ### Budgets

@@ -6,71 +6,67 @@ grants are the point, not an oversight — ADR 0002 accepts that every existing
 family grant goes and owners re-share, because inventing an occasion per family
 would seed every family with a name nobody chose.
 """
-import os
-import subprocess
-from pathlib import Path
+
+import shutil
 
 import pytest
 from sqlalchemy import create_engine, text
 
+from tests.integration.migration_support import alembic as _alembic
+from tests.integration.migration_support import build_template
+
 PREVIOUS_REVISION = "a3f8c1e70b52"
 REVISION = "b7e2d4f16c93"
-REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-def _alembic(command: str, target: str, db_path: Path) -> None:
-    env = dict(os.environ, APP_DATABASE_URL=f"sqlite:///{db_path}")
-    result = subprocess.run(
-        ["alembic", command, target],
-        cwd=REPO_ROOT,
-        env=env,
-        capture_output=True,
-        text=True,
+def _seed(conn):
+    conn.execute(
+        text(
+            "INSERT INTO users (id, email, name, password_hash, role, is_active) "
+            "VALUES (1, 'a@t.com', 'A', 'x', 'member', 1)"
+        )
     )
-    assert result.returncode == 0, result.stderr
+    conn.execute(
+        text("INSERT INTO families (id, name, created_by_id) VALUES (1, 'F1', 1)")
+    )
+    conn.execute(
+        text(
+            "INSERT INTO family_members (family_id, user_id, role) "
+            "VALUES (1, 1, 'organizer')"
+        )
+    )
+    conn.execute(
+        text(
+            "INSERT INTO lists (id, name, owner_id, is_archived) "
+            "VALUES (1, 'A list', 1, 0)"
+        )
+    )
+    conn.execute(
+        text(
+            "INSERT INTO occasions (id, family_id, name, is_archived, created_by_id) "
+            "VALUES (1, 1, 'Christmas 2026', 0, 1)"
+        )
+    )
+    conn.execute(
+        text(
+            "INSERT INTO list_family_shares (list_id, family_id) VALUES (1, 1)"
+        )
+    )
+
+
+@pytest.fixture(scope="module")
+def _template(tmp_path_factory):
+    """The schema at the previous revision, seeded — built once for the
+    module, so the revision chain is replayed once instead of per test."""
+    return build_template(tmp_path_factory, PREVIOUS_REVISION, _seed)
 
 
 @pytest.fixture
-def seeded(tmp_path):
+def seeded(tmp_path, _template):
     """The schema one revision back, holding a family grant and an occasion."""
     db_path = tmp_path / "migration_test.db"
-    _alembic("upgrade", PREVIOUS_REVISION, db_path)
+    shutil.copy(_template, db_path)
     engine = create_engine(f"sqlite:///{db_path}")
-
-    with engine.begin() as conn:
-        conn.execute(
-            text(
-                "INSERT INTO users (id, email, name, password_hash, role, is_active) "
-                "VALUES (1, 'a@t.com', 'A', 'x', 'member', 1)"
-            )
-        )
-        conn.execute(
-            text("INSERT INTO families (id, name, created_by_id) VALUES (1, 'F1', 1)")
-        )
-        conn.execute(
-            text(
-                "INSERT INTO family_members (family_id, user_id, role) "
-                "VALUES (1, 1, 'organizer')"
-            )
-        )
-        conn.execute(
-            text(
-                "INSERT INTO lists (id, name, owner_id, is_archived) "
-                "VALUES (1, 'A list', 1, 0)"
-            )
-        )
-        conn.execute(
-            text(
-                "INSERT INTO occasions (id, family_id, name, is_archived, created_by_id) "
-                "VALUES (1, 1, 'Christmas 2026', 0, 1)"
-            )
-        )
-        conn.execute(
-            text(
-                "INSERT INTO list_family_shares (list_id, family_id) VALUES (1, 1)"
-            )
-        )
-
     yield engine, db_path
     engine.dispose()
 

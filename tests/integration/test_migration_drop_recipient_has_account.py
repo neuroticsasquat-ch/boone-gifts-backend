@@ -6,28 +6,17 @@ COLUMN rather than batch mode; what needs proving is that the drop leaves every
 row's remaining data intact and converts nothing — the `true` rows are beta test
 data and become ordinary recipients, not account people (project decision 13).
 """
-import os
-import subprocess
+import shutil
 from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine, event, inspect, text
 
+from tests.integration.migration_support import alembic as _alembic
+from tests.integration.migration_support import build_template
+
 PREVIOUS_HEAD = "b5e1c7d92a04"
 REVISION = "e2b7d4a91c53"
-REPO_ROOT = Path(__file__).resolve().parents[2]
-
-
-def _alembic(command: str, target: str, db_path: Path) -> None:
-    env = dict(os.environ, APP_DATABASE_URL=f"sqlite:///{db_path}")
-    result = subprocess.run(
-        ["alembic", command, target],
-        cwd=REPO_ROOT,
-        env=env,
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stderr
 
 
 def _engine(db_path: Path):
@@ -42,31 +31,38 @@ def _engine(db_path: Path):
     return engine
 
 
+def _seed(conn):
+    conn.execute(
+        text(
+            "INSERT INTO users (id, email, name, password_hash, role, is_active) "
+            "VALUES (1, 'a@t.com', 'A', 'x', 'member', 1)"
+        )
+    )
+    conn.execute(
+        text(
+            "INSERT INTO lists (id, name, owner_id, is_archived, recipient_name, "
+            "recipient_has_account) VALUES "
+            "(1, 'Gran', 1, 0, 'Gran', 1), "
+            "(2, 'Beth', 1, 0, 'Beth', 0), "
+            "(3, 'Mine', 1, 0, NULL, NULL)"
+        )
+    )
+
+
+@pytest.fixture(scope="module")
+def _template(tmp_path_factory):
+    """The schema at the previous head, seeded — built once for the module,
+    so the revision chain is replayed once instead of per test."""
+    return build_template(tmp_path_factory, PREVIOUS_HEAD, _seed, _engine)
+
+
 @pytest.fixture
-def db_path(tmp_path):
+def db_path(tmp_path, _template):
     """A database at the previous head holding all three shapes the column could
     take: a co-resident recipient (`true`), an absent recipient (`false`), and a
     list with no recipient at all (NULL)."""
     path = tmp_path / "drop_recipient_has_account.db"
-    _alembic("upgrade", PREVIOUS_HEAD, path)
-    engine = _engine(path)
-    with engine.begin() as conn:
-        conn.execute(
-            text(
-                "INSERT INTO users (id, email, name, password_hash, role, is_active) "
-                "VALUES (1, 'a@t.com', 'A', 'x', 'member', 1)"
-            )
-        )
-        conn.execute(
-            text(
-                "INSERT INTO lists (id, name, owner_id, is_archived, recipient_name, "
-                "recipient_has_account) VALUES "
-                "(1, 'Gran', 1, 0, 'Gran', 1), "
-                "(2, 'Beth', 1, 0, 'Beth', 0), "
-                "(3, 'Mine', 1, 0, NULL, NULL)"
-            )
-        )
-    engine.dispose()
+    shutil.copy(_template, path)
     return path
 
 

@@ -1,12 +1,13 @@
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
+from sqlalchemy import Row
 from sqlalchemy.orm import Session
 
 from app.access import can_view_list
 from app.budgets import service as budgets_service
 from app.claims import repository as claims_repo
 from app.families import repository as families_repo
-from app.family_invites.service import _require_organizer
 from app.list_occasions import repository as list_occasions_repo
 from app.lists import service as list_service
 from app.models.family_member import FamilyMember
@@ -16,7 +17,16 @@ from app.occasions import repository as repo
 from app.schemas.gift_list import GiftListRead, GiftListViewerRead
 from app.services.exceptions import ForbiddenError, NotFoundError
 
-ORGANIZER_ONLY = "Only organizers can rename or archive an occasion."
+ORGANIZER_ONLY = "Only organizers can rename an occasion."
+ORGANIZER_OR_CREATOR = (
+    "Only organizers or the occasion's creator can archive an occasion."
+)
+
+# Product rules from the project spec §8, not deployment knobs — mirroring
+# `INVITE_EXPIRY_DAYS` in `app/family_invites/service.py`. A per-environment
+# threshold would make the dev seed's stale fixture depend on config.
+ARCHIVE_PROMPT_IDLE_DAYS = 60
+ARCHIVE_PROMPT_SNOOZE_DAYS = 30
 
 
 def _require_member(db: Session, family_id: int, actor: User) -> FamilyMember:
@@ -38,6 +48,18 @@ def _load_for_member(db: Session, occasion_id: int, actor: User) -> Occasion:
         raise NotFoundError("Occasion not found.")
     _require_member(db, occasion.family_id, actor)
     return occasion
+
+
+def _may_archive(membership: FamilyMember, occasion: Occasion, actor: User) -> bool:
+    """The archive nudge's audience: an organizer, or the occasion's creator.
+
+    One predicate rather than two copies, because the eligibility query, the
+    dismissal and the archive write must agree exactly — a user nudged to
+    archive an occasion they then cannot archive is the bug the audience rule
+    creates if these ever drift. Membership is the caller's already-loaded row,
+    so this asks only the half that varies.
+    """
+    return membership.role == "organizer" or occasion.created_by_id == actor.id
 
 
 def list_occasions(
@@ -71,15 +93,41 @@ def get_occasion(db: Session, occasion_id: int, actor: User) -> Occasion:
 def update_occasion(
     db: Session, occasion_id: int, actor: User, update_data: dict
 ) -> Occasion:
-    """Rename or (un)archive an occasion. Organizer-only.
+    """Rename or (un)archive an occasion. **Gated per field, not per endpoint.**
 
-    Renaming changes a label everyone sees and everyone's budgets are filed
-    under, so it matches every other family-wide action in `families/service.py`.
+    | Field | Who |
+    |---|---|
+    | `name` | an organizer |
+    | `is_archived` | an organizer, **or** the occasion's creator |
+
+    Archiving *is* this endpoint with `is_archived`, so leaving the whole of it
+    organizer-only would nudge a member who created an occasion to archive it
+    and then answer 403 when they pressed the button. The project spec's
+    justification for widening the audience — the creator already had the
+    authority to make it — is true of creation and of archiving, and false of
+    renaming: a rename changes a label everyone sees and every budget is filed
+    under, while archiving is reversible, withdraws no shares and still serves
+    every My shopping tab. It was the mildest write on an occasion carrying the
+    strictest gate.
+
+    The gate is on the **field, not the direction**: unarchiving carries the
+    same rule, because a creator who can close an occasion by mistake must be
+    able to reopen it. A request setting both fields at once needs the organizer
+    role, because it contains a rename.
+
+    Membership is required before either check, and for the empty update too —
+    an occasion the caller cannot see must not answer 200 to a no-op.
     """
     occasion = repo.get_occasion(db, occasion_id)
     if occasion is None:
         raise NotFoundError("Occasion not found.")
-    _require_organizer(db, occasion.family_id, actor, message=ORGANIZER_ONLY)
+    membership = _require_member(db, occasion.family_id, actor)
+    if "name" in update_data and membership.role != "organizer":
+        raise ForbiddenError(ORGANIZER_ONLY)
+    if "is_archived" in update_data and not _may_archive(
+        membership, occasion, actor
+    ):
+        raise ForbiddenError(ORGANIZER_OR_CREATOR)
     return repo.update_occasion(db, occasion, update_data)
 
 
@@ -95,13 +143,17 @@ def list_lists(
     one query per list on the occasion.
     """
     _load_for_member(db, occasion_id, actor)
-    return [
-        list_service.to_summary(gift_list, actor.id)
-        for gift_list in list_occasions_repo.get_lists_shared_to_occasion(
-            db, occasion_id
-        )
-        if can_view_list(db, actor, gift_list)
-    ]
+    return list_service.to_summaries(
+        db,
+        [
+            gift_list
+            for gift_list in list_occasions_repo.get_lists_shared_to_occasion(
+                db, occasion_id
+            )
+            if can_view_list(db, actor, gift_list)
+        ],
+        actor.id,
+    )
 
 
 def list_shopping(db: Session, occasion_id: int, actor: User) -> dict:
@@ -146,4 +198,68 @@ def clear_budget(db: Session, occasion_id: int, actor: User) -> dict:
     _load_for_member(db, occasion_id, actor)
     return budgets_service.clear_budget(
         db, user_id=actor.id, occasion_id=occasion_id
+    )
+
+
+def list_all_occasions(db: Session, actor: User, archived: bool) -> list[Row]:
+    """Every occasion the caller can see, across every family they belong to.
+
+    Deliberately takes no family and no user parameter. The repository scopes
+    the query by the caller's own memberships and keys both counts and the
+    claim half of the clock on the caller's own id, so "you cannot read anyone
+    else's counts" is the shape of the question rather than a check that could
+    be forgotten (`CONTEXT.md` invariant 1, ADR 0005).
+
+    There is no membership gate here for the same reason: an occasion the
+    caller cannot see is not a row this query filters out, it is a row it never
+    produces. A caller in no families gets an empty list, not a 404.
+    """
+    return repo.get_occasion_summaries(db, user_id=actor.id, archived=archived)
+
+
+def list_archive_prompts(db: Session, actor: User) -> list[Row]:
+    """Every occasion the caller should be asked to archive.
+
+    Deliberately takes no parameter beyond the caller — no family, no user, no
+    filter. The repository scopes the query by the caller's own memberships and
+    keys the snooze on their own id, so "you cannot read anyone else's prompts"
+    is the shape of the question rather than a check that could be forgotten
+    (`CONTEXT.md` invariant 1).
+
+    There is no membership gate here for the same reason `list_all_occasions`
+    has none: an occasion the caller cannot see is not a row this query filters
+    out, it is a row it never produces. A caller with nothing to answer gets an
+    empty list, never a 404.
+    """
+    return repo.get_archive_prompts(
+        db, user_id=actor.id, idle_days=ARCHIVE_PROMPT_IDLE_DAYS
+    )
+
+
+def dismiss_archive_prompt(db: Session, occasion_id: int, actor: User) -> None:
+    """Record "not yet" against this occasion, for this caller alone.
+
+    Re-checks the audience — membership, and organizer-or-creator — and
+    **deliberately does not re-check staleness or the existing snooze.** The
+    race is ordinary: the banner renders, somebody shares into the occasion, and
+    only then does the user press Not yet. Refusing that call with a 409 would
+    fail a button that was on screen, for a reason the user cannot explain, and
+    would hand the banner an error branch that exists only to be swallowed.
+    Anyone who could ever be nudged may record "not yet"; the worst case is a
+    harmless row on an occasion that is no longer stale.
+
+    The 30 days is the server's rule, which is why the endpoint takes no body.
+    """
+    occasion = repo.get_occasion(db, occasion_id)
+    if occasion is None:
+        raise NotFoundError("Occasion not found.")
+    membership = _require_member(db, occasion.family_id, actor)
+    if not _may_archive(membership, occasion, actor):
+        raise ForbiddenError(ORGANIZER_OR_CREATOR)
+    repo.upsert_dismissal(
+        db,
+        user_id=actor.id,
+        occasion_id=occasion_id,
+        dismissed_until=datetime.now(timezone.utc)
+        + timedelta(days=ARCHIVE_PROMPT_SNOOZE_DAYS),
     )
