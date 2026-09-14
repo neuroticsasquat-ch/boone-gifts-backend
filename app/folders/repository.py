@@ -34,11 +34,18 @@ def get_folder_by_id(db: Session, folder_id: int) -> Folder | None:
 
 
 def get_lists_for_folder(db: Session, folder: Folder) -> list[GiftList]:
-    list_ids = [item.list_id for item in folder.items]
-    if not list_ids:
-        return []
+    """The lists the folder holds, read through `folder_items` rather than the
+    loaded `items` collection: a session that has just deleted an item still
+    carries it in memory, and a query cannot be stale."""
     return list(
-        db.execute(select(GiftList).where(GiftList.id.in_(list_ids))).scalars().all()
+        db.execute(
+            select(GiftList)
+            .join(FolderItem, FolderItem.list_id == GiftList.id)
+            .where(FolderItem.folder_id == folder.id)
+            .order_by(GiftList.id)
+        )
+        .scalars()
+        .all()
     )
 
 

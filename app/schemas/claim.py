@@ -3,7 +3,7 @@ from decimal import Decimal
 
 from pydantic import BaseModel
 
-from app.schemas.budget import BudgetRollup
+from app.schemas.budget import BudgetBlock
 
 
 class PurchaseCreate(BaseModel):
@@ -86,6 +86,7 @@ class ShoppingItem(BaseModel):
     price: Decimal | None
     list_id: int
     list_name: str
+    giftee_key: str
     purchased_at: datetime | None
     amount_paid: Decimal | None
 
@@ -105,14 +106,16 @@ class ClaimRead(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class ShoppingPayload(BaseModel):
-    """A shopping tab: the caller's own claims, and the budget they count
-    against.
+class ShoppingPayload(BudgetBlock):
+    """A shopping tab: the caller's own claims, the giftees they are grouped
+    by, and the budgets they count against.
 
     The rollup travels with the items rather than behind a second endpoint
     because the two are one screen and must agree — a budget line fetched
-    separately can render a total that the list beside it contradicts.
+    separately can render a total that the list beside it contradicts. The
+    giftees ride along for the same reason: every distinct `giftee_key` on
+    `items` has an entry in `giftees`, so the client never groups a row under
+    a heading it does not have.
     """
 
-    budget: BudgetRollup
     items: list[ShoppingItem]

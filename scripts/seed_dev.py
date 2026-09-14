@@ -31,6 +31,7 @@ from sqlalchemy import select
 
 from app.database import Base, SessionLocal, engine
 from app.models.budget import Budget
+from app.models.giftee_budget import GifteeBudget
 from app.models.claim import Claim
 from app.models.account_person import AccountPerson
 from app.models.folder import Folder
@@ -126,6 +127,16 @@ def purge(db) -> int:
             Budget.occasion_id.in_(occasion_ids)
             | Budget.folder_id.in_(folder_ids)
             | Budget.user_id.in_(user_ids)
+        ).delete(synchronize_session=False)
+    # Giftee budgets point at the same three, and at the list owner and the
+    # account person a giftee resolves through — both fixture users', so the
+    # user route covers them (NEU-1326).
+    if occasion_ids or folder_ids or user_ids:
+        db.query(GifteeBudget).filter(
+            GifteeBudget.occasion_id.in_(occasion_ids)
+            | GifteeBudget.folder_id.in_(folder_ids)
+            | GifteeBudget.user_id.in_(user_ids)
+            | GifteeBudget.owner_id.in_(user_ids)
         ).delete(synchronize_session=False)
     # Archive prompts point at the occasions below and the users above, exactly
     # as the budgets do, and go by both routes for the same reason: a fixture

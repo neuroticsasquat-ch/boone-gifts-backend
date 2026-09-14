@@ -104,6 +104,7 @@ def delete_family(db: Session, family_id: int, user_id: int) -> None:
     list_occasion_repo.delete_shares_for_family(db, family_id)
     occasion_ids = occasions_repo.get_occasion_ids_for_family(db, family_id)
     budgets_repo.delete_budgets_for_occasions(db, occasion_ids)
+    budgets_repo.delete_giftee_budgets_for_occasions(db, occasion_ids)
     # Beside the budgets and for the same reason: an archive prompt points at an
     # occasion that is about to go, and a snooze has nothing to survive for once
     # the occasion it snoozed does not exist.

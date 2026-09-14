@@ -70,6 +70,7 @@ def delete_folder(db: Session, folder: Folder) -> None:
     # The budget filed against this folder goes with it: nothing else points at
     # it, and its foreign key would refuse the delete if it were left behind.
     budgets_repo.delete_budgets_for_folder(db, folder.id)
+    budgets_repo.delete_giftee_budgets_for_folder(db, folder.id)
     repo.delete_folder(db, folder)
 
 
@@ -99,8 +100,9 @@ def get_folder_ids_for_list(db: Session, list_id: int, owner_id: int) -> list[in
     return repo.get_folder_ids_for_list(db, list_id, owner_id)
 
 
-def get_shopping(db: Session, folder_id: int, user_id: int) -> dict:
-    """The folder's shopping tab, and the budget its rows count against.
+def get_shopping(db: Session, folder_id: int, user: User) -> dict:
+    """The folder's shopping tab, the giftees its rows are grouped by, and the
+    budgets they count against.
 
     The queries live with the other claim queries (`app/claims/repository.py`)
     and in `app/budgets/`, not here. Ownership of the folder is checked by the
@@ -109,10 +111,8 @@ def get_shopping(db: Session, folder_id: int, user_id: int) -> dict:
     budget.
     """
     return {
-        "budget": budgets_service.get_rollup(
-            db, user_id=user_id, folder_id=folder_id
-        ),
-        "items": claims_repo.get_shopping_for_folder(db, folder_id, user_id),
+        **budgets_service.get_block(db, actor=user, folder_id=folder_id),
+        "items": claims_repo.get_shopping_for_folder(db, folder_id, user.id),
     }
 
 
@@ -125,3 +125,21 @@ def set_budget(db: Session, folder_id: int, user_id: int, amount: Decimal) -> di
 
 def clear_budget(db: Session, folder_id: int, user_id: int) -> dict:
     return budgets_service.clear_budget(db, user_id=user_id, folder_id=folder_id)
+
+
+def set_giftee_budget(
+    db: Session, folder_id: int, user: User, giftee_key: str, amount: Decimal
+) -> dict:
+    """Set the caller's own budget for one giftee in this folder, and return
+    the whole budget block (NEU-1326 decision 6)."""
+    return budgets_service.set_giftee_budget(
+        db, actor=user, giftee_key=giftee_key, amount=amount, folder_id=folder_id
+    )
+
+
+def clear_giftee_budget(
+    db: Session, folder_id: int, user: User, giftee_key: str
+) -> dict:
+    return budgets_service.clear_giftee_budget(
+        db, actor=user, giftee_key=giftee_key, folder_id=folder_id
+    )

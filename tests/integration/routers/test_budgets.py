@@ -9,6 +9,7 @@ from decimal import Decimal
 
 import pytest
 
+from app.budgets.giftees import key_for
 from app.dependencies import create_access_token
 from app.models.claim import Claim
 from app.models.family import Family
@@ -17,6 +18,7 @@ from app.models.folder import Folder
 from app.models.folder_item import FolderItem
 from app.models.gift import Gift
 from app.models.gift_list import GiftList
+from app.models.list_occasion_share import ListOccasionShare
 from app.models.occasion import Occasion
 from app.models.user import User
 
@@ -109,6 +111,10 @@ def test_put_sets_the_budget_and_returns_the_rollup(
         "bought_count": 0,
         "total_count": 0,
         "unpriced_count": 0,
+        "allocated": "0.00",
+        "unallocated": "200.00",
+        "target": "200.00",
+        "allocation_count": 0,
     }
 
 
@@ -167,6 +173,10 @@ def test_delete_clears_the_target_and_keeps_the_counts(
         "bought_count": 1,
         "total_count": 1,
         "unpriced_count": 0,
+        "allocated": "0.00",
+        "unallocated": None,
+        "target": None,
+        "allocation_count": 0,
     }
 
 
@@ -499,6 +509,10 @@ def test_no_endpoint_returns_another_users_budget_or_spend(
         "bought_count": 1,
         "total_count": 1,
         "unpriced_count": 0,
+        "allocated": "0.00",
+        "unallocated": "200.00",
+        "target": "200.00",
+        "allocation_count": 0,
     }
     assert theirs["budget"]["amount"] == "1000.00"
     assert theirs["budget"]["spent"] == "500.00"
@@ -562,6 +576,10 @@ def test_folder_budget_counts_claims_on_the_folders_lists(
         "bought_count": 1,
         "total_count": 1,
         "unpriced_count": 0,
+        "allocated": "0.00",
+        "unallocated": "50.00",
+        "target": "50.00",
+        "allocation_count": 0,
     }
 
 
@@ -708,3 +726,95 @@ def test_purging_a_user_takes_their_folder_budget_with_them(
     )
 
     assert response.status_code == 204
+
+
+# ---------------------------------------------------------------------------
+# The overall rollup with giftee budgets beneath it (NEU-1326 criterion 10)
+# ---------------------------------------------------------------------------
+
+
+def _giftee_put(client, headers, occasion, key, amount):
+    return client.put(
+        f"/occasions/{occasion.id}/giftees/{key}/budget",
+        json={"amount": amount},
+        headers=headers,
+    )
+
+
+def test_rollup_with_no_overall_and_no_giftee_budgets_has_no_target(
+    client, db, member_user, member_headers, occasion, gift_list
+):
+    _claim(db, gift_list, member_user, "Skillet", occasion=occasion)
+
+    budget = client.get(
+        f"/occasions/{occasion.id}/shopping", headers=member_headers
+    ).json()["budget"]
+
+    assert budget["target"] is None
+    assert budget["remaining"] is None
+    assert budget["allocated"] == "0.00"
+    assert budget["unallocated"] is None
+    assert budget["allocation_count"] == 0
+
+
+def test_an_unset_overall_reads_as_the_sum_of_the_giftee_budgets(
+    client, db, member_user, member_headers, occasion, gift_list, other_member
+):
+    """`amount` stays null so the client still offers *Set budget*; `target`
+    and `remaining` carry the derived figure."""
+    second = GiftList(name="Gran's Stocking", owner_id=other_member.id, recipient_name="Gran")
+    db.add(second)
+    db.flush()
+    db.add(ListOccasionShare(list_id=gift_list.id, occasion_id=occasion.id))
+    db.add(ListOccasionShare(list_id=second.id, occasion_id=occasion.id))
+    db.flush()
+    _claim(
+        db, gift_list, member_user, "Shoes",
+        occasion=occasion, purchased_at=BOUGHT, amount_paid=Decimal("42.00"),
+    )
+    assert _giftee_put(client, member_headers, occasion, f"owner:{other_member.id}", "100.00").status_code == 200
+    assert _giftee_put(client, member_headers, occasion, key_for(second), "130.00").status_code == 200
+
+    budget = client.get(
+        f"/occasions/{occasion.id}/shopping", headers=member_headers
+    ).json()["budget"]
+
+    assert budget["amount"] is None
+    assert budget["target"] == "230.00"
+    assert budget["remaining"] == "188.00"
+    assert budget["allocated"] == "230.00"
+    assert budget["unallocated"] is None
+    assert budget["allocation_count"] == 2
+
+
+def test_a_set_overall_reports_over_allocation_and_what_is_left(
+    client, db, member_headers, occasion, gift_list, other_member
+):
+    second = GiftList(name="Gran's Stocking", owner_id=other_member.id, recipient_name="Gran")
+    db.add(second)
+    db.flush()
+    db.add(ListOccasionShare(list_id=gift_list.id, occasion_id=occasion.id))
+    db.add(ListOccasionShare(list_id=second.id, occasion_id=occasion.id))
+    db.flush()
+    client.put(f"/occasions/{occasion.id}/budget", json={"amount": "200.00"}, headers=member_headers)
+    _giftee_put(client, member_headers, occasion, f"owner:{other_member.id}", "100.00")
+    _giftee_put(client, member_headers, occasion, key_for(second), "130.00")
+
+    over = client.get(
+        f"/occasions/{occasion.id}/shopping", headers=member_headers
+    ).json()["budget"]
+    assert over["target"] == "200.00"
+    assert over["allocated"] == "230.00"
+    assert over["unallocated"] == "-30.00"
+    assert over["allocation_count"] == 2
+
+    client.delete(f"/occasions/{occasion.id}/giftees/{key_for(second)}/budget", headers=member_headers)
+    _giftee_put(client, member_headers, occasion, f"owner:{other_member.id}", "150.00")
+
+    under = client.get(
+        f"/occasions/{occasion.id}/shopping", headers=member_headers
+    ).json()["budget"]
+    assert under["target"] == "200.00"
+    assert under["allocated"] == "150.00"
+    assert under["unallocated"] == "50.00"
+    assert under["allocation_count"] == 1

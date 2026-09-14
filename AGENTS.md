@@ -237,12 +237,14 @@ on the gift. See `docs/adr/0003-claims-are-their-own-table.md`.
 #### Shopping tabs
 `GET /occasions/{id}/shopping` (any member of the occasion's family) and
 `GET /folders/{id}/shopping` (the folder's owner) are the same payload under two scopes:
-`{ budget, items }`, where each item is one of the caller's own claims carrying the gift, the
-owner's asking price, the list it came from, and the claimer's `purchased_at` and `amount_paid`.
-Ordered by list then gift — "grouped by list" is the client grouping on `list_id`, and the order is
-stable across reloads. The `budget` half is the rollup described under "Budgets" below; it rides
-with the rows rather than sitting behind a second call, because a total fetched separately can
-render a figure the list beneath it contradicts.
+`{ budget, giftees, items }`, where each item is one of the caller's own claims carrying the
+gift, the owner's asking price, the list it came from, the `giftee_key` of who that list is for,
+and the claimer's `purchased_at` and `amount_paid`. Ordered by list then gift, stable across
+reloads; "grouped by giftee" is the client grouping on `giftee_key`, and `giftees` is every
+giftee in scope — including those with no row yet — each with its own rollup (see "Giftee budgets"
+below). The `budget` half is the rollup described under "Budgets" below; both ride with the rows
+rather than sitting behind a second call, because a total fetched separately can render a figure
+the list beneath it contradicts.
 
 - **Only ever the caller's own claims.** There is no parameter, no admin path and no aggregate that
   returns anyone else's — `CONTEXT.md` invariant 1, not a preference. Both queries are keyed on the
@@ -337,6 +339,48 @@ money and never see any.
 - **No stored currency** — `amount` is a bare `Numeric(10,2)`, like `claims.amount_paid` and
   `gifts.price`. See the project spec §14.1 for why
 
+#### Giftee budgets
+The split beneath the overall (NEU-1326): what one user means to spend on one **giftee** within
+one occasion or folder. A giftee is who a list is *for* — its owner, the account person it is
+marked for, or the recipient it is kept for — **derived from the list's three columns and never
+stored as its own row** (`docs/adr/0006-a-giftee-is-derived-from-the-list.md`). Two lists
+agreeing on `(owner_id, account_person_id, recipient_name)` are one giftee.
+- **Key**: `app/budgets/giftees.py` is the only module that knows the format — `owner:{owner_id}`,
+  `person:{account_person_id}`, or `absent:{owner_id}:{name_b64}` (base64url, no padding, so any
+  name is one path segment). The client treats keys as opaque: it receives them on `giftees[]` and
+  on every shopping item's `giftee_key`, and sends one back on a write
+- **Table**: `giftee_budgets` (user_id indexed, occasion_id / folder_id nullable, giftee_key,
+  owner_id FK users, account_person_id FK account_people nullable, recipient_name, amount), unique
+  on `(user_id, occasion_id, giftee_key)` and `(user_id, folder_id, giftee_key)`. Both the key
+  *and* the triple: uniqueness needs one non-null column, the cascades need real FKs, and the
+  service is the only writer of all four
+- **Endpoints**: `PUT`/`DELETE /occasions/{id}/giftees/{key}/budget` and
+  `/folders/{id}/giftees/{key}/budget`, gated exactly as the overall's. Both answer **200** with a
+  `BudgetBlock` — `{ budget, giftees }` — because a giftee write moves that giftee's line *and*
+  the overall's `allocated` / `target`. A malformed key is **400**; a well-formed key for a giftee
+  the caller cannot see in this scope (and holds no row for) is **404**; `DELETE` with no row is 404
+- **The giftee set** on a shopping payload is the union of three sources, computed per request:
+  visible lists in scope minus the caller's own (they cannot claim on them), the lists behind the
+  caller's own claims in scope, and the caller's own giftee budget rows. The third is what keeps a
+  budget whose lists have left the scope — share revoked, item removed, recipient renamed — visible
+  as an empty, labelled, removable group: nothing that counts toward `allocated` may be invisible.
+  Order: giftees with a shopping row first, then the rest, each half by name then key
+- **The rollup grew**: `allocated` (sum of the caller's giftee budgets in scope), `unallocated`
+  (`amount − allocated`, null when `amount` is; may be negative — over-allocation is reported,
+  never refused), `target` (`amount` when set, else `allocated` when any giftee budget exists,
+  else null) and `allocation_count`. `remaining` is now `target − spent`. `amount` keeps meaning
+  the *set* overall and stays the client's one predicate for *set* versus *edit*. Each giftee
+  carries a rollup of the same shape over that giftee's lists (a leaf: `allocated = 0`,
+  `unallocated` null). Per-giftee spend is `_spend_by_giftee_select` in `app/claims/repository.py`,
+  sharing the overall's aggregate expressions so spend-follows-the-tick is inherited, not copied
+- **The two tables never write each other.** Setting or clearing the overall touches no giftee row
+  and vice versa; an unset overall *reads as* the sum but is never written from it
+- **Cascades**, each beside the overall's: folder deleted, family deleted (its occasions), user
+  purged (rows they set *and* rows resolving through their lists, `owner_id`), and an account
+  person removed through `PUT /account` (`delete_giftee_budgets_for_people` before
+  `delete_people`, or the FK refuses). A recipient rename and a list leaving the scope are
+  deliberately **not** cascades
+
 ## Data model notes
 - **Lists carry a recipient**: `recipient_name` alone, meaning one thing — a person with no account. Read `GiftList.kept_for_absent_person` rather than testing the column. The co-resident case that `recipient_has_account = true` used to cover is an account person now (dropped in `e2b7d4a91c53`)
 - **Lists may instead carry an account person**: `account_person_id`, mutually exclusive with `recipient_name` (both null is a legal household list). See "Shared accounts" below
@@ -364,6 +408,7 @@ money and never see any.
 | `d4c8a1f92b60` | `claims` table, **backfilled** from `gifts`; drop `gifts.claimed_by_id`, `claimed_at`, `purchased_at` |
 | `c1f9a7d4e260` | `budgets` table |
 | `f6b2c9e41a58` | `occasion_archive_prompts` table |
+| `b3e8d1c7a925` | `giftee_budgets` table |
 
 ## Testing
 - ~1078 test functions across 69 files

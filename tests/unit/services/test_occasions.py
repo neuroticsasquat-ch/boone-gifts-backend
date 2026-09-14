@@ -356,7 +356,7 @@ def test_shopping_is_scoped_to_the_caller(mock_shopping, budgets_service):
     no parameter that could widen either to another member's claims."""
     db = MagicMock()
     mock_shopping.return_value = [{"name": "Skillet"}]
-    budgets_service.get_rollup.return_value = {"amount": None}
+    budgets_service.get_block.return_value = {"budget": {"amount": None}, "giftees": []}
     actor = _make_user(id=10)
 
     with patch(REPO) as repo, patch(FAMILIES_REPO) as families_repo:
@@ -367,8 +367,12 @@ def test_shopping_is_scoped_to_the_caller(mock_shopping, budgets_service):
         result = service.list_shopping(db, occasion_id=5, actor=actor)
 
     mock_shopping.assert_called_once_with(db, 5, 10)
-    budgets_service.get_rollup.assert_called_once_with(db, user_id=10, occasion_id=5)
-    assert result == {"budget": {"amount": None}, "items": [{"name": "Skillet"}]}
+    budgets_service.get_block.assert_called_once_with(db, actor=actor, occasion_id=5)
+    assert result == {
+        "budget": {"amount": None},
+        "giftees": [],
+        "items": [{"name": "Skillet"}],
+    }
 
 
 @patch(BUDGETS_SERVICE)
