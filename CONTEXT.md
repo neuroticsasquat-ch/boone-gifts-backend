@@ -105,5 +105,7 @@ vacated by the rename precisely so the family concept could claim it.
     mutually exclusive with exactly one set, enforced in `app/budgets/service.py`.
     **The money total always discloses its own incompleteness**: a purchase whose `amount_paid` is
     null counts toward `bought_count` and `unpriced_count` and never toward `spent`, and is never
-    guessed at from the owner's asking price. A budget dies with its scope — deleting a folder, a
+    guessed at from the owner's asking price. **Spend follows the tick**: an amount held on a
+    claim that is not ticked bought is kept, so re-ticking need not retype it, but counts as
+    nothing until it is. A budget dies with its scope — deleting a folder, a
     family (through its occasions) or a user clears the budgets pointing at it.

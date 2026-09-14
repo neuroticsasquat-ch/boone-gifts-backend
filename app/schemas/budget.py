@@ -33,6 +33,10 @@ class BudgetRollup(BaseModel):
     `unpriced_count` and never toward `spent`, so a client that renders
     `unpriced_count` reads an understated total as an understatement rather
     than as fact.
+
+    **`spent` counts ticked claims only.** An amount held on a claim that is
+    not ticked bought is kept on the claim — re-ticking need not retype it —
+    but counts as zero here until it is ticked again (NEU-1325).
     """
 
     amount: Decimal | None

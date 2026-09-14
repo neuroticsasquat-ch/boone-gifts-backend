@@ -273,29 +273,111 @@ def test_rollup_counts_bought_but_never_guesses_at_an_unrecorded_amount(
     assert budget["unpriced_count"] == 2
 
 
-def test_an_amount_survives_unticking_and_stays_in_the_spend(
-    client, db, member_user, member_headers, occasion, gift_list
+def test_unticking_holds_the_amount_and_takes_it_out_of_the_spend(
+    client, db, member_user, member_headers, occasion, sample_list
 ):
-    """`spent` counts recorded money; the counts describe shopping.
+    """Spend follows the tick, over the real untick endpoint.
 
-    Unticking keeps `amount_paid` so re-ticking need not retype it
-    (`app/gifts/service.py:unpurchase_gift`), and that money stays in the
-    total: it left the claimer's pocket either way, and dropping it silently —
-    with no `unpriced_count` to disclose the gap — is the one failure a budget
-    line must not have. `bought_count` is what moves.
+    `DELETE .../purchase` keeps `amount_paid` so re-ticking need not retype it
+    (`app/gifts/service.py:unpurchase_gift`), but a gift the claimer has said
+    they have *not* bought is not charged against their budget. The amount is
+    held, not counted — and the shopping row still carries it, because that is
+    what seeds the prompt on re-tick.
     """
     claim = _claim(
-        db, gift_list, member_user, "Shoes",
+        db, sample_list, member_user, "Shoes",
         occasion=occasion, purchased_at=BOUGHT, amount_paid=Decimal("85.00"),
+    )
+
+    client.delete(
+        f"/lists/{sample_list.id}/gifts/{claim.gift_id}/purchase",
+        headers=member_headers,
+    )
+
+    payload = client.get(
+        f"/occasions/{occasion.id}/shopping", headers=member_headers
+    ).json()
+
+    assert payload["budget"]["spent"] == "0.00"
+    assert payload["budget"]["bought_count"] == 0
+    assert payload["budget"]["unpriced_count"] == 0
+    assert payload["budget"]["total_count"] == 1
+    assert payload["items"][0]["amount_paid"] == "85.00"
+
+
+def test_re_ticking_brings_the_held_amount_back_into_the_spend(
+    client, db, member_user, member_headers, occasion, sample_list
+):
+    """The other half of the tick, over the real endpoints.
+
+    The re-tick sends no body, so the held amount is what stands: the budget
+    counts it again without the claimer retyping it.
+    """
+    claim = _claim(
+        db, sample_list, member_user, "Shoes",
+        occasion=occasion, purchased_at=BOUGHT, amount_paid=Decimal("85.00"),
+    )
+    client.delete(
+        f"/lists/{sample_list.id}/gifts/{claim.gift_id}/purchase",
+        headers=member_headers,
+    )
+
+    response = client.post(
+        f"/lists/{sample_list.id}/gifts/{claim.gift_id}/purchase",
+        headers=member_headers,
+    )
+
+    assert response.status_code == 200
+    budget = client.get(
+        f"/occasions/{occasion.id}/shopping", headers=member_headers
+    ).json()["budget"]
+    assert budget["spent"] == "85.00"
+    assert budget["bought_count"] == 1
+    assert budget["unpriced_count"] == 0
+    assert budget["total_count"] == 1
+
+
+def test_an_amount_patched_onto_an_unticked_claim_is_not_spent(
+    client, db, member_user, member_headers, occasion, gift_list
+):
+    """The frontend never offers this path; the rule holds for the API anyway."""
+    claim = _claim(db, gift_list, member_user, "Shoes", occasion=occasion)
+
+    response = client.patch(
+        f"/claims/{claim.id}",
+        json={"amount_paid": "85.00"},
+        headers=member_headers,
+    )
+
+    # The amount really was written — otherwise the rollup below would read
+    # "0.00" for the wrong reason entirely.
+    assert response.json()["amount_paid"] == "85.00"
+    budget = client.get(
+        f"/occasions/{occasion.id}/shopping", headers=member_headers
+    ).json()["budget"]
+    assert budget["spent"] == "0.00"
+    assert budget["bought_count"] == 0
+    assert budget["unpriced_count"] == 0
+    assert budget["total_count"] == 1
+
+
+def test_a_folder_rollup_also_stops_at_the_tick(
+    client, db, member_user, member_headers, folder, folder_item, sample_list
+):
+    """Both tabs read one select, so the folder scope cannot drift from the
+    occasion scope — this pins the shared gate on the other side of it."""
+    claim = _claim(
+        db, sample_list, member_user, "In the folder",
+        purchased_at=BOUGHT, amount_paid=Decimal("31.50"),
     )
     claim.purchased_at = None
     db.flush()
 
     budget = client.get(
-        f"/occasions/{occasion.id}/shopping", headers=member_headers
+        f"/folders/{folder.id}/shopping", headers=member_headers
     ).json()["budget"]
 
-    assert budget["spent"] == "85.00"
+    assert budget["spent"] == "0.00"
     assert budget["bought_count"] == 0
     assert budget["unpriced_count"] == 0
     assert budget["total_count"] == 1

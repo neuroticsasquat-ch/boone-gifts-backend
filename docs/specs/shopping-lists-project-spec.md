@@ -258,6 +258,9 @@ An understated total must read as an understatement, never as fact. Purchases wi
 null are counted in the "bought" tally and excluded from the money tally, and the count of them is
 always shown when it is non-zero.
 
+Spend follows the tick: an amount held on a claim that is not ticked bought is stored, so re-ticking
+need not retype it, but is not counted toward the money tally (NEU-1325).
+
 ---
 
 ## 8. Simple mode is retired
