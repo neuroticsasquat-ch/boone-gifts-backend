@@ -226,20 +226,28 @@ def _spend_select():
     owner's asking price. That is what lets a client state an understated total
     as an understatement (project spec §7).
 
-    **`spent` counts recorded money; the two counts describe shopping.** They
-    are deliberately driven off different columns, so an amount recorded on a
-    claim that is not ticked bought — by `PATCH /claims/{id}`, or by unticking,
-    which keeps the amount so re-ticking need not retype it — still counts as
-    spent while `bought_count` does not move. Gating the money on
-    `purchased_at` instead would drop that amount out of the total silently,
-    with no `unpriced_count` to disclose it: the money left the claimer's
-    pocket either way, and a total that quietly omits it is the one failure a
-    budget line must not have.
+    **Spend follows the tick** (NEU-1325). The sum is gated on `purchased_at`,
+    the same column `bought_count` and `unpriced_count` read, so an amount
+    sitting on a claim that is not ticked bought — held by unticking so
+    re-ticking need not retype it, or written straight on by
+    `PATCH /claims/{id}` — counts as nothing until the claim is ticked again.
+    An unticked gift is one the claimer has said they have *not* bought, and a
+    budget line that charges them for it is wrong, not cautious. The amount is
+    still stored on the claim and still travels on the shopping row; only the
+    total ignores it.
     """
     return select(
         func.count(Claim.id).label("total_count"),
         func.count(Claim.purchased_at).label("bought_count"),
-        func.coalesce(func.sum(Claim.amount_paid), 0).label("spent"),
+        func.coalesce(
+            func.sum(
+                case(
+                    (Claim.purchased_at.isnot(None), Claim.amount_paid),
+                    else_=0,
+                )
+            ),
+            0,
+        ).label("spent"),
         func.coalesce(
             func.sum(
                 case(
