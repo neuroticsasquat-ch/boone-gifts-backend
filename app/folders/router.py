@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 
 from app.folders import service as folder_service
 from app.dependencies import CurrentUser, DbSession, OwnedFolder
-from app.schemas.budget import BudgetRollup, BudgetWrite
+from app.schemas.budget import BudgetBlock, BudgetRollup, BudgetWrite
 from app.schemas.claim import ShoppingPayload
 from app.schemas.folder import (
     FolderCreate,
@@ -11,7 +11,12 @@ from app.schemas.folder import (
     FolderRead,
     FolderUpdate,
 )
-from app.services.exceptions import ConflictError, ForbiddenError, NotFoundError
+from app.services.exceptions import (
+    BadRequestError,
+    ConflictError,
+    ForbiddenError,
+    NotFoundError,
+)
 
 router = APIRouter(prefix="/folders", tags=["folders"])
 
@@ -88,7 +93,7 @@ def remove_item(list_id: int, folder: OwnedFolder, db: DbSession):
 # so the caller is always reading their own claims.
 @router.get("/{folder_id}/shopping", response_model=ShoppingPayload)
 def get_shopping(folder: OwnedFolder, user: CurrentUser, db: DbSession):
-    return folder_service.get_shopping(db, folder.id, user.id)
+    return folder_service.get_shopping(db, folder.id, user)
 
 
 @router.put("/{folder_id}/budget", response_model=BudgetRollup)
@@ -104,5 +109,40 @@ def set_budget(
 def clear_budget(folder: OwnedFolder, user: CurrentUser, db: DbSession):
     try:
         return folder_service.clear_budget(db, folder.id, user.id)
+    except NotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+
+
+# The per-giftee split beneath the overall (NEU-1326). Answers with the whole
+# block: a giftee write moves that giftee's line and the overall's `allocated`
+# / `target` at once. `OwnedFolder` is the whole access story, as above.
+@router.put("/{folder_id}/giftees/{giftee_key}/budget", response_model=BudgetBlock)
+def set_giftee_budget(
+    giftee_key: str,
+    request: BudgetWrite,
+    folder: OwnedFolder,
+    user: CurrentUser,
+    db: DbSession,
+):
+    try:
+        return folder_service.set_giftee_budget(
+            db, folder.id, user, giftee_key, request.amount
+        )
+    except BadRequestError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except NotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+
+
+@router.delete(
+    "/{folder_id}/giftees/{giftee_key}/budget", response_model=BudgetBlock
+)
+def clear_giftee_budget(
+    giftee_key: str, folder: OwnedFolder, user: CurrentUser, db: DbSession
+):
+    try:
+        return folder_service.clear_giftee_budget(db, folder.id, user, giftee_key)
+    except BadRequestError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except NotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)

@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 
 from app.dependencies import CurrentUser, DbSession
 from app.occasions import service as occasion_service
-from app.schemas.budget import BudgetRollup, BudgetWrite
+from app.schemas.budget import BudgetBlock, BudgetRollup, BudgetWrite
 from app.schemas.claim import ShoppingPayload
 from app.schemas.occasion import (
     ArchivePrompt,
@@ -13,7 +13,7 @@ from app.schemas.occasion import (
     OccasionSummary,
     OccasionUpdate,
 )
-from app.services.exceptions import ForbiddenError, NotFoundError
+from app.services.exceptions import BadRequestError, ForbiddenError, NotFoundError
 
 # Occasions live under two path roots — the family that owns them, and the
 # occasion itself — so the paths are spelled out rather than carried by a prefix.
@@ -177,6 +177,56 @@ def clear_occasion_budget(occasion_id: int, user: CurrentUser, db: DbSession):
     except ForbiddenError:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
 
+
+# The per-giftee split beneath the overall (NEU-1326). Answers with the whole
+# block rather than one rollup: a giftee write moves that giftee's line and the
+# overall's `allocated` / `target` at once. The key is opaque to the client; a
+# malformed one is a 400, a well-formed one for a giftee not in this scope is a
+# 404, and the access gate is the occasion's own.
+@router.put(
+    "/occasions/{occasion_id}/giftees/{giftee_key}/budget",
+    response_model=BudgetBlock,
+)
+def set_occasion_giftee_budget(
+    occasion_id: int,
+    giftee_key: str,
+    request: BudgetWrite,
+    user: CurrentUser,
+    db: DbSession,
+):
+    try:
+        return occasion_service.set_giftee_budget(
+            db,
+            occasion_id=occasion_id,
+            actor=user,
+            giftee_key=giftee_key,
+            amount=request.amount,
+        )
+    except BadRequestError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except NotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    except ForbiddenError:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+
+
+@router.delete(
+    "/occasions/{occasion_id}/giftees/{giftee_key}/budget",
+    response_model=BudgetBlock,
+)
+def clear_occasion_giftee_budget(
+    occasion_id: int, giftee_key: str, user: CurrentUser, db: DbSession
+):
+    try:
+        return occasion_service.clear_giftee_budget(
+            db, occasion_id=occasion_id, actor=user, giftee_key=giftee_key
+        )
+    except BadRequestError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except NotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    except ForbiddenError:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
 
 # No body: the 30-day snooze is the server's rule, not the client's. 204 rather
 # than the prompt list, because the banner already knows which row it removed

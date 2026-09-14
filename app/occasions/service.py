@@ -193,9 +193,7 @@ def list_shopping(db: Session, occasion_id: int, actor: User) -> dict:
     """
     _load_for_member(db, occasion_id, actor)
     return {
-        "budget": budgets_service.get_rollup(
-            db, user_id=actor.id, occasion_id=occasion_id
-        ),
+        **budgets_service.get_block(db, actor=actor, occasion_id=occasion_id),
         "items": claims_repo.get_shopping_for_occasion(db, occasion_id, actor.id),
     }
 
@@ -217,6 +215,31 @@ def clear_budget(db: Session, occasion_id: int, actor: User) -> dict:
     _load_for_member(db, occasion_id, actor)
     return budgets_service.clear_budget(
         db, user_id=actor.id, occasion_id=occasion_id
+    )
+
+
+def set_giftee_budget(
+    db: Session, occasion_id: int, actor: User, giftee_key: str, amount: Decimal
+) -> dict:
+    """Set the caller's own budget for one giftee in this occasion, and return
+    the whole budget block. Same gate as the overall's: membership, and only
+    membership (NEU-1326 decision 6)."""
+    _load_for_member(db, occasion_id, actor)
+    return budgets_service.set_giftee_budget(
+        db,
+        actor=actor,
+        giftee_key=giftee_key,
+        amount=amount,
+        occasion_id=occasion_id,
+    )
+
+
+def clear_giftee_budget(
+    db: Session, occasion_id: int, actor: User, giftee_key: str
+) -> dict:
+    _load_for_member(db, occasion_id, actor)
+    return budgets_service.clear_giftee_budget(
+        db, actor=actor, giftee_key=giftee_key, occasion_id=occasion_id
     )
 
 
