@@ -335,3 +335,74 @@ def test_the_archive_prompts_carry_no_claim_state(
     assert response.status_code == 200
     _assert_blind(response.json())
     assert [row["id"] for row in response.json()] == [occasion.id]
+
+
+def test_the_giftee_budget_block_never_names_the_owners_own_list(
+    client, db, member_user, member_headers, admin_user, owned_list_with_a_claim
+):
+    """The giftee endpoints and the shopping payload's `giftees[]` join the
+    sweep (NEU-1326 criterion 16).
+
+    The leak a giftee set could have is a group for the caller's *own* list:
+    its rollup would count the admin's claim, spend and purchase against it.
+    Owned lists are dropped from the set outright — the caller cannot claim on
+    them, so there is nothing to budget — and every rollup on the block counts
+    the caller's own claims alone. The block also carries no claim-shaped key
+    at any depth.
+    """
+    from app.models.family import Family
+    from app.models.family_member import FamilyMember
+    from app.models.gift_list import GiftList
+    from app.models.list_occasion_share import ListOccasionShare
+    from app.models.occasion import Occasion
+
+    family = Family(name="Boone Family", created_by_id=member_user.id)
+    db.add(family)
+    db.flush()
+    db.add_all(
+        [
+            FamilyMember(family_id=family.id, user_id=member_user.id, role="organizer"),
+            FamilyMember(family_id=family.id, user_id=admin_user.id, role="member"),
+        ]
+    )
+    occasion = Occasion(
+        family_id=family.id, name="Christmas 2026", created_by_id=member_user.id
+    )
+    db.add(occasion)
+    db.flush()
+    admins = GiftList(name="Admin's List", owner_id=admin_user.id)
+    db.add(admins)
+    db.flush()
+    db.add_all(
+        [
+            ListOccasionShare(list_id=owned_list_with_a_claim.id, occasion_id=occasion.id),
+            ListOccasionShare(list_id=admins.id, occasion_id=occasion.id),
+        ]
+    )
+    db.flush()
+
+    shopping = client.get(f"/occasions/{occasion.id}/shopping", headers=member_headers)
+    put = client.put(
+        f"/occasions/{occasion.id}/giftees/owner:{admin_user.id}/budget",
+        json={"amount": "50.00"},
+        headers=member_headers,
+    )
+    cleared = client.delete(
+        f"/occasions/{occasion.id}/giftees/owner:{admin_user.id}/budget",
+        headers=member_headers,
+    )
+
+    for response in (shopping, put, cleared):
+        assert response.status_code == 200
+        _assert_blind(response.json()["giftees"])
+        _assert_blind(response.json()["budget"])
+        assert [g["key"] for g in response.json()["giftees"]] == [f"owner:{admin_user.id}"]
+    # And a budget on the owner's own list cannot be set: it is not a giftee.
+    assert (
+        client.put(
+            f"/occasions/{occasion.id}/giftees/owner:{member_user.id}/budget",
+            json={"amount": "50.00"},
+            headers=member_headers,
+        ).status_code
+        == 404
+    )

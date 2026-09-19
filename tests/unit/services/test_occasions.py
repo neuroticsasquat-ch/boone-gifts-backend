@@ -174,15 +174,23 @@ def test_has_other_active_is_read_before_the_new_row_exists():
 # ---------------------------------------------------------------------------
 
 
-def test_get_occasion_returns_it_for_a_member():
+def test_get_occasion_returns_it_with_its_family_for_a_member():
+    """The family comes back too — the page's heading names it (NEU-1321), and
+    it is the row the membership gate has already loaded, not a second read."""
     db = MagicMock()
     occasion = _make_occasion()
+    family = _make_family()
     with patch(FAMILIES_REPO) as families_repo, patch(REPO) as repo:
         repo.get_occasion.return_value = occasion
-        families_repo.get_family.return_value = _make_family()
+        families_repo.get_family.return_value = family
         families_repo.get_family_member.return_value = _make_member("member")
 
-        assert service.get_occasion(db, occasion_id=5, actor=_make_user()) is occasion
+        assert service.get_occasion(db, occasion_id=5, actor=_make_user()) == (
+            occasion,
+            family,
+        )
+
+    families_repo.get_family.assert_called_once_with(db, occasion.family_id)
 
 
 def test_get_occasion_raises_not_found_for_an_unknown_id():
@@ -348,7 +356,7 @@ def test_shopping_is_scoped_to_the_caller(mock_shopping, budgets_service):
     no parameter that could widen either to another member's claims."""
     db = MagicMock()
     mock_shopping.return_value = [{"name": "Skillet"}]
-    budgets_service.get_rollup.return_value = {"amount": None}
+    budgets_service.get_block.return_value = {"budget": {"amount": None}, "giftees": []}
     actor = _make_user(id=10)
 
     with patch(REPO) as repo, patch(FAMILIES_REPO) as families_repo:
@@ -359,8 +367,12 @@ def test_shopping_is_scoped_to_the_caller(mock_shopping, budgets_service):
         result = service.list_shopping(db, occasion_id=5, actor=actor)
 
     mock_shopping.assert_called_once_with(db, 5, 10)
-    budgets_service.get_rollup.assert_called_once_with(db, user_id=10, occasion_id=5)
-    assert result == {"budget": {"amount": None}, "items": [{"name": "Skillet"}]}
+    budgets_service.get_block.assert_called_once_with(db, actor=actor, occasion_id=5)
+    assert result == {
+        "budget": {"amount": None},
+        "giftees": [],
+        "items": [{"name": "Skillet"}],
+    }
 
 
 @patch(BUDGETS_SERVICE)

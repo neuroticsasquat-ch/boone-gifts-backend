@@ -20,6 +20,7 @@ from app.models.list_occasion_share import ListOccasionShare
 from app.models.occasion import Occasion
 from app.models.occasion_archive_prompt import OccasionArchivePrompt
 from app.models.user import User
+from app.schemas.occasion import OccasionRead
 
 
 @pytest.fixture
@@ -273,6 +274,102 @@ def test_a_member_reads_an_occasion(
 
     assert response.status_code == 200
     assert response.json()["name"] == "Christmas 2026"
+
+
+def test_reading_an_occasion_names_its_family(
+    client, db, family, member_user, plain_member, plain_member_headers
+):
+    """The page's heading reads "Boone Family \u00b7 Christmas 2026" (NEU-1321),
+    and the name comes off this payload rather than a second request."""
+    occasion = _seed_occasion(db, family, member_user)
+
+    response = client.get(f"/occasions/{occasion.id}", headers=plain_member_headers)
+
+    assert response.status_code == 200
+    assert response.json()["family_name"] == "Boone Family"
+
+
+def test_reading_an_occasion_still_carries_every_base_field(
+    client, db, family, member_user, organizer_headers
+):
+    """`family_name` is added to the detail read, it does not displace anything."""
+    occasion = _seed_occasion(db, family, member_user)
+
+    body = client.get(f"/occasions/{occasion.id}", headers=organizer_headers).json()
+
+    assert set(body) == set(OccasionRead.model_fields) | {"family_name"}
+
+
+def test_reading_an_occasion_costs_no_extra_query_for_the_family(
+    client, db, family, member_user, plain_member, plain_member_headers
+):
+    """`family_name` is free: the membership gate already loads the family row
+    for its existence check, so naming the family costs the detail endpoint no
+    query it was not paying for already (NEU-1321 decision 3).
+
+    **This counts SQL, not calls**, and the two differ here. A second
+    `families_repo.get_family` in the same request is answered from the
+    session's identity map and emits nothing, so it would slip past this
+    assertion — `test_get_occasion_returns_it_with_its_family_for_a_member` in
+    the unit suite is what pins the call count. What this catches is a *new*
+    round trip for the name: a join added to the occasion read, or a lazy
+    `family` relationship on the model loading against a cold session.
+    """
+    occasion_id = _seed_occasion(db, family, member_user).id
+    # The session just wrote these rows, so without this the ORM answers every
+    # read from its identity map and the endpoint appears to query nothing.
+    db.expunge_all()
+    engine = db.get_bind()
+    seen = []
+
+    @sqlalchemy.event.listens_for(engine, "before_cursor_execute")
+    def record(conn, cursor, statement, *args):
+        seen.append(" ".join(statement.split()))
+
+    try:
+        response = client.get(f"/occasions/{occasion_id}", headers=plain_member_headers)
+    finally:
+        sqlalchemy.event.remove(engine, "before_cursor_execute", record)
+
+    assert response.status_code == 200
+    assert response.json()["family_name"] == "Boone Family"
+    family_reads = [statement for statement in seen if "FROM families" in statement]
+    assert len(family_reads) == 1, (
+        f"the family was selected {len(family_reads)} times, not once: "
+        "`family_name` is meant to ride on the row the membership gate already "
+        "loaded, not to be fetched again for the payload"
+    )
+
+
+def test_updating_an_occasion_does_not_name_the_family(
+    client, db, family, member_user, organizer_headers
+):
+    """The guard on the rename path: `PUT` keeps returning `OccasionRead`, so a
+    client that ever wrote its response into the occasion cache would blank the
+    heading's qualifier. Narrower on purpose (NEU-1321 decision 5)."""
+    occasion = _seed_occasion(db, family, member_user)
+
+    response = client.put(
+        f"/occasions/{occasion.id}",
+        json={"name": "Christmas 2027"},
+        headers=organizer_headers,
+    )
+
+    assert response.status_code == 200
+    assert "family_name" not in response.json()
+
+
+def test_the_family_occasions_list_does_not_name_the_family(
+    client, db, family, member_user, organizer_headers
+):
+    """The route already names the family, so the index's rows stay as they were."""
+    _seed_occasion(db, family, member_user)
+
+    body = client.get(
+        f"/families/{family.id}/occasions", headers=organizer_headers
+    ).json()
+
+    assert set(body[0]) == set(OccasionRead.model_fields)
 
 
 def test_an_outsider_cannot_read_an_occasion(

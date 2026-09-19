@@ -24,8 +24,10 @@ the words mean and what must stay true.
 | **Occasion activity** | The clock an occasion sorts by: the later of the last share into it and the *viewer's own* claim or purchase filed under it, floored at the occasion's creation. Per-viewer by construction — never another user's claim | computed, `app/occasions/repository.py:last_activity_at_expr` |
 | **Shared activity** | The clock the archive nudge ages an occasion by: the later of the last share into it and its own creation. Reads no claim, by anyone — so no user's shopping can create or remove another user's prompt. The first term of *Occasion activity*, and the whole of what the nudge sees | computed, `app/occasions/repository.py:shared_activity_at_expr` |
 | **Archive prompt** | A standing question to one account about one occasion that has gone quiet: archive it, or not yet. "Not yet" is a dated snooze, not a permanent dismissal | `occasion_archive_prompts` |
-| **Budget** | What one account means to spend on one occasion, or on one folder. Private to the account that set it; there is no family budget | `budgets` |
-| **Rollup** | A budget with the caller's own spend counted against it — target, spent, remaining, and the bought/total/unpriced counts | computed, `app/budgets/service.py` |
+| **Budget** | What one account means to spend on one occasion, or on one folder — the *overall* target. Private to the account that set it; there is no family budget. May be left unset while giftee budgets exist, in which case it *reads as* their sum and is never written from it | `budgets` |
+| **Giftee** | Who a list is *for*: its owner, or the account person it is marked for, or the recipient it is kept for. Derived from the list — never its own row — and identified by those three facts, so two lists for the same person are one giftee. The unit a shopping tab groups by and a giftee budget hangs off | computed, `app/budgets/giftees.py` |
+| **Giftee budget** | What one account means to spend on one giftee within one occasion or one folder. As private as a budget. A giftee may have one, several may share an overall budget, and either may exist without the other | `giftee_budgets` |
+| **Rollup** | A budget with the caller's own spend counted against it — target, spent, remaining, and the bought/total/unpriced counts. The overall rollup also carries how much of it is *allocated* to giftees; each giftee has a rollup of its own over that giftee's lists | computed, `app/budgets/service.py` |
 | **Recipient** | A person with **no account** for whom an account keeps a list | `lists.recipient_name` |
 | **Shared account** | An account used by more than one person, e.g. a couple sharing one login | `users.is_shared_account` |
 | **Account person** | A named person on a shared account. **A label, never an identity** | `account_people` |
@@ -105,5 +107,15 @@ vacated by the rename precisely so the family concept could claim it.
     mutually exclusive with exactly one set, enforced in `app/budgets/service.py`.
     **The money total always discloses its own incompleteness**: a purchase whose `amount_paid` is
     null counts toward `bought_count` and `unpriced_count` and never toward `spent`, and is never
-    guessed at from the owner's asking price. A budget dies with its scope — deleting a folder, a
+    guessed at from the owner's asking price. **Spend follows the tick**: an amount held on a
+    claim that is not ticked bought is kept, so re-ticking need not retype it, but counts as
+    nothing until it is. A budget dies with its scope — deleting a folder, a
     family (through its occasions) or a user clears the budgets pointing at it.
+    **The same holds for a giftee budget**: one per `(user, scope, giftee)`, always the caller's
+    own, counted over the caller's own claims on that giftee's lists. Allocating to giftees never
+    writes the overall budget: an overall left unset *reads as* the sum of the giftee budgets and
+    an overall that is set reports how much of it is allocated, but the two rows are independent
+    and may disagree (over-allocation is shown, not refused). A giftee budget dies with its scope,
+    with the user who set it, with the account whose list it names, and with the account person it
+    names; a recipient renamed on a list is *not* followed — the old row survives as an empty,
+    labelled group until its user removes it.
