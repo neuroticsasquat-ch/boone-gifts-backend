@@ -12,6 +12,7 @@ from sqlalchemy import case, delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.budgets.giftees import key_for_triple
 from app.models.claim import Claim
 from app.models.folder_item import FolderItem
 from app.models.gift import Gift
@@ -137,6 +138,16 @@ def delete_claims_on_lists(db: Session, list_ids: list[int]) -> None:
     db.flush()
 
 
+# The three columns a giftee is derived from (ADR 0006). One tuple, so the
+# shopping projection, the per-giftee grouping and the key all read the same
+# definition.
+_GIFTEE_COLUMNS = (
+    GiftList.owner_id,
+    GiftList.account_person_id,
+    GiftList.recipient_name,
+)
+
+
 def _shopping_select():
     """The shopping row, minus the scope that selects it.
 
@@ -146,12 +157,12 @@ def _shopping_select():
     two `where` clauses, so a column added to the payload lands on both tabs.
 
     The join runs claim → gift → list, never the reverse, so a gift with no
-    claim cannot appear. Ordering by list and then gift is what "grouped by
-    list, stable order" means: the client groups on `list_id` and every reload
-    returns the same sequence.
+    claim cannot appear. Ordering by list and then gift keeps every reload
+    returning the same sequence; the client groups on `giftee_key`, which the
+    row derives from the list's three giftee columns (NEU-1326).
     """
     return (
-        select(Claim, Gift, GiftList.name.label("list_name"))
+        select(Claim, Gift, GiftList.name.label("list_name"), *_GIFTEE_COLUMNS)
         .join(Gift, Claim.gift_id == Gift.id)
         .join(GiftList, Gift.list_id == GiftList.id)
         .order_by(GiftList.id, Gift.id)
@@ -169,10 +180,12 @@ def _shopping_rows(db: Session, statement) -> list[dict]:
             "price": gift.price,
             "list_id": gift.list_id,
             "list_name": list_name,
+            "giftee_key": key_for_triple(owner_id, account_person_id, recipient_name),
             "purchased_at": claim.purchased_at,
             "amount_paid": claim.amount_paid,
         }
-        for claim, gift, list_name in db.execute(statement).all()
+        for claim, gift, list_name, owner_id, account_person_id, recipient_name
+        in db.execute(statement).all()
     ]
 
 
@@ -214,6 +227,80 @@ def get_shopping_for_folder(db: Session, folder_id: int, user_id: int) -> list[d
     )
 
 
+def _claimed_lists_select():
+    """The distinct lists the caller's shopping rows stand on — source 2 of the
+    giftee set (NEU-1326 decision 3). Filing is stored, not derived, so a claim
+    on a since-unshared list still shows on the tab, and its giftee must have a
+    group to sit in. Same join direction as `_shopping_select`."""
+    return (
+        select(GiftList)
+        .join(Gift, Gift.list_id == GiftList.id)
+        .join(Claim, Claim.gift_id == Gift.id)
+        .distinct()
+    )
+
+
+def get_claimed_lists_for_occasion(
+    db: Session, occasion_id: int, user_id: int
+) -> list[GiftList]:
+    return list(
+        db.execute(
+            _claimed_lists_select().where(
+                Claim.occasion_id == occasion_id,
+                Claim.user_id == user_id,
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+
+def get_claimed_lists_for_folder(
+    db: Session, folder_id: int, user_id: int
+) -> list[GiftList]:
+    return list(
+        db.execute(
+            _claimed_lists_select()
+            .join(FolderItem, FolderItem.list_id == GiftList.id)
+            .where(
+                FolderItem.folder_id == folder_id,
+                Claim.user_id == user_id,
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+
+# The four aggregates a budget line is made of, as module-level expressions so
+# the overall select and the per-giftee select read one definition rather than
+# a copy each (NEU-1326 decision 4). Their semantics are documented once, on
+# `_spend_select`.
+_TOTAL_COUNT = func.count(Claim.id).label("total_count")
+_BOUGHT_COUNT = func.count(Claim.purchased_at).label("bought_count")
+_SPENT = func.coalesce(
+    func.sum(
+        case(
+            (Claim.purchased_at.isnot(None), Claim.amount_paid),
+            else_=0,
+        )
+    ),
+    0,
+).label("spent")
+_UNPRICED_COUNT = func.coalesce(
+    func.sum(
+        case(
+            (
+                Claim.purchased_at.isnot(None) & Claim.amount_paid.is_(None),
+                1,
+            ),
+            else_=0,
+        )
+    ),
+    0,
+).label("unpriced_count")
+
+
 def _spend_select():
     """The four numbers a budget line is made of, minus the scope.
 
@@ -226,44 +313,32 @@ def _spend_select():
     owner's asking price. That is what lets a client state an understated total
     as an understatement (project spec §7).
 
-    **`spent` counts recorded money; the two counts describe shopping.** They
-    are deliberately driven off different columns, so an amount recorded on a
-    claim that is not ticked bought — by `PATCH /claims/{id}`, or by unticking,
-    which keeps the amount so re-ticking need not retype it — still counts as
-    spent while `bought_count` does not move. Gating the money on
-    `purchased_at` instead would drop that amount out of the total silently,
-    with no `unpriced_count` to disclose it: the money left the claimer's
-    pocket either way, and a total that quietly omits it is the one failure a
-    budget line must not have.
+    **Spend follows the tick** (NEU-1325). The sum is gated on `purchased_at`,
+    the same column `bought_count` and `unpriced_count` read, so an amount
+    sitting on a claim that is not ticked bought — held by unticking so
+    re-ticking need not retype it, or written straight on by
+    `PATCH /claims/{id}` — counts as nothing until the claim is ticked again.
+    An unticked gift is one the claimer has said they have *not* bought, and a
+    budget line that charges them for it is wrong, not cautious. The amount is
+    still stored on the claim and still travels on the shopping row; only the
+    total ignores it.
     """
-    return select(
-        func.count(Claim.id).label("total_count"),
-        func.count(Claim.purchased_at).label("bought_count"),
-        func.coalesce(func.sum(Claim.amount_paid), 0).label("spent"),
-        func.coalesce(
-            func.sum(
-                case(
-                    (
-                        Claim.purchased_at.isnot(None)
-                        & Claim.amount_paid.is_(None),
-                        1,
-                    ),
-                    else_=0,
-                )
-            ),
-            0,
-        ).label("unpriced_count"),
-    ).join(Gift, Claim.gift_id == Gift.id)
+    return select(_TOTAL_COUNT, _BOUGHT_COUNT, _SPENT, _UNPRICED_COUNT).join(
+        Gift, Claim.gift_id == Gift.id
+    )
 
 
-def _spend_row(db: Session, statement) -> dict:
-    row = db.execute(statement).one()
+def _spend_from(row) -> dict:
     return {
         "total_count": row.total_count,
         "bought_count": row.bought_count,
         "spent": Decimal(row.spent),
         "unpriced_count": row.unpriced_count,
     }
+
+
+def _spend_row(db: Session, statement) -> dict:
+    return _spend_from(db.execute(statement).one())
 
 
 def get_spend_for_occasion(db: Session, occasion_id: int, user_id: int) -> dict:
@@ -287,6 +362,60 @@ def get_spend_for_folder(db: Session, folder_id: int, user_id: int) -> dict:
         db,
         _spend_select()
         .join(GiftList, Gift.list_id == GiftList.id)
+        .join(FolderItem, FolderItem.list_id == GiftList.id)
+        .where(
+            FolderItem.folder_id == folder_id,
+            Claim.user_id == user_id,
+        ),
+    )
+
+
+def _spend_by_giftee_select():
+    """`_spend_select`, grouped by the giftee the list is for (NEU-1326).
+
+    The same four aggregates, so spend-follows-the-tick and the unpriced
+    disclosure are inherited rather than copied; the sum across groups equals
+    the overall's figures by construction, because both count the same rows.
+    """
+    return (
+        select(
+            *_GIFTEE_COLUMNS, _TOTAL_COUNT, _BOUGHT_COUNT, _SPENT, _UNPRICED_COUNT
+        )
+        .join(Gift, Claim.gift_id == Gift.id)
+        .join(GiftList, Gift.list_id == GiftList.id)
+        .group_by(*_GIFTEE_COLUMNS)
+    )
+
+
+def _spend_by_giftee(db: Session, statement) -> dict[str, dict]:
+    return {
+        key_for_triple(
+            row.owner_id, row.account_person_id, row.recipient_name
+        ): _spend_from(row)
+        for row in db.execute(statement).all()
+    }
+
+
+def get_spend_by_giftee_for_occasion(
+    db: Session, occasion_id: int, user_id: int
+) -> dict[str, dict]:
+    """The caller's spend under one occasion, split by giftee key."""
+    return _spend_by_giftee(
+        db,
+        _spend_by_giftee_select().where(
+            Claim.occasion_id == occasion_id,
+            Claim.user_id == user_id,
+        ),
+    )
+
+
+def get_spend_by_giftee_for_folder(
+    db: Session, folder_id: int, user_id: int
+) -> dict[str, dict]:
+    """The caller's spend on the folder's lists, split by giftee key."""
+    return _spend_by_giftee(
+        db,
+        _spend_by_giftee_select()
         .join(FolderItem, FolderItem.list_id == GiftList.id)
         .where(
             FolderItem.folder_id == folder_id,

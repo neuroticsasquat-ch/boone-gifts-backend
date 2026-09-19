@@ -1,6 +1,7 @@
 from sqlalchemy.orm import Session
 
 from app.account import repository as repo
+from app.budgets import repository as budgets_repo
 from app.models.account_person import AccountPerson
 from app.models.user import User
 from app.schemas.account import AccountUpdate
@@ -124,6 +125,9 @@ def replace_account(
     repo.clear_labels(
         db, user.id, None if clears_every_label else [p.id for p in removed]
     )
+    # Every giftee budget keyed on a person being removed — any user's, in any
+    # scope — goes with the person, or the FK refuses (NEU-1326 decision 7).
+    budgets_repo.delete_giftee_budgets_for_people(db, [p.id for p in removed])
     repo.delete_people(db, removed)
 
     renamed = [

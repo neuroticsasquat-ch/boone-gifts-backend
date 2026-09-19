@@ -258,6 +258,16 @@ An understated total must read as an understatement, never as fact. Purchases wi
 null are counted in the "bought" tally and excluded from the money tally, and the count of them is
 always shown when it is non-zero.
 
+Spend follows the tick: an amount held on a claim that is not ticked bought is stored, so re-ticking
+need not retype it, but is not counted toward the money tally (NEU-1325).
+
+A budget may be split per **giftee** — the person a list is for, derived from the list rather than
+stored (NEU-1326, ADR 0006). Each giftee in scope carries its own budget line of the same shape,
+counted over that giftee's lists. The overall line learns how much of it is *allocated* to giftees
+and whether the allocation exceeds it, and an overall the user never set reads as the sum of what
+they allocated, labelled as such. The two are independent rows: over-allocation is reported, never
+refused, and neither is ever written from the other.
+
 ---
 
 ## 8. Simple mode is retired
@@ -347,6 +357,10 @@ $142 of $200 spent · $58 left            [ Edit budget ]
 - **My shopping** — the viewer's own claims within it, budget line, purchase toggles, amount fields.
   Never anyone else's claims, in any aggregate, ever.
 - `[⋯]` carries rename and archive, **organizer only**.
+- **My shopping groups by giftee**, not by list (NEU-1326): one card per person a list in scope is
+  for, headed by their name, with that person's budget line beneath the heading and the viewer's
+  rows beneath that. A giftee the viewer has claimed nothing for still gets a card — empty, so it
+  can be budgeted — and a row names its list only when the giftee has more than one.
 
 ### 9.3 Folder page (`/folders/:id`)
 

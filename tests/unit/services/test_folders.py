@@ -314,14 +314,19 @@ def test_get_shopping_reads_the_callers_own_claims(mock_shopping, budgets_servic
     passed to it — a folder's shopping tab has no way to ask for anyone
     else's. The budget rollup beside it is keyed on the same id."""
     db = MagicMock()
+    user = MagicMock(id=7)
     mock_shopping.return_value = [{"name": "Skillet"}]
-    budgets_service.get_rollup.return_value = {"amount": None}
+    budgets_service.get_block.return_value = {"budget": {"amount": None}, "giftees": []}
 
-    result = service.get_shopping(db, folder_id=1, user_id=7)
+    result = service.get_shopping(db, folder_id=1, user=user)
 
     mock_shopping.assert_called_once_with(db, 1, 7)
-    budgets_service.get_rollup.assert_called_once_with(db, user_id=7, folder_id=1)
-    assert result == {"budget": {"amount": None}, "items": [{"name": "Skillet"}]}
+    budgets_service.get_block.assert_called_once_with(db, actor=user, folder_id=1)
+    assert result == {
+        "budget": {"amount": None},
+        "giftees": [],
+        "items": [{"name": "Skillet"}],
+    }
 
 
 @patch("app.folders.service.budgets_service")
@@ -348,4 +353,5 @@ def test_delete_folder_takes_its_budget_with_it(mock_delete, budgets_repo):
     service.delete_folder(db, folder)
 
     budgets_repo.delete_budgets_for_folder.assert_called_once_with(db, 3)
+    budgets_repo.delete_giftee_budgets_for_folder.assert_called_once_with(db, 3)
     mock_delete.assert_called_once_with(db, folder)
