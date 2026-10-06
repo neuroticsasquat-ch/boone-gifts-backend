@@ -28,6 +28,7 @@ class Settings(BaseSettings):
 
     email_provider: str = "log"
     email_from: str = "Boone Gifts <noreply@boone-gifts.localhost>"
+    email_reply_to: str = ""
     email_smtp_host: str = ""
     email_smtp_port: int = 587
     email_smtp_username: str = ""

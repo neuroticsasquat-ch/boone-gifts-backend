@@ -26,6 +26,8 @@ def _send_via_log(*, to: str, subject: str, html: str, text: str) -> None:
 def _send_via_smtp(*, to: str, subject: str, html: str, text: str) -> None:
     msg = EmailMessage()
     msg["From"] = settings.email_from
+    if settings.email_reply_to:
+        msg["Reply-To"] = settings.email_reply_to
     msg["To"] = to
     msg["Subject"] = subject
     msg.set_content(text)
