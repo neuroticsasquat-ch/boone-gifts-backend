@@ -61,6 +61,7 @@ class TestSendEmailSmtpProvider:
             "email_smtp_username": "",
             "email_smtp_password": "",
             "email_smtp_use_tls": False,
+            "email_reply_to": "",
         }
         defaults.update(overrides)
         for k, v in defaults.items():
@@ -76,6 +77,37 @@ class TestSendEmailSmtpProvider:
                 text="Hi",
             )
         mock_smtp.assert_called_once_with("smtp.example.com", 587)
+
+    def test_sets_reply_to_when_configured(self, monkeypatch: pytest.MonkeyPatch):
+        self._configure_smtp(
+            monkeypatch, email_reply_to="Boone Gifts <hello@test.com>"
+        )
+        with patch("smtplib.SMTP") as mock_smtp:
+            instance = mock_smtp.return_value.__enter__.return_value
+            email_sender.send_email(
+                to="user@test.com",
+                subject="Welcome",
+                html="<p>Hi</p>",
+                text="Hi",
+            )
+        msg = instance.send_message.call_args.args[0]
+        assert msg["Reply-To"] == "Boone Gifts <hello@test.com>"
+        assert msg["From"] == "Boone Gifts <noreply@test.com>"
+        assert msg["To"] == "user@test.com"
+        assert msg["Subject"] == "Welcome"
+
+    def test_omits_reply_to_when_empty(self, monkeypatch: pytest.MonkeyPatch):
+        self._configure_smtp(monkeypatch)
+        with patch("smtplib.SMTP") as mock_smtp:
+            instance = mock_smtp.return_value.__enter__.return_value
+            email_sender.send_email(
+                to="user@test.com",
+                subject="Welcome",
+                html="<p>Hi</p>",
+                text="Hi",
+            )
+        msg = instance.send_message.call_args.args[0]
+        assert msg["Reply-To"] is None
 
     def test_sends_multipart_message_with_subject_and_recipients(
         self, monkeypatch: pytest.MonkeyPatch

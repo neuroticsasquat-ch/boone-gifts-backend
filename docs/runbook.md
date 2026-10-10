@@ -103,6 +103,7 @@ Set in Coolify (not in `.env` files):
 | `APP_SENTRY_RELEASE` | Release tag — set to `${SOURCE_COMMIT}` (see "Sentry release tagging" below) |
 | `APP_EMAIL_PROVIDER` | `log` or `smtp` |
 | `APP_EMAIL_FROM` | Sender address |
+| `APP_EMAIL_REPLY_TO` | Reply-To address — set it in Coolify to a mailbox that receives mail (the sender address does not). Empty omits the header |
 | `APP_EMAIL_SMTP_*` | SMTP connection details |
 
 ## Sentry release tagging
