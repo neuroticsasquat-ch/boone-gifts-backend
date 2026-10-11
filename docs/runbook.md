@@ -101,10 +101,11 @@ Set in Coolify (not in `.env` files):
 | `APP_SENTRY_DSN` | Sentry DSN for error tracking |
 | `APP_SENTRY_ENVIRONMENT` | Sentry environment tag (set to `production`) |
 | `APP_SENTRY_RELEASE` | Release tag — set to `${SOURCE_COMMIT}` (see "Sentry release tagging" below) |
-| `APP_EMAIL_PROVIDER` | `log` or `smtp` |
-| `APP_EMAIL_FROM` | Sender address |
+| `APP_EMAIL_PROVIDER` | `resend` in production (Resend HTTP API); `smtp` or `log` elsewhere |
+| `APP_EMAIL_FROM` | Sender address — on the Resend sending subdomain, `Boone Gifts <noreply@mail.boone.gift>` |
 | `APP_EMAIL_REPLY_TO` | Reply-To address — set it in Coolify to a mailbox that receives mail (the sender address does not). Empty omits the header |
-| `APP_EMAIL_SMTP_*` | SMTP connection details |
+| `APP_RESEND_API_KEY` | Resend API key for the `boone` team; read only when the provider is `resend` |
+| `APP_EMAIL_SMTP_*` | SMTP connection details; only read when the provider is `smtp` |
 
 ## Sentry release tagging
 

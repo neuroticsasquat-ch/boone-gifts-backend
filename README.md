@@ -214,7 +214,8 @@ See [`.env.example`](.env.example) for the full annotated set. The ones you must
 | `APP_TEST_DATABASE_URL` | SQLite connection string for tests |
 | `APP_CORS_ORIGINS` | Allowed browser origins, JSON array — the *web* origin, not the API's |
 | `APP_FRONTEND_URL` | Base URL used in email links |
-| `APP_EMAIL_PROVIDER` | `log` prints to stdout; `smtp` delivers (Mailpit in dev) |
+| `APP_EMAIL_PROVIDER` | `log` prints to stdout; `smtp` delivers over SMTP (Mailpit in dev); `resend` delivers through the Resend API (production) |
+| `APP_RESEND_API_KEY` | Resend API key, read only when the provider is `resend` |
 
 ## Testing
 
