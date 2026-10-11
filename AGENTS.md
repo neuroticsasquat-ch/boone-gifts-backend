@@ -470,6 +470,6 @@ Pre-commit will live **on the host** (system Python), not in the container; its 
 | `APP_DATABASE_URL` | Default `sqlite:////data/boone_gifts.db` |
 | `APP_TEST_DATABASE_URL` | SQLite URL used by integration tests |
 | `APP_CORS_ORIGINS` | Allowed origins, JSON array |
-| `APP_EMAIL_PROVIDER` | `log` (stdout) for dev, `smtp` for production |
+| `APP_EMAIL_PROVIDER` | `log` (stdout) for dev, `smtp` for Mailpit, `resend` for production (needs `APP_RESEND_API_KEY`; sends from `mail.boone.gift`) |
 | `APP_EMAIL_REPLY_TO` | Reply-To on every outgoing email; empty omits the header. Set in production to a mailbox that receives mail |
 | `APP_SENTRY_*` | Leave the DSN empty to disable Sentry locally |

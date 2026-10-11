@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     email_smtp_username: str = ""
     email_smtp_password: str = ""
     email_smtp_use_tls: bool = True
+    resend_api_key: str = ""
 
     linkpreview_api_key: str = ""
 
