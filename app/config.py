@@ -1,4 +1,4 @@
-from pydantic import field_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings
 
 _PLACEHOLDER_JWT_SECRETS = frozenset(
@@ -39,10 +39,31 @@ class Settings(BaseSettings):
     linkpreview_api_key: str = ""
 
     sentry_dsn: str = ""
-    sentry_environment: str = "production"
     sentry_release: str = ""
+    # The deployed commit, injected by Coolify ("Include SOURCE_COMMIT in build"). Unprefixed
+    # because Coolify names it; read through ``release``, never directly.
+    source_commit: str = Field(default="", validation_alias="SOURCE_COMMIT")
+    # One variable for every telemetry consumer: Sentry's ``environment`` and OTel's
+    # ``deployment.environment``. APP_SENTRY_ENVIRONMENT is the pre-contract name, kept as a
+    # fallback so an environment that still sets only that one is not relabelled.
+    environment: str = Field(
+        default="production",
+        validation_alias=AliasChoices("APP_ENVIRONMENT", "APP_SENTRY_ENVIRONMENT"),
+    )
 
     model_config = {"env_prefix": "APP_", "env_file": ".env"}
+
+    @property
+    def release(self) -> str | None:
+        """The git SHA errors are tagged with: APP_SENTRY_RELEASE if set, else SOURCE_COMMIT.
+
+        Coolify's literal ``unknown`` (no commit to give) is passed through, not dropped: OTel's
+        ``service.version`` carries the same value, and the contract is that they agree.
+        """
+        for candidate in (self.sentry_release, self.source_commit):
+            if value := candidate.strip():
+                return value
+        return None
 
     @field_validator("jwt_secret")
     @classmethod

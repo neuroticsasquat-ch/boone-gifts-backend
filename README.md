@@ -203,6 +203,9 @@ Creates five `@example.com` users with the list-visibility states a single accou
 ### Health
 - `GET /health` -- Runs `SELECT 1`; returns 503 when the database is unreachable
 
+### Debug (`/debug`) -- admin only
+- `POST /debug/raise-test-error` -- Raise a deliberate `TelemetryTestError` (500) to prove errors reach the tracker; see [docs/runbook.md](docs/runbook.md#forcing-a-test-error)
+
 ## Environment Variables
 
 See [`.env.example`](.env.example) for the full annotated set. The ones you must think about:
