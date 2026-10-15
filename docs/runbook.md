@@ -99,8 +99,8 @@ Set in Coolify (not in `.env` files):
 | `APP_CORS_ORIGINS` | Allowed CORS origins (JSON array) |
 | `APP_FRONTEND_URL` | Frontend URL for email links |
 | `APP_SENTRY_DSN` | Sentry DSN for error tracking |
-| `APP_SENTRY_ENVIRONMENT` | Sentry environment tag (set to `production`) |
-| `APP_SENTRY_RELEASE` | Release tag — set to `${SOURCE_COMMIT}` (see "Sentry release tagging" below) |
+| `APP_ENVIRONMENT` | Deployment environment (`production`) — Sentry's `environment` and OTel's `deployment.environment`. Falls back to the older `APP_SENTRY_ENVIRONMENT` when unset |
+| `APP_SENTRY_RELEASE` | Optional override for the release tag; unset, it is `SOURCE_COMMIT` (see "Sentry release tagging" below) |
 | `APP_EMAIL_PROVIDER` | `resend` in production (Resend HTTP API); `smtp` or `log` elsewhere |
 | `APP_EMAIL_FROM` | Sender address — on the Resend sending subdomain, `Boone Gifts <noreply@mail.boone.gift>` |
 | `APP_EMAIL_REPLY_TO` | Reply-To address — set it in Coolify to a mailbox that receives mail (the sender address does not). Empty omits the header |
@@ -112,28 +112,44 @@ Set in Coolify (not in `.env` files):
 Sentry groups errors and traces by release. We tag each deploy with the Git
 commit it was built from so a regression can be tied back to a specific change.
 
-The release value flows through the `APP_SENTRY_RELEASE` environment variable,
-which `sentry_sdk.init` reads at startup (`app/main.py`). To wire it to the
-deploy commit:
+The release is resolved in `app/config.py` (`Settings.release`): `APP_SENTRY_RELEASE`
+if it is set, otherwise Coolify's `SOURCE_COMMIT`. The environment is
+`APP_ENVIRONMENT` — the same variable OTel's `deployment.environment` reads — with
+`APP_SENTRY_ENVIRONMENT` as a fallback. To wire it to the deploy commit:
 
-1. In the Coolify application's **Build** settings, enable
-   **"Include SOURCE_COMMIT in build"** (also labelled *Use Build Variables /
-   inject `SOURCE_COMMIT`*). This makes Coolify's `SOURCE_COMMIT` variable
-   available at runtime.
-2. In the Coolify application's **Environment Variables**, set:
-
-       APP_SENTRY_RELEASE=${SOURCE_COMMIT}
-
-   Coolify substitutes `${SOURCE_COMMIT}` with the deployed commit SHA.
-3. Confirm `APP_SENTRY_DSN` and `APP_SENTRY_ENVIRONMENT` (`production`) are also
-   set in Coolify, otherwise Sentry stays disabled / mislabelled.
+1. In the Coolify application's **General** settings, enable
+   **"Include SOURCE_COMMIT in build"**. Without it Coolify sets `SOURCE_COMMIT`
+   to the literal `unknown`, and errors are tagged `release=unknown` (passed through
+   verbatim, so it matches OTel's `service.version`).
+2. Leave `APP_SENTRY_RELEASE` unset (or delete it) in Coolify's **Environment
+   Variables** so the release follows `SOURCE_COMMIT`.
+3. Confirm `APP_SENTRY_DSN` and `APP_ENVIRONMENT` (`production`) are set in
+   Coolify, otherwise Sentry stays disabled / mislabelled.
 
 Performance tracing is enabled at a 10% sample rate (`traces_sample_rate=0.1`)
 with explicit FastAPI and SQLAlchemy integrations — no extra config needed.
 
-If "Include SOURCE_COMMIT" is left off, `${SOURCE_COMMIT}` resolves to an empty
-string and the release falls back to unset (`release=None`); error tracking
-still works, it just won't be tied to a commit.
+### Checking what a deploy reports under
+
+    docker exec <api container> python -m app.cli.show_telemetry
+    # release=<sha> environment=production sentry=on
+
+(`task show-telemetry` locally.) `release=unknown` or `release=unset` means no
+commit reached the app — error tracking still works, it just isn't tied to one.
+
+### Forcing a test error
+
+`POST /debug/raise-test-error` (admin bearer token) raises `TelemetryTestError`
+and answers 500. It should arrive as its own issue in the error tracker, tagged
+with the release and environment above, and from there reach the alert channel.
+
+    TOKEN=$(curl -s https://api.boone.gift/auth/login \
+      -H 'Content-Type: application/json' \
+      -d '{"email": "<admin email>", "password": "<password>"}' | jq -r .access_token)
+    curl -s -X POST https://api.boone.gift/debug/raise-test-error -H "Authorization: Bearer $TOKEN"
+
+Members get 403 and anonymous callers 401, so the endpoint cannot be used to
+flood the tracker.
 
 ## Dashboards
 

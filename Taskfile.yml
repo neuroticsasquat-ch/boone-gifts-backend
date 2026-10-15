@@ -33,6 +33,10 @@ tasks:
     desc: "Create an admin user (usage: task create-admin)"
     cmd: "{{.EXEC}} python -m app.cli.create_admin"
 
+  show-telemetry:
+    desc: Print the release and environment errors are reported under
+    cmd: "{{.EXEC}} python -m app.cli.show_telemetry"
+
   migrate:
     desc: Run database migrations
     cmd: "{{.EXEC}} alembic upgrade head"
