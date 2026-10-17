@@ -219,6 +219,11 @@ See [`.env.example`](.env.example) for the full annotated set. The ones you must
 | `APP_FRONTEND_URL` | Base URL used in email links |
 | `APP_EMAIL_PROVIDER` | `log` prints to stdout; `smtp` delivers over SMTP (Mailpit in dev); `resend` delivers through the Resend API (production) |
 | `APP_RESEND_API_KEY` | Resend API key, read only when the provider is `resend` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Production only, set in Coolify: the SigNoz collector the server exports traces and logs to |
+| `OTEL_RESOURCE_ATTRIBUTES` | Production only, set in Coolify: `service.name=boone-gifts-backend,deployment.environment=production,service.version=$SOURCE_COMMIT` |
+| `OTEL_SDK_DISABLED` | `true` in the dev image, so nothing tries to export locally |
+
+The production server runs under `opentelemetry-instrument` (`start.sh`); see `docs/runbook.md` → OpenTelemetry for what reaches SigNoz.
 
 ## Testing
 

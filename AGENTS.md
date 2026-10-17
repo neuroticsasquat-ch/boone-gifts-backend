@@ -461,9 +461,9 @@ agreeing on `(owner_id, account_person_id, recipient_name)` are one giftee.
 Pre-commit will live **on the host** (system Python), not in the container; its hooks delegate to `task` commands that run the checks inside Docker (`task lint`, `task test`). Never install pre-commit or its hooks inside the container.
 
 ## Production
-- **Deploy**: push to `main` triggers a Coolify redeploy. `Dockerfile.prod` + `start.sh` run migrations and optionally seed an admin; Uvicorn with 2 workers.
+- **Deploy**: push to `main` triggers a Coolify redeploy. `Dockerfile.prod` + `start.sh` run migrations and optionally seed an admin; Uvicorn with 2 workers, under `opentelemetry-instrument`.
 - **Domain**: `api.boone.gift`. Health: `curl https://api.boone.gift/health`.
-- **Monitoring**: Sentry (DSN optional). `release` defaults to `SOURCE_COMMIT` and `environment` comes from `APP_ENVIRONMENT`, the variable OTel's `deployment.environment` shares (`app/config.py`). `POST /debug/raise-test-error` (admin) forces a test error — see `docs/runbook.md`.
+- **Monitoring**: errors to Bugsink through the Sentry SDK (DSN optional); traces and logs to SigNoz through OpenTelemetry (NEU-1599, `docs/runbook.md` → OpenTelemetry). `release` defaults to `SOURCE_COMMIT` and `environment` comes from `APP_ENVIRONMENT`, the variable OTel's `deployment.environment` shares (`app/config.py`). `POST /debug/raise-test-error` (admin) forces a test error — see `docs/runbook.md`.
 - **Backup**: `scripts/backup-sqlite.sh` snapshots the SQLite volume and rsyncs to a remote Storage Box.
 
 ## Environment essentials
@@ -478,3 +478,4 @@ Pre-commit will live **on the host** (system Python), not in the container; its 
 | `APP_SENTRY_DSN` | Leave empty to disable Sentry locally |
 | `APP_ENVIRONMENT` | Deployment environment for Sentry and OTel; default `production`, falls back to `APP_SENTRY_ENVIRONMENT` |
 | `SOURCE_COMMIT` | Injected by Coolify; the release tag unless `APP_SENTRY_RELEASE` overrides it |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_RESOURCE_ATTRIBUTES` | Production only, set in Coolify (never the repo); `OTEL_SDK_DISABLED=true` is the dev image's default |
