@@ -17,6 +17,10 @@ from pathlib import Path
 
 import httpx
 import pytest
+from opentelemetry.instrumentation.sqlalchemy import (
+    package as sqlalchemy_instrumentation,
+)
+from packaging.requirements import Requirement
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 OPENTELEMETRY_INSTRUMENT = Path(sys.executable).parent / "opentelemetry-instrument"
@@ -165,13 +169,22 @@ def test_an_app_log_record_is_exported_with_its_trace_id(tmp_path):
     assert f'"trace_id": "{trace_id}"' in result.stdout
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="opentelemetry-instrumentation-sqlalchemy 0.66b1 supports only sqlalchemy<2.1 "
-    "and skips itself on 2.1; upstream PR #5120 (merged 2026-10-14) lifts the cap to <2.2. "
-    "Once a release with it lands, this passes -- strict, so CI then fails until the "
-    "marker is removed.",
-)
-def test_the_request_s_sqlite_query_is_a_span(tmp_path):
+def test_the_health_check_query_is_a_span(tmp_path):
+    """The SQLAlchemy instrumentation skips itself on a version outside its supported
+    range, silently -- this is what notices."""
     out = _serve_traced(tmp_path)
     assert '"db.system": "sqlite"' in out or '"db.system.name": "sqlite"' in out
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="opentelemetry-instrumentation-sqlalchemy 0.66b1 supports only sqlalchemy<2.1, "
+    "so pyproject.toml caps sqlalchemy below 2.1. Upstream contrib #5120 (merged "
+    "2026-10-14) lifts the cap to <2.2; once a release with it lands this passes, and CI "
+    "fails until the sqlalchemy cap, its Dependabot ignore and this test are removed.",
+)
+def test_the_sqlalchemy_instrumentation_supports_sqlalchemy_2_1():
+    [requirement] = [
+        Requirement(spec) for spec in sqlalchemy_instrumentation._instruments
+    ]
+    assert requirement.specifier.contains("2.1.0")

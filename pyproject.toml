@@ -5,7 +5,11 @@ requires-python = ">=3.14"
 dependencies = [
     "fastapi>=0.143.1",
     "uvicorn>=0.54.0",
-    "sqlalchemy>=2.1.4",
+    # Below 2.1 until opentelemetry-instrumentation-sqlalchemy supports it: the 0.66b1
+    # release caps sqlalchemy<2.1 and skips itself on 2.1, so no SQL spans reach SigNoz.
+    # The strict xfail in tests/integration/test_opentelemetry_startup.py fails CI once
+    # a release lifts the cap (contrib #5120) -- then drop this, it and the Dependabot ignore.
+    "sqlalchemy>=2.0.55,<2.1",
     "pydantic>=2.14.1",
     "pydantic-settings>=2.16.0",
     "pyjwt>=2.15.1",
