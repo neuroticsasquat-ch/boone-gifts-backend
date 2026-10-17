@@ -23,6 +23,7 @@ Dev API on `http://localhost:8000`, web on `http://localhost:5173`, Mailpit on `
 - `task migrate` — `alembic upgrade head`
 - `task migration -- 'desc'` — `alembic revision --autogenerate`
 - `task create-admin` — `python -m app.cli.create_admin`
+- `task show-telemetry` — `python -m app.cli.show_telemetry`, the release/environment errors are reported under
 - `task add -- <pkg>` / `task remove -- <pkg>` / `task lock` — uv, inside the container
 
 ## Stack
@@ -85,7 +86,9 @@ app/
   budgets/             # The budget row and the rollup. No router: the endpoints
                        # live under the occasion and folder that gate them
   meta/                # GET /meta — URL metadata with SSRF protection
+  debug/               # POST /debug/raise-test-error (admin) — the forced test error
   cli/create_admin.py  # Interactive first-admin creation
+  cli/show_telemetry.py  # Print the resolved error-reporting release/environment
 alembic/versions/      # Migrations
 tests/
   unit/                # Service tests with mocked repos, plus schema tests
@@ -460,7 +463,7 @@ Pre-commit will live **on the host** (system Python), not in the container; its 
 ## Production
 - **Deploy**: push to `main` triggers a Coolify redeploy. `Dockerfile.prod` + `start.sh` run migrations and optionally seed an admin; Uvicorn with 2 workers.
 - **Domain**: `api.boone.gift`. Health: `curl https://api.boone.gift/health`.
-- **Monitoring**: Sentry (DSN optional, env `production`, release tagged via `SOURCE_COMMIT`).
+- **Monitoring**: Sentry (DSN optional). `release` defaults to `SOURCE_COMMIT` and `environment` comes from `APP_ENVIRONMENT`, the variable OTel's `deployment.environment` shares (`app/config.py`). `POST /debug/raise-test-error` (admin) forces a test error — see `docs/runbook.md`.
 - **Backup**: `scripts/backup-sqlite.sh` snapshots the SQLite volume and rsyncs to a remote Storage Box.
 
 ## Environment essentials
@@ -470,6 +473,8 @@ Pre-commit will live **on the host** (system Python), not in the container; its 
 | `APP_DATABASE_URL` | Default `sqlite:////data/boone_gifts.db` |
 | `APP_TEST_DATABASE_URL` | SQLite URL used by integration tests |
 | `APP_CORS_ORIGINS` | Allowed origins, JSON array |
-| `APP_EMAIL_PROVIDER` | `log` (stdout) for dev, `smtp` for production |
+| `APP_EMAIL_PROVIDER` | `log` (stdout) for dev, `smtp` for Mailpit, `resend` for production (needs `APP_RESEND_API_KEY`; sends from `mail.boone.gift`) |
 | `APP_EMAIL_REPLY_TO` | Reply-To on every outgoing email; empty omits the header. Set in production to a mailbox that receives mail |
-| `APP_SENTRY_*` | Leave the DSN empty to disable Sentry locally |
+| `APP_SENTRY_DSN` | Leave empty to disable Sentry locally |
+| `APP_ENVIRONMENT` | Deployment environment for Sentry and OTel; default `production`, falls back to `APP_SENTRY_ENVIRONMENT` |
+| `SOURCE_COMMIT` | Injected by Coolify; the release tag unless `APP_SENTRY_RELEASE` overrides it |

@@ -11,6 +11,7 @@ from app.database import engine
 from app.rate_limit import limiter, rate_limit_exceeded_handler
 from app.account import router as account
 from app.auth import router as auth
+from app.debug import router as debug
 from app.users import router as users
 from app.invites import router as invites
 from app.lists import router as lists
@@ -30,8 +31,8 @@ def create_app() -> FastAPI:
     if settings.sentry_dsn:
         sentry_sdk.init(
             dsn=settings.sentry_dsn,
-            environment=settings.sentry_environment,
-            release=settings.sentry_release or None,
+            environment=settings.environment,
+            release=settings.release,
             send_default_pii=False,
             traces_sample_rate=0.1,
             integrations=[
@@ -68,6 +69,7 @@ def create_app() -> FastAPI:
     application.include_router(family_invites.router)
     application.include_router(families.router)
     application.include_router(occasions.router)
+    application.include_router(debug.router)
 
     @application.get("/health")
     def health():
