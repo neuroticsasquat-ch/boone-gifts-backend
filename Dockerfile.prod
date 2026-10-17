@@ -13,6 +13,12 @@ COPY . .
 
 ENV PATH="/opt/venv/bin:$PATH"
 
+# OpenTelemetry (NEU-1599): start.sh runs uvicorn under `opentelemetry-instrument`.
+# opentelemetry-distro defaults the OTLP protocol to gRPC, but only the HTTP exporter is
+# installed, so pin http/protobuf and the absent gRPC exporter is never looked up. The
+# endpoint and OTEL_RESOURCE_ATTRIBUTES come from the Coolify env, never the repo.
+ENV OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+
 EXPOSE 8000
 
 CMD ["sh", "start.sh"]
