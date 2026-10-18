@@ -168,10 +168,11 @@ on Sunday Spin, 2026-10-17).
 
 What reaches SigNoz:
 
-- **Traces** — one per request, with httpx calls beneath it. SQL spans are missing until
-  `opentelemetry-instrumentation-sqlalchemy` ships SQLAlchemy 2.1 support (merged upstream in
-  PR #5120, not yet released); the strict-xfail test in
-  `tests/integration/test_opentelemetry_startup.py` fails CI the day it lands.
+- **Traces** — one per request, with its SQL queries and httpx calls beneath it. SQL spans
+  need SQLAlchemy below 2.1: the instrumentation's latest release (0.66b1) skips itself on 2.1,
+  so `pyproject.toml` holds SQLAlchemy at 2.0 (with a Dependabot ignore) until a release
+  supports it. A strict-xfail test in `tests/integration/test_opentelemetry_startup.py` fails
+  CI the day one lands, which is the cue to lift the cap.
 - **Logs** — application records at WARNING and above, each carrying the trace id of the
   request that wrote it. The app sets no logging level, so the root logger's WARNING decides
   what is exported, and Uvicorn's own loggers do not propagate to the root at all; the
