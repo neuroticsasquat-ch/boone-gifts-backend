@@ -9,9 +9,9 @@ active — the state that decides whether claiming prompts or files silently.
 Reproducing those by hand through the UI takes five logins, so this builds them
 in one pass.
 
-    docker compose exec api python -m scripts.seed_dev            # seed
-    docker compose exec api python -m scripts.seed_dev --reset    # re-seed
-    docker compose exec api python -m scripts.seed_dev --purge    # remove
+    docker compose exec boone-gifts-backend python -m scripts.seed_dev            # seed
+    docker compose exec boone-gifts-backend python -m scripts.seed_dev --reset    # re-seed
+    docker compose exec boone-gifts-backend python -m scripts.seed_dev --purge    # remove
 
 Run it with -m, as the other CLI entry points are: executing the file directly
 puts scripts/ on sys.path instead of /app, and `app` stops importing.

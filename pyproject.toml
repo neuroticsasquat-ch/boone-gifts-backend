@@ -27,6 +27,8 @@ dependencies = [
 ]
 
 [tool.pytest.ini_options]
+# So a bare `task test` collects the suite only, as `pytest tests/` did.
+testpaths = ["tests"]
 filterwarnings = [
     "ignore::jwt.warnings.InsecureKeyLengthWarning",
     # slowapi 0.1.9 calls asyncio.iscoroutinefunction which is deprecated in

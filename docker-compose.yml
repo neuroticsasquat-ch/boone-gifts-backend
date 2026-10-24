@@ -1,5 +1,5 @@
 services:
-  api:
+  boone-gifts-backend:
     build:
       context: .
       target: dev
@@ -13,13 +13,27 @@ services:
     # ./data (APP_DATABASE_URL in .env), so no database server is involved. Mail
     # goes to Mailpit at tbc_mailpit:1025 when .env sets APP_EMAIL_PROVIDER=smtp.
     #
-    # No published port: Traefik is the only route in.
+    # No published port: Traefik is the only route in. The router keeps its
+    # boone-gifts-api name, matching the hostname.
     labels:
       - "traefik.enable=true"
+      - "traefik.docker.network=proxy"
       - "traefik.http.routers.boone-gifts-api.rule=Host(`boone-gifts-api.localhost`)"
       - "traefik.http.routers.boone-gifts-api.entrypoints=websecure"
       - "traefik.http.routers.boone-gifts-api.tls=true"
       - "traefik.http.services.boone-gifts-api.loadbalancer.server.port=8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - |
+          import sys, urllib.request
+          sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=2).status == 200 else 1)
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
     networks:
       - proxy
 

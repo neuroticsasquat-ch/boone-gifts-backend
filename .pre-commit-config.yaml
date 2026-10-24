@@ -1,25 +1,19 @@
 minimum_pre_commit_version: "3.5.0"
 
-# All hooks run INSIDE the `api` dev container, never the host: the container
-# (UV_PROJECT_ENVIRONMENT=/opt/venv) is the single source of truth for the
-# toolchain, so a commit is checked against the exact pytest the project pins --
-# not whatever happens to sit in a host `.venv`. This mirrors the Taskfile's
-# EXEC_T (`docker compose exec -T api ...`). `-T` disables TTY allocation,
-# required because pre-commit runs non-interactively. The `api` container must be
-# up (`task up`), and its image rebuilt after a dependency change (`task
-# rebuild`), for a commit to run its checks.
+# Every hook calls a Taskfile target, and the target runs inside the dev container
+# (tbc-localdev-infra/CONVENTIONS.md). The Taskfile is the only place the toolchain
+# is invoked, so the hooks and `task <x>` can't drift apart. The container must be
+# up (`task up`) and rebuilt after a dependency change (`task build`).
 #
 # Only what CI enforces runs here. ruff and pyright are not clean on the existing
-# code yet (`task lint`, `task format -- --check`, `task typecheck`); add them as
-# hooks, in this same container form, once they are.
+# code yet (`task lint`, `task format:check`, `task typecheck`); add them as lint,
+# format and typecheck hooks, in this same form, once they are.
 repos:
   - repo: local
     hooks:
-      - id: pytest
-        name: pytest (container)
-        entry: docker compose exec -T api pytest tests/ -q
+      - id: test
+        name: test (container)
+        entry: task test
         language: system
-        types: [python]
         pass_filenames: false
-        always_run: true
-        require_serial: true
+        files: \.py$|^pyproject\.toml$|^uv\.lock$
