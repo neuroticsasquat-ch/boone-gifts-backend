@@ -87,6 +87,7 @@ task test                        # Run test suite
 task test-file -- <path>         # Run a specific test file or test function
 task migrate                     # Apply database migrations
 task migration -- 'description'  # Generate a new migration
+task db:refresh                  # Latest prod backup, anonymized, as the local DB
 task create-admin                # Create an admin user
 task lint                        # ruff check (not yet clean)
 task format                      # ruff format (not yet clean)
@@ -110,6 +111,15 @@ python -m scripts.seed_dev --purge   # remove
 ```
 
 Creates five `@example.com` users with the list-visibility states a single account can't produce on its own: a directly shared list, a list reaching you only through a family, a list kept for someone with no account, an archived list, a claimed gift, a pending connection request, and a shared account with two people. Purge only deletes rows reachable from those users.
+
+### Production data, anonymized
+
+```
+cp .env.local.example .env.local   # once: set BACKUP_SSH to the Storage Box's ssh alias
+task db:refresh                    # prompts, then replaces data/boone_gifts.db
+```
+
+Downloads the newest nightly backup from the Hetzner Storage Box (`docs/backup-setup.md`), migrates it to head and anonymizes it in the api container, then swaps it in; the previous file is kept as `data/boone_gifts.db.pre-refresh`. Admin accounts keep their email and name, every other user becomes `user-<id>@anon.local` / `User <id>`, and every password is `localdev`. Shared-account people and off-platform recipients get placeholder names; invites and password-reset tokens are dropped. List and gift text is kept as written. The `@anon.local` domain keeps these users out of reach of `seed_dev --purge`.
 
 ## API Overview
 

@@ -23,6 +23,7 @@ Dev API on `https://boone-gifts-api.localhost`, web on `https://boone-gifts.loca
 - `task test-file -- <path>` — a specific file or test function
 - `task migrate` — `alembic upgrade head`
 - `task migration -- 'desc'` — `alembic revision --autogenerate`
+- `task db:refresh` — replace `data/boone_gifts.db` with the latest prod daily backup from the Storage Box, migrated and anonymized (`scripts/refresh_db.sh` on the host, `scripts/anonymize_db.py` in the container). Admins keep their email and name, everyone else becomes `user-<id>@anon.local`, every password is `localdev`; invites and reset tokens are emptied. Needs `BACKUP_SSH` in `.env.local` (`.env.local.example`), not `.env`, which rejects unknown keys
 - `task create-admin` — `python -m app.cli.create_admin`
 - `task show-telemetry` — `python -m app.cli.show_telemetry`, the release/environment errors are reported under
 - `task add -- <pkg>` / `task remove -- <pkg>` / `task lock` — uv, inside the container
@@ -58,6 +59,8 @@ alembic.ini            # DB URL comes from env.py, not here
 scripts/
   seed_dev.py          # Dev fixtures — see "Dev fixtures" below
   backup-sqlite.sh     # Production SQLite snapshot + rsync to remote storage
+  refresh_db.sh        # task db:refresh — latest backup → anonymized local DB (host)
+  anonymize_db.py      # Strips identities from a copy of prod (in the container)
 app/
   main.py              # App factory
   config.py            # Settings (APP_ prefix)
