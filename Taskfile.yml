@@ -1,14 +1,56 @@
 version: "3"
 
-# The workspace owns the compose file one level up; stack lifecycle (up, down,
-# logs, restart) lives in ~/project/Taskfile.yml, not here.
+# Traefik, Mailpit and the external `proxy` network are the shared stack in the
+# tbc-localdev-infra repo (two levels up, beside the boone-gifts folder); `task
+# infra:up` starts it. Optional, so a checkout without it (CI) still runs every
+# task that doesn't need it.
+includes:
+  infra:
+    taskfile: ../../tbc-localdev-infra/Taskfile.yml
+    dir: ../../tbc-localdev-infra
+    optional: true
+
+# Everything but the release tasks runs INSIDE the `api` container, never on the
+# host: the container's /opt/venv is the single toolchain, so there is no host
+# Python or .venv to keep in step. EXEC_T (no TTY) is for non-interactive callers
+# such as the pre-commit hooks.
 vars:
-  COMPOSE: "docker compose -f ../docker-compose.yml"
+  COMPOSE: "docker compose"
   SVC: api
-  EXEC: "docker compose -f ../docker-compose.yml exec api"
-  EXEC_T: "docker compose -f ../docker-compose.yml exec -T api"
+  EXEC: "docker compose exec api"
+  EXEC_T: "docker compose exec -T api"
 
 tasks:
+  up:
+    desc: Start the shared infra, then build and start the api container (detached)
+    cmds:
+      - task: infra:up
+      - "{{.COMPOSE}} up -d --build"
+
+  down:
+    desc: Stop and remove the api container (leaves the shared infra running)
+    cmd: "{{.COMPOSE}} down"
+
+  stop:
+    desc: Stop the api container without removing it
+    cmd: "{{.COMPOSE}} stop"
+
+  logs:
+    desc: Follow the api container logs
+    cmd: "{{.COMPOSE}} logs -f {{.SVC}}"
+
+  restart:
+    desc: Restart the api container
+    cmd: "{{.COMPOSE}} restart {{.SVC}}"
+
+  rebuild:
+    desc: Rebuild the image and recreate the api container (after a dependency change)
+    cmd: "{{.COMPOSE}} up -d --build --force-recreate {{.SVC}}"
+
+  shell:
+    desc: Open a shell in the api container
+    cmd: "{{.EXEC}} bash"
+
   lock:
     desc: Regenerate uv.lock from pyproject.toml
     cmd: "{{.EXEC}} uv lock"
@@ -28,6 +70,20 @@ tasks:
   test-file:
     desc: "Run a specific test file (usage: task test-file -- tests/routers/test_auth.py)"
     cmd: "{{.EXEC}} pytest {{.CLI_ARGS}} -v"
+
+  # Not yet clean on the existing code, so neither CI nor the pre-commit hooks
+  # run these three; they are here so ruff and pyright never need a host Python.
+  lint:
+    desc: "Run ruff check (usage: task lint [-- --fix])"
+    cmd: "{{.EXEC_T}} ruff check {{.CLI_ARGS}} ."
+
+  format:
+    desc: "Run ruff format (usage: task format [-- --check])"
+    cmd: "{{.EXEC_T}} ruff format {{.CLI_ARGS}} ."
+
+  typecheck:
+    desc: Run pyright
+    cmd: "{{.EXEC_T}} pyright"
 
   create-admin:
     desc: "Create an admin user (usage: task create-admin)"

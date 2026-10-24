@@ -33,3 +33,18 @@ def _cheap_password_hashing():
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setattr("app.models.user.BCRYPT_ROUNDS", TEST_BCRYPT_ROUNDS)
         yield
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _email_goes_to_the_log():
+    """Keep the suite's email off the network, whatever `.env` says.
+
+    Local `.env` points the provider at the shared Mailpit so the running app's
+    mail can be read there, and the tests load the same file. Without this, every
+    test that sends an invite or a reset delivers a real message over SMTP. The
+    tests that exercise the smtp and resend senders still patch the provider in
+    for themselves, and get "log" back when they finish.
+    """
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr("app.config.settings.email_provider", "log")
+        yield

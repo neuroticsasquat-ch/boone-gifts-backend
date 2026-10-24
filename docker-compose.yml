@@ -1,0 +1,28 @@
+services:
+  api:
+    build:
+      context: .
+      target: dev
+    volumes:
+      - .:/app
+      # Hide any host .venv (an IDE's, built for macOS) from the container. The
+      # toolchain lives in /opt/venv (UV_PROJECT_ENVIRONMENT in the Dockerfile).
+      - /app/.venv
+    # Traefik, Mailpit and the external `proxy` network come from the shared
+    # tbc-localdev-infra stack (`task infra:up`). The database is SQLite under
+    # ./data (APP_DATABASE_URL in .env), so no database server is involved. Mail
+    # goes to Mailpit at tbc_mailpit:1025 when .env sets APP_EMAIL_PROVIDER=smtp.
+    #
+    # No published port: Traefik is the only route in.
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.boone-gifts-api.rule=Host(`boone-gifts-api.localhost`)"
+      - "traefik.http.routers.boone-gifts-api.entrypoints=websecure"
+      - "traefik.http.routers.boone-gifts-api.tls=true"
+      - "traefik.http.services.boone-gifts-api.loadbalancer.server.port=8000"
+    networks:
+      - proxy
+
+networks:
+  proxy:
+    external: true
