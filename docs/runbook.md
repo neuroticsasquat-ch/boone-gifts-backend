@@ -7,7 +7,7 @@
 - **Database:** SQLite on a Docker named volume
 - **Auto-deploy:** Push to `main` triggers Coolify redeploy
 - **Domain:** `api.boone.gift`
-- **Monitoring:** Sentry (error tracking)
+- **Monitoring:** Bugsink (errors, through the Sentry SDK) and SigNoz (traces and logs, through OpenTelemetry)
 
 ## Deploy
 
@@ -98,33 +98,37 @@ Set in Coolify (not in `.env` files):
 | `APP_DATABASE_URL` | SQLite path (default: `sqlite:////data/boone_gifts.db`) |
 | `APP_CORS_ORIGINS` | Allowed CORS origins (JSON array) |
 | `APP_FRONTEND_URL` | Frontend URL for email links |
-| `APP_SENTRY_DSN` | Sentry DSN for error tracking |
+| `APP_SENTRY_DSN` | The Bugsink project's DSN — the Sentry SDK reports there. Empty disables error reporting |
 | `APP_ENVIRONMENT` | Deployment environment (`production`) — Sentry's `environment` and OTel's `deployment.environment`. Falls back to the older `APP_SENTRY_ENVIRONMENT` when unset |
-| `APP_SENTRY_RELEASE` | Optional override for the release tag; unset, it is `SOURCE_COMMIT` (see "Sentry release tagging" below) |
+| `APP_SENTRY_RELEASE` | Optional override for the release tag; unset, it is `SOURCE_COMMIT` (see "Release tagging" below). Leave it unset |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | The SigNoz collector on the internal Docker network. Unset, traces and logs are dropped |
+| `OTEL_RESOURCE_ATTRIBUTES` | `service.name=boone-gifts-backend,deployment.environment=production,service.version=$SOURCE_COMMIT` (see "OpenTelemetry" below) |
 | `APP_EMAIL_PROVIDER` | `resend` in production (Resend HTTP API); `smtp` or `log` elsewhere |
 | `APP_EMAIL_FROM` | Sender address — on the Resend sending subdomain, `Boone Gifts <noreply@mail.boone.gift>` |
 | `APP_EMAIL_REPLY_TO` | Reply-To address — set it in Coolify to a mailbox that receives mail (the sender address does not). Empty omits the header |
 | `APP_RESEND_API_KEY` | Resend API key for the `boone` team; read only when the provider is `resend` |
 | `APP_EMAIL_SMTP_*` | SMTP connection details; only read when the provider is `smtp` |
 
-## Sentry release tagging
+## Release tagging
 
-Sentry groups errors and traces by release. We tag each deploy with the Git
-commit it was built from so a regression can be tied back to a specific change.
+Bugsink groups errors by release, and SigNoz labels traces with the same SHA as
+`service.version`. We tag each deploy with the Git commit it was built from so a
+regression can be tied back to a specific change.
 
 The release is resolved in `app/config.py` (`Settings.release`): `APP_SENTRY_RELEASE`
 if it is set, otherwise Coolify's `SOURCE_COMMIT`. The environment is
 `APP_ENVIRONMENT` — the same variable OTel's `deployment.environment` reads — with
 `APP_SENTRY_ENVIRONMENT` as a fallback. To wire it to the deploy commit:
 
-1. In the Coolify application's **General** settings, enable
-   **"Include SOURCE_COMMIT in build"**. Without it Coolify sets `SOURCE_COMMIT`
+1. In the Coolify application's **Advanced → Build** settings, set **"Source commit
+   availability"** to **Available during build** (Coolify 4.3.23 renamed it from
+   "Include SOURCE_COMMIT in build" under General). Without it Coolify sets `SOURCE_COMMIT`
    to the literal `unknown`, and errors are tagged `release=unknown` (passed through
    verbatim, so it matches OTel's `service.version`).
 2. Leave `APP_SENTRY_RELEASE` unset (or delete it) in Coolify's **Environment
    Variables** so the release follows `SOURCE_COMMIT`.
 3. Confirm `APP_SENTRY_DSN` and `APP_ENVIRONMENT` (`production`) are set in
-   Coolify, otherwise Sentry stays disabled / mislabelled.
+   Coolify, otherwise error reporting stays disabled / mislabelled.
 
 Performance tracing is enabled at a 10% sample rate (`traces_sample_rate=0.1`)
 with explicit FastAPI and SQLAlchemy integrations — no extra config needed.
@@ -151,8 +155,40 @@ with the release and environment above, and from there reach the alert channel.
 Members get 403 and anonymous callers 401, so the endpoint cannot be used to
 flood the tracker.
 
+## OpenTelemetry
+
+`start.sh` runs Uvicorn under `opentelemetry-instrument`, which auto-instruments FastAPI,
+SQLAlchemy, httpx and logging and exports over OTLP http/protobuf (pinned in
+`Dockerfile.prod`). Nothing about it lives in the repo except that wiring: Coolify sets
+`OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_RESOURCE_ATTRIBUTES` (table above; NEU-1619 is the
+runbook that sets them). With no endpoint the exporters try `localhost:4318`, fail and log
+the failure, and requests are unaffected; `OTEL_SDK_DISABLED=true` switches the SDK off
+outright. A literal `$SOURCE_COMMIT` inside a Coolify value is expanded by Coolify (checked
+on Sunday Spin, 2026-10-17).
+
+What reaches SigNoz:
+
+- **Traces** — one per request, with its SQL queries and httpx calls beneath it. SQL spans
+  need SQLAlchemy below 2.1: the instrumentation's latest release (0.66b1) skips itself on 2.1,
+  so `pyproject.toml` holds SQLAlchemy at 2.0 (with a Dependabot ignore) until a release
+  supports it. A strict-xfail test in `tests/integration/test_opentelemetry_startup.py` fails
+  CI the day one lands, which is the cue to lift the cap.
+- **Logs** — application records at WARNING and above, each carrying the trace id of the
+  request that wrote it. The app sets no logging level, so the root logger's WARNING decides
+  what is exported, and Uvicorn's own loggers do not propagate to the root at all; the
+  collector's Docker log receiver still has every line of stdout.
+- **Metrics** — not exported: with more than one Uvicorn worker, OpenTelemetry's
+  auto-instrumentation exports traces and logs but not metrics. SigNoz derives request rate
+  and latency from the traces.
+
+To check a deploy, make a request and find its trace in SigNoz under `boone-gifts-backend`,
+with `service.version` = the deployed SHA and `deployment.environment=production`. A healthy
+request writes no WARNING, so it has no log line to correlate; a correlated log appears only
+when a request logs a failure (a failed outbound email, a LinkPreview fallback).
+
 ## Dashboards
 
 - **Coolify:** `https://<coolify-url>` (VM management, deploys, logs)
-- **Sentry:** `https://sentry.io` → boone-gifts-backend project
+- **Bugsink:** `https://bugsink.neuroticsasquat.ch` → boone-gifts-backend project
+- **SigNoz:** tailnet only → service `boone-gifts-backend`
 - **VM SSH:** `ssh <your-vm-alias>`
