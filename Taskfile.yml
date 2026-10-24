@@ -101,6 +101,13 @@ tasks:
     desc: "Create a new migration (usage: task migration -- 'description')"
     cmd: '{{.EXEC}} alembic revision --autogenerate -m "{{.CLI_ARGS}}"'
 
+  # Runs on the HOST: it fetches the backup from the Storage Box over ssh, which
+  # the container has no key for. Its migrate and anonymize steps exec into the
+  # api container, so that has to be up. Config is in .env.local.
+  db:refresh:
+    desc: Replace the local database with the latest prod daily backup, anonymized (prompts first)
+    cmd: scripts/refresh_db.sh
+
   # Release tasks run on the HOST, not in the container: git, git-cliff and gh
   # live here and the container has neither the remote nor the credentials.
   # That is why these tasks don't use {{.EXEC}}.
