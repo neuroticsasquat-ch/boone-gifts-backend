@@ -1,6 +1,6 @@
 """Strip people out of a copy of the production database before local dev uses it.
 
-    docker compose exec -T api python -m scripts.anonymize_db data/.refresh/boone_gifts.db
+    docker compose exec boone-gifts-backend python -m scripts.anonymize_db data/.refresh/boone_gifts.db
 
 `scripts/refresh_db.sh` (`task db:refresh`) runs this on the downloaded backup
 *before* it replaces the local database, so the file the app reads never holds a

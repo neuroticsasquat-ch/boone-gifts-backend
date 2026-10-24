@@ -5,13 +5,15 @@
 #
 # The source is the newest boone_gifts_YYYY-MM-DD.db.gz that scripts/backup-sqlite.sh
 # uploads to the Hetzner Storage Box each night (docs/backup-setup.md), so prod
-# itself is never touched. The copy is migrated and anonymized in the api
-# container (scripts/anonymize_db.py) *before* it replaces data/boone_gifts.db:
-# the file the app reads never holds a production identity, and a failure at any
-# step deletes the copy and leaves the current local database as it was.
+# itself is never touched. The copy is migrated and anonymized in the
+# boone-gifts-backend container (scripts/anonymize_db.py) *before* it replaces
+# data/boone_gifts.db: the file the app reads never holds a production identity,
+# and a failure at any step deletes the copy and leaves the current local
+# database as it was.
 #
 # Runs on the host, not in the container: it needs ssh/scp to the Storage Box.
-# Everything that needs Python runs in the api container, which must be up.
+# Everything that needs Python runs in the boone-gifts-backend container, which
+# must be up.
 #
 # Configuration lives in the repo-root .env.local (gitignored), NOT .env, which
 # pydantic Settings would reject (unknown keys are an error). See .env.local.example.
@@ -45,8 +47,8 @@ if [[ -z "${BACKUP_SSH:-}" ]]; then
   exit 1
 fi
 
-if ! docker compose ps --status running --services 2>/dev/null | grep -qx api; then
-  echo "ERROR: the api container is not running. Start it first:  task up" >&2
+if ! docker compose ps --status running --services 2>/dev/null | grep -qx boone-gifts-backend; then
+  echo "ERROR: the boone-gifts-backend container is not running. Start it first:  task up" >&2
   exit 1
 fi
 
@@ -85,21 +87,21 @@ gunzip "$COPY.gz"
 # Before anonymizing, so the anonymizer always sees the schema this checkout's
 # models describe, whatever revision prod was on when the backup was taken.
 echo "→ Migrating the copy to head..."
-docker compose exec -T -e "APP_DATABASE_URL=sqlite:///./$COPY" api alembic upgrade head
+docker compose exec -T -e "APP_DATABASE_URL=sqlite:///./$COPY" boone-gifts-backend alembic upgrade head
 
 echo "→ Anonymizing the copy..."
-docker compose exec -T api python -m scripts.anonymize_db "$COPY"
+docker compose exec -T boone-gifts-backend python -m scripts.anonymize_db "$COPY"
 
 # Stopped for the swap: closing its connections checkpoints any WAL into the old
 # file, so the .pre-refresh copy is complete and no stale -wal is left beside the
 # new one.
 echo "→ Swapping it in..."
-docker compose stop api >/dev/null
+docker compose stop boone-gifts-backend >/dev/null
 if [[ -f "$LOCAL_DB" ]]; then
   cp "$LOCAL_DB" "$LOCAL_DB.pre-refresh"
 fi
 rm -f "$LOCAL_DB-wal" "$LOCAL_DB-shm"
 mv "$COPY" "$LOCAL_DB"
-docker compose start api >/dev/null
+docker compose start boone-gifts-backend >/dev/null
 
 echo "✓ $LOCAL_DB refreshed from $LATEST. Log in as an admin or any user-<id>@anon.local, password 'localdev'."
