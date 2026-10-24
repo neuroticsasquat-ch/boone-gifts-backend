@@ -5,19 +5,20 @@ FastAPI backend for Boone Gifts. Python 3.14, SQLite, SQLAlchemy 2.0, Pydantic v
 ## Quick start
 ```bash
 cp .env.example .env              # then set APP_JWT_SECRET (openssl rand -hex 32)
-task -d .. up                     # start the whole stack (api, web, mail)
+task up                           # shared infra (Traefik, Mailpit), then the api container
 task migrate                      # alembic upgrade head
 task create-admin                 # interactive prompts
+pre-commit install                # once: the hook runs pytest in the container
 ```
-Dev API on `http://localhost:8000`, web on `http://localhost:5173`, Mailpit on `http://localhost:8025`.
+Dev API on `https://boone-gifts-api.localhost`, web on `https://boone-gifts.localhost` (`task up` in `../boone-gifts-frontend`), Mailpit on `https://mailpit.localhost` — all through the shared Traefik in `~/projects/tbc-localdev-infra`. The database stays SQLite under `./data`; the infra's MySQL/Postgres are not used.
 
 ## Commands
 
-**Stack lifecycle lives in the workspace root** (`~/project/Taskfile.yml`), not here — the compose file is one level up and is rendered by the Coder template, so don't edit it in the workspace:
-- `task up` / `task down` / `task ps` — whole stack
-- `task restart -- api` / `task rebuild -- api` / `task logs -- api` / `task shell -- api`
+**Lifecycle** — this repo's `docker-compose.yml` runs only the `api` service, on the external `proxy` network. Traefik and Mailpit come from tbc-localdev-infra (`task infra:up`, included from `../../tbc-localdev-infra`):
+- `task up` — `infra:up`, then `docker compose up -d --build`
+- `task down` / `task stop` / `task restart` / `task rebuild` / `task logs` / `task shell`
 
-**Repo tasks** (from this directory, or prefixed `be:` from the root). Every one runs **inside the container**:
+**Repo tasks**. Every one runs **inside the container** — never a host Python or `.venv`:
 - `task test` — `pytest tests/ -v`
 - `task test-file -- <path>` — a specific file or test function
 - `task migrate` — `alembic upgrade head`
@@ -25,6 +26,7 @@ Dev API on `http://localhost:8000`, web on `http://localhost:5173`, Mailpit on `
 - `task create-admin` — `python -m app.cli.create_admin`
 - `task show-telemetry` — `python -m app.cli.show_telemetry`, the release/environment errors are reported under
 - `task add -- <pkg>` / `task remove -- <pkg>` / `task lock` — uv, inside the container
+- `task lint` / `task format` / `task typecheck` — ruff check, ruff format, pyright. Not clean on the existing code yet, so CI and the pre-commit hook don't run them
 
 ## Stack
 - **Framework**: FastAPI + Uvicorn (`--reload` in dev, so manual restarts are rarely needed)
@@ -48,8 +50,10 @@ main.py                # Thin entrypoint
 pyproject.toml         # Metadata + direct deps
 uv.lock                # Pinned deps (generated; never hand-edit)
 Dockerfile             # dev image      Dockerfile.prod + start.sh — production
+docker-compose.yml     # Dev: the api service on the shared proxy network
 docker-compose.prod.yml
-Taskfile.yml           # Repo tasks (stack lifecycle lives one level up)
+Taskfile.yml           # Lifecycle + repo tasks, all run in the container
+.pre-commit-config.yaml # pytest hook, run in the container
 alembic.ini            # DB URL comes from env.py, not here
 scripts/
   seed_dev.py          # Dev fixtures — see "Dev fixtures" below
@@ -473,7 +477,7 @@ Pre-commit will live **on the host** (system Python), not in the container; its 
 | `APP_DATABASE_URL` | Default `sqlite:////data/boone_gifts.db` |
 | `APP_TEST_DATABASE_URL` | SQLite URL used by integration tests |
 | `APP_CORS_ORIGINS` | Allowed origins, JSON array |
-| `APP_EMAIL_PROVIDER` | `log` (stdout) for dev, `smtp` for Mailpit, `resend` for production (needs `APP_RESEND_API_KEY`; sends from `mail.boone.gift`) |
+| `APP_EMAIL_PROVIDER` | `log` (stdout), `smtp` for the shared Mailpit in dev (`tbc_mailpit:1025`, TLS off), `resend` for production (needs `APP_RESEND_API_KEY`; sends from `mail.boone.gift`). The test suite forces `log` regardless |
 | `APP_EMAIL_REPLY_TO` | Reply-To on every outgoing email; empty omits the header. Set in production to a mailbox that receives mail |
 | `APP_SENTRY_DSN` | Leave empty to disable Sentry locally |
 | `APP_ENVIRONMENT` | Deployment environment for Sentry and OTel; default `production`, falls back to `APP_SENTRY_ENVIRONMENT` |
