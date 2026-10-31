@@ -5,26 +5,31 @@ FastAPI backend for Boone Gifts. Python 3.14, SQLite, SQLAlchemy 2.0, Pydantic v
 ## Quick start
 ```bash
 cp .env.example .env              # then set APP_JWT_SECRET (openssl rand -hex 32)
-task -d .. up                     # start the whole stack (api, web, mail)
+task up                           # shared infra (Traefik, Mailpit), then the backend container
 task migrate                      # alembic upgrade head
 task create-admin                 # interactive prompts
+pre-commit install                # once: the hook runs `task test` in the container
 ```
-Dev API on `http://localhost:8000`, web on `http://localhost:5173`, Mailpit on `http://localhost:8025`.
+Dev API on `https://boone-gifts-api.localhost`, web on `https://boone-gifts.localhost` (`task up` in `../boone-gifts-frontend`), Mailpit on `https://mailpit.localhost` — all through the shared Traefik in `~/projects/tbc-localdev-infra`. The database stays SQLite under `./data`; the infra's MySQL/Postgres are not used.
 
 ## Commands
 
-**Stack lifecycle lives in the workspace root** (`~/project/Taskfile.yml`), not here — the compose file is one level up and is rendered by the Coder template, so don't edit it in the workspace:
-- `task up` / `task down` / `task ps` — whole stack
-- `task restart -- api` / `task rebuild -- api` / `task logs -- api` / `task shell -- api`
+The Taskfile, compose file and pre-commit hook follow the shared localdev conventions in `~/projects/tbc-localdev-infra/CONVENTIONS.md`.
 
-**Repo tasks** (from this directory, or prefixed `be:` from the root). Every one runs **inside the container**:
-- `task test` — `pytest tests/ -v`
-- `task test-file -- <path>` — a specific file or test function
+**Lifecycle** — this repo's `docker-compose.yml` runs only the `boone-gifts-backend` service, on the external `proxy` network. Traefik and Mailpit come from tbc-localdev-infra (`task infra:up`, included from `~/projects/tbc-localdev-infra`):
+- `task up` — `infra:up`, then `docker compose up -d` (no rebuild)
+- `task build` — rebuild the image and recreate the container; run it after a dependency or Dockerfile change
+- `task down` / `task restart` / `task logs` / `task shell` / `task ps`
+
+**Repo tasks**. Every one runs **inside the container** — never a host Python or `.venv`:
+- `task test` — the whole suite; `task test -- <path>` for a specific file or test function
 - `task migrate` — `alembic upgrade head`
-- `task migration -- 'desc'` — `alembic revision --autogenerate`
+- `task makemigration -- 'desc'` — `alembic revision --autogenerate`
+- `task db:refresh` — replace `data/boone_gifts.db` with the latest prod daily backup from the Storage Box, migrated and anonymized (`scripts/refresh_db.sh` on the host, `scripts/anonymize_db.py` in the container). Admins keep their email and name, everyone else becomes `user-<id>@anon.local`, every password is `localdev`; invites and reset tokens are emptied. Needs `BACKUP_SSH` in `.env.local` (`.env.local.example`), not `.env`, which rejects unknown keys
 - `task create-admin` — `python -m app.cli.create_admin`
 - `task show-telemetry` — `python -m app.cli.show_telemetry`, the release/environment errors are reported under
-- `task add -- <pkg>` / `task remove -- <pkg>` / `task lock` — uv, inside the container
+- `task deps:add -- <pkg>` / `task deps:add-dev -- <pkg>` / `task deps:remove -- <pkg>` / `task deps:lock` — uv, inside the container; `task build` afterwards
+- `task lint` / `task format` / `task format:check` / `task typecheck` — ruff check, ruff format, pyright. Not clean on the existing code yet, so CI and the pre-commit hook don't run them
 
 ## Stack
 - **Framework**: FastAPI + Uvicorn (`--reload` in dev, so manual restarts are rarely needed)
@@ -48,12 +53,16 @@ main.py                # Thin entrypoint
 pyproject.toml         # Metadata + direct deps
 uv.lock                # Pinned deps (generated; never hand-edit)
 Dockerfile             # dev image      Dockerfile.prod + start.sh — production
+docker-compose.yml     # Dev: the boone-gifts-backend service on the shared proxy network
 docker-compose.prod.yml
-Taskfile.yml           # Repo tasks (stack lifecycle lives one level up)
+Taskfile.yml           # Lifecycle + repo tasks, all run in the container
+.pre-commit-config.yaml # `task test` hook, run in the container
 alembic.ini            # DB URL comes from env.py, not here
 scripts/
   seed_dev.py          # Dev fixtures — see "Dev fixtures" below
   backup-sqlite.sh     # Production SQLite snapshot + rsync to remote storage
+  refresh_db.sh        # task db:refresh — latest backup → anonymized local DB (host)
+  anonymize_db.py      # Strips identities from a copy of prod (in the container)
 app/
   main.py              # App factory
   config.py            # Settings (APP_ prefix)
@@ -429,7 +438,7 @@ agreeing on `(owner_id, account_person_id, recipient_name)` are one giftee.
 - **Router endpoints use `db.flush()`, never `db.commit()`** — the `get_db` dependency commits on success and rolls back on exception. In tests the fixture rolls back. New endpoints must follow this.
 - **SQLite FK enforcement**: `PRAGMA foreign_keys=ON` is set by a SQLAlchemy event listener on every connection — SQLite disables FK enforcement by default.
 - **Alembic uses `render_as_batch=True`** — SQLite can't do most `ALTER TABLE`, so batch mode recreates tables.
-- **Packages install to `/opt/venv`** (`UV_PROJECT_ENVIRONMENT=/opt/venv`) so the bind mount can't shadow them; `/opt/venv/bin` is on `PATH`. After `task add`, rebuild the image so the dep survives container recreation.
+- **Packages install to `/opt/venv`** (`UV_PROJECT_ENVIRONMENT=/opt/venv`) so the bind mount can't shadow them; `/opt/venv/bin` is on `PATH`. After `task deps:add`, run `task build` so the dep survives container recreation.
 - **Revoking an occasion share is claim-aware but claim-blind**: owners never see claim state on their own lists, so a 409 reveals only *that* claims exist — no counts, no gift or claimer names. `claims=release` unclaims for the members losing access; `claims=keep` leaves them standing. Folder items are deleted either way, matching `delete_share`. "Losing access" is computed per family, so a sibling occasion on the same family — or another family still sharing the list — spares everyone in it.
 - **Cascade cleanup on relationship loss**: when a member leaves, is removed, or a family is deleted, the service calls `unclaim_gifts_between` / `delete_folder_items_between` per affected pair — but only when the two users no longer share access by any remaining path (no accepted connection, no other common family). `list_shares` rows are never touched; family access doesn't create share rows.
 
@@ -473,7 +482,7 @@ Pre-commit will live **on the host** (system Python), not in the container; its 
 | `APP_DATABASE_URL` | Default `sqlite:////data/boone_gifts.db` |
 | `APP_TEST_DATABASE_URL` | SQLite URL used by integration tests |
 | `APP_CORS_ORIGINS` | Allowed origins, JSON array |
-| `APP_EMAIL_PROVIDER` | `log` (stdout) for dev, `smtp` for Mailpit, `resend` for production (needs `APP_RESEND_API_KEY`; sends from `mail.boone.gift`) |
+| `APP_EMAIL_PROVIDER` | `log` (stdout), `smtp` for the shared Mailpit in dev (`tbc_mailpit:1025`, TLS off), `resend` for production (needs `APP_RESEND_API_KEY`; sends from `mail.boone.gift`). The test suite forces `log` regardless |
 | `APP_EMAIL_REPLY_TO` | Reply-To on every outgoing email; empty omits the header. Set in production to a mailbox that receives mail |
 | `APP_SENTRY_DSN` | Leave empty to disable Sentry locally |
 | `APP_ENVIRONMENT` | Deployment environment for Sentry and OTel; default `production`, falls back to `APP_SENTRY_ENVIRONMENT` |

@@ -1,33 +1,93 @@
 version: "3"
 
-# The workspace owns the compose file one level up; stack lifecycle (up, down,
-# logs, restart) lives in ~/project/Taskfile.yml, not here.
+# Traefik, Mailpit and the external `proxy` network are the shared
+# tbc-localdev-infra stack; `task infra:up` starts it. Optional, so a checkout
+# without it (CI) still loads every task that doesn't need it. Conventions:
+# ~/projects/tbc-localdev-infra/CONVENTIONS.md.
+includes:
+  infra:
+    taskfile: ~/projects/tbc-localdev-infra/Taskfile.yml
+    dir: ~/projects/tbc-localdev-infra
+    optional: true
+
+# Everything but the release tasks and db:refresh runs INSIDE the
+# boone-gifts-backend container, never on the host: the container's /opt/venv is
+# the single toolchain, so there is no host Python or .venv to keep in step.
 vars:
-  COMPOSE: "docker compose -f ../docker-compose.yml"
-  SVC: api
-  EXEC: "docker compose -f ../docker-compose.yml exec api"
-  EXEC_T: "docker compose -f ../docker-compose.yml exec -T api"
+  COMPOSE: docker compose
+  SVC: boone-gifts-backend
+  EXEC: "{{.COMPOSE}} exec {{.SVC}}"
 
 tasks:
-  lock:
+  up:
+    desc: Start the shared infra, then the backend container (detached; does not rebuild)
+    cmds:
+      - task: infra:up
+      - "{{.COMPOSE}} up -d"
+
+  down:
+    desc: Stop and remove the backend container (leaves the shared infra running)
+    cmd: "{{.COMPOSE}} down"
+
+  restart:
+    desc: Restart the backend container
+    cmd: "{{.COMPOSE}} restart {{.SVC}}"
+
+  build:
+    desc: Rebuild the image and recreate the backend container (after a dependency or Dockerfile change)
+    cmds:
+      - "{{.COMPOSE}} build"
+      - "{{.COMPOSE}} up -d"
+
+  logs:
+    desc: Follow the backend container logs
+    cmd: "{{.COMPOSE}} logs -f {{.SVC}}"
+
+  shell:
+    desc: Open a shell in the backend container
+    cmd: "{{.EXEC}} bash"
+
+  ps:
+    desc: Show the backend container's status
+    cmd: "{{.COMPOSE}} ps"
+
+  deps:lock:
     desc: Regenerate uv.lock from pyproject.toml
     cmd: "{{.EXEC}} uv lock"
 
-  add:
-    desc: "Add a package (usage: task add -- <package>)"
+  deps:add:
+    desc: "Add a package (usage: task deps:add -- <package>), then `task build`"
     cmd: "{{.EXEC}} uv add {{.CLI_ARGS}}"
 
-  remove:
-    desc: "Remove a package (usage: task remove -- <package>)"
+  deps:add-dev:
+    desc: "Add a dev package to the `dev` dependency group (usage: task deps:add-dev -- <package>), then `task build`"
+    cmd: "{{.EXEC}} uv add --dev {{.CLI_ARGS}}"
+
+  deps:remove:
+    desc: "Remove a package (usage: task deps:remove -- <package>; add `--dev` for a dev one), then `task build`"
     cmd: "{{.EXEC}} uv remove {{.CLI_ARGS}}"
 
   test:
-    desc: Run tests
-    cmd: "{{.EXEC}} pytest tests/ -v"
+    desc: "Run the test suite (usage: task test [-- tests/routers/test_auth.py])"
+    cmd: "{{.EXEC}} pytest {{.CLI_ARGS}}"
 
-  test-file:
-    desc: "Run a specific test file (usage: task test-file -- tests/routers/test_auth.py)"
-    cmd: "{{.EXEC}} pytest {{.CLI_ARGS}} -v"
+  # Not yet clean on the existing code, so neither CI nor the pre-commit hooks
+  # run these four; they are here so ruff and pyright never need a host Python.
+  lint:
+    desc: "Run ruff check (usage: task lint [-- --fix])"
+    cmd: "{{.EXEC}} ruff check {{.CLI_ARGS}} ."
+
+  format:
+    desc: "Run ruff format (usage: task format [-- <ruff args>])"
+    cmd: "{{.EXEC}} ruff format {{.CLI_ARGS}} ."
+
+  format:check:
+    desc: "Check ruff formatting without writing (usage: task format:check [-- <paths>])"
+    cmd: '{{.EXEC}} ruff format --check {{.CLI_ARGS | default "."}}'
+
+  typecheck:
+    desc: Run pyright
+    cmd: "{{.EXEC}} pyright"
 
   create-admin:
     desc: "Create an admin user (usage: task create-admin)"
@@ -41,9 +101,16 @@ tasks:
     desc: Run database migrations
     cmd: "{{.EXEC}} alembic upgrade head"
 
-  migration:
-    desc: "Create a new migration (usage: task migration -- 'description')"
+  makemigration:
+    desc: "Create a new migration (usage: task makemigration -- 'description')"
     cmd: '{{.EXEC}} alembic revision --autogenerate -m "{{.CLI_ARGS}}"'
+
+  # Runs on the HOST: it fetches the backup from the Storage Box over ssh, which
+  # the container has no key for. Its migrate and anonymize steps exec into the
+  # backend container, so that has to be up. Config is in .env.local.
+  db:refresh:
+    desc: Replace the local database with the latest prod daily backup, anonymized (prompts first)
+    cmd: scripts/refresh_db.sh
 
   # Release tasks run on the HOST, not in the container: git, git-cliff and gh
   # live here and the container has neither the remote nor the credentials.

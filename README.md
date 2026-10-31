@@ -11,7 +11,7 @@ For architecture, conventions, and the visibility model, see [`AGENTS.md`](AGENT
 - **SQLite** (file-based database)
 - **Pydantic v2** (validation & serialization)
 - **PyJWT** + **bcrypt** (auth)
-- **Docker Compose** (api, web and a Mailpit mail catcher)
+- **Docker Compose** (the boone-gifts-backend container, behind the shared tbc-localdev-infra Traefik)
 - **uv** (package management)
 - **go-task** (task runner)
 
@@ -19,8 +19,10 @@ For architecture, conventions, and the visibility model, see [`AGENTS.md`](AGENT
 
 - Docker
 - [go-task](https://taskfile.dev/)
+- [pre-commit](https://pre-commit.com) (`brew install pre-commit`)
+- [tbc-localdev-infra](https://github.com/tomboone/tbc-localdev-infra) checked out at `~/projects/tbc-localdev-infra` (Traefik, Mailpit and the `proxy` network)
 
-The compose file lives one directory up and starts the whole stack — this API, the frontend, and Mailpit — so the backend does not run its own compose project.
+No Python or virtualenv on the host: every task and hook runs in the `boone-gifts-backend` container. The database is SQLite under `./data`, so the infra's MySQL and Postgres are not used.
 
 ## Setup
 
@@ -38,7 +40,7 @@ The compose file lives one directory up and starts the whole stack — this API,
 
    The app refuses to start with an empty or placeholder secret. The default SQLite paths work for local development.
 
-3. Start the stack (from the workspace root, or with `task -d ..` from here):
+3. Start the shared infra and the backend container:
 
    ```
    task up
@@ -56,49 +58,71 @@ The compose file lives one directory up and starts the whole stack — this API,
    task create-admin
    ```
 
-The API is available at `http://localhost:8000` (frontend on `http://localhost:5173`, Mailpit on `http://localhost:8025`). On a remote workspace, use the api and web subdomains it publishes instead, and make sure the web origin is in `APP_CORS_ORIGINS`.
+6. Install the git hook (once):
+
+   ```
+   pre-commit install
+   ```
+
+   It runs `task test` inside the `boone-gifts-backend` container, so the container must be up to commit.
+
+The API is available at `https://boone-gifts-api.localhost` (frontend on `https://boone-gifts.localhost` once its own `task up` has run, Mailpit on `https://mailpit.localhost`).
 
 ## Development
 
-Stack lifecycle lives in the workspace root Taskfile:
+```
+task up                  # Start the shared infra, then the backend container
+task down                # Stop the backend container (the shared infra keeps running)
+task logs                # Follow the backend container's logs
+task restart             # Restart the backend container
+task build               # Rebuild the image and recreate the container
+task shell               # Shell into the backend container
+task ps                  # Container status (including the healthcheck)
+task infra:status        # Shared infra status (also infra:up / infra:down / infra:logs)
+```
+
+Every other task runs inside the backend container:
 
 ```
-task up                  # Start db, mail, api, web
-task down                # Stop the stack
-task ps                  # Service status
-task logs -- api         # Follow one service's logs
-task restart -- api      # Restart one service
-task rebuild -- api      # Rebuild and recreate one service
-task shell -- api        # Shell into a service
-```
-
-Repo tasks run inside the api container — from this directory, or prefixed `be:` from the root:
-
-```
-task test                        # Run test suite
-task test-file -- <path>         # Run a specific test file or test function
-task migrate                     # Apply database migrations
-task migration -- 'description'  # Generate a new migration
-task create-admin                # Create an admin user
+task test                            # Run test suite
+task test -- <path>                  # Run a specific test file or test function
+task migrate                         # Apply database migrations
+task makemigration -- 'description'  # Generate a new migration
+task db:refresh                      # Latest prod backup, anonymized, as the local DB
+task create-admin                    # Create an admin user
+task lint                            # ruff check (not yet clean)
+task format                          # ruff format (not yet clean)
+task format:check                    # ruff format --check
+task typecheck                       # pyright (not yet clean)
 ```
 
 ### Dependency Management
 
 ```
-task add -- <package>      # Add a package
-task remove -- <package>   # Remove a package
-task lock                  # Regenerate lock file
+task deps:add -- <package>      # Add a package (then `task build`)
+task deps:add-dev -- <package>  # Add a dev package
+task deps:remove -- <package>   # Remove a package
+task deps:lock                  # Regenerate lock file
 ```
 
 ### Dev fixtures
 
 ```
-python -m scripts.seed_dev           # inside the api container
+python -m scripts.seed_dev           # inside the backend container
 python -m scripts.seed_dev --reset   # re-seed
 python -m scripts.seed_dev --purge   # remove
 ```
 
 Creates five `@example.com` users with the list-visibility states a single account can't produce on its own: a directly shared list, a list reaching you only through a family, a list kept for someone with no account, an archived list, a claimed gift, a pending connection request, and a shared account with two people. Purge only deletes rows reachable from those users.
+
+### Production data, anonymized
+
+```
+cp .env.local.example .env.local   # once: set BACKUP_SSH to the Storage Box's ssh alias
+task db:refresh                    # prompts, then replaces data/boone_gifts.db
+```
+
+Downloads the newest nightly backup from the Hetzner Storage Box (`docs/backup-setup.md`), migrates it to head and anonymizes it in the backend container, then swaps it in; the previous file is kept as `data/boone_gifts.db.pre-refresh`. Admin accounts keep their email and name, every other user becomes `user-<id>@anon.local` / `User <id>`, and every password is `localdev`. Shared-account people and off-platform recipients get placeholder names; invites and password-reset tokens are dropped. List and gift text is kept as written. The `@anon.local` domain keeps these users out of reach of `seed_dev --purge`.
 
 ## API Overview
 
